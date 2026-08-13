@@ -1,0 +1,10 @@
+# OS
+.DS_Store
+
+# Secrets — never commit these
+.env
+.env.*
+!.env.example
+
+# Local agent state (settings.json IS committed; local overrides are not)
+.claude/settings.local.json

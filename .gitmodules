@@ -1,0 +1,9 @@
+[submodule "backend"]
+	path = backend
+	url = https://github.com/Paggio/chatbot-backend.git
+[submodule "frontend"]
+	path = frontend
+	url = https://github.com/Paggio/frontend.git
+[submodule "infra"]
+	path = infra
+	url = https://github.com/Paggio/infra.git

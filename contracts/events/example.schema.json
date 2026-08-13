@@ -1,0 +1,31 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://contracts.example.test/events/example.schema.json",
+  "title": "ExampleEvent",
+  "description": "EXAMPLE / TEMPLATE. One file per event type. Additive changes only: new properties optional, never removed or retyped in place.",
+  "type": "object",
+  "required": ["eventId", "occurredAt", "type"],
+  "additionalProperties": false,
+  "properties": {
+    "eventId": {
+      "type": "string",
+      "format": "uuid",
+      "description": "Unique per emission; consumers dedupe on it."
+    },
+    "occurredAt": {
+      "type": "string",
+      "format": "date-time",
+      "description": "When the fact happened, not when it was published."
+    },
+    "type": {
+      "type": "string",
+      "const": "example.event",
+      "description": "Discriminator."
+    },
+    "payload": {
+      "type": "object",
+      "description": "Event-specific fields.",
+      "additionalProperties": true
+    }
+  }
+}

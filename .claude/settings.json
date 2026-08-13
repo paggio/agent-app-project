@@ -1,0 +1,18 @@
+{
+  "$comment": "The deny rules cover the agent's file-editing tools. The PreToolUse hook covers the gap: shell commands that write into a submodule (sed -i, tee, redirects) are not caught by Edit rules.",
+  "permissions": {
+    "deny": [
+      "Edit(./backend/**)",
+      "Edit(./frontend/**)",
+      "Edit(./infra/**)"
+    ]
+  },
+  "hooks": {
+    "PreToolUse": [
+      {
+        "matcher": "Bash",
+        "hooks": [{ "type": "command", "command": ".claude/hooks/no-subrepo-edits.sh" }]
+      }
+    ]
+  }
+}

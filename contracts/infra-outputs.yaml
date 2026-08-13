@@ -1,0 +1,16 @@
+# What infra promises the application repos: identifiers, endpoints, secret names.
+# Owned by this repo. infra produces these; backend and frontend consume them.
+#
+# Outputs are additive. Removing one is its own change, with every consumer updated
+# first — otherwise a deploy ordering that is normally harmless becomes an outage.
+#
+# Skeleton — nothing promised yet.
+
+version: 0
+
+outputs: {}
+  # <output_name>:
+  #   description: <what it is and who consumes it>
+  #   type: string | number | bool
+  #   consumers: [backend, frontend]
+  #   example: "<illustrative value — never a real secret>"

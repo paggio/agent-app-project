@@ -1,0 +1,35 @@
+# HTTP interface. Owned by this repo; vendored read-only into the product repos.
+# Skeleton — no endpoints defined yet.
+openapi: 3.1.0
+
+info:
+  title: <service> API
+  version: 0.0.0
+  description: >-
+    Frozen HTTP contract between the backend and its consumers. Changes are made
+    here only, in a dedicated commit, before any implementation.
+
+servers:
+  - url: <https://api.example.test>
+    description: <environment>
+
+paths: {}
+  # /v1/<resource>:
+  #   get:
+  #     operationId: <operationId>
+  #     responses:
+  #       "200":
+  #         description: <description>
+  #         content:
+  #           application/json:
+  #             schema:
+  #               $ref: "#/components/schemas/<Schema>"
+
+components:
+  schemas: {}
+    # <Schema>:
+    #   type: object
+    #   required: [<field>]
+    #   properties:
+    #     <field>:
+    #       type: string
