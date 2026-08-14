@@ -1,6 +1,6 @@
-# 0000 — backend slice
+# 0000 — chatbot-backend slice
 
-<!-- EXAMPLE / TEMPLATE. Read by an agent working alone inside the backend repo. It
+<!-- EXAMPLE / TEMPLATE. Read by an agent working alone inside the chatbot-backend repo. It
      can see BRIEF.md and contracts/ (passed in with --add-dir) and nothing else from
      the control repo. Say what changes here; say nothing about the other repos'
      internals. -->

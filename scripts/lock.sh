@@ -6,14 +6,14 @@
 # product repo's vendored contracts match the control repo.
 set -euo pipefail
 
-REPOS=(backend frontend infra)
+REPOS=(chatbot-backend frontend infra)
 
 {
   echo "# Submodule SHAs known to work together"
   echo "# Regenerate with ./scripts/lock.sh"
   echo "# Updated: $(date -u +%Y-%m-%dT%H:%M:%SZ)"
   for r in "${REPOS[@]}"; do
-    printf '%-10s %s\n' "$r" "$(git -C "$r" rev-parse HEAD)"
+    printf '%-16s %s\n' "$r" "$(git -C "$r" rev-parse HEAD)"
   done
 } > repos.lock
 

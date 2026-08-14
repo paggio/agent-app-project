@@ -20,7 +20,7 @@ Each is cheap now and expensive later.
 | Decision | Default | Why it matters |
 | --- | --- | --- |
 | Repo names | `<project>`, `<project>-backend`, `frontend`, `infra` | They appear in every clone URL, CI config and vendored-contract check. |
-| Submodule paths | `backend/`, `frontend/`, `infra/` | Scripts loop over these. They may differ from the remote name — record the mapping in the control `CLAUDE.md`. |
+| Submodule paths | match the remote names | Scripts loop over these, and a path that differs from its remote name is a permanent small tax on every reader. Keep them identical unless there is a reason not to. |
 | Visibility | private | Public is a one-way door for anything already pushed. |
 | Default branch | `main` | Must match across all four, or CI and fan-out branch logic diverge. |
 | Who owns `contracts/` | the control repo, exclusively | The whole structure rests on this. Do not soften it. |
@@ -90,13 +90,18 @@ submodule. They do not stop a shell command — `sed -i`, `tee`, a redirect. The
 ### Step 4 — Attach the submodules
 
 ```bash
-git submodule add https://github.com/<owner>/<backend-repo>.git backend
-git submodule add https://github.com/<owner>/<frontend-repo>.git frontend
-git submodule add https://github.com/<owner>/<infra-repo>.git infra
+git submodule add https://github.com/<owner>/<backend-repo>.git <backend-repo>
+git submodule add https://github.com/<owner>/<frontend-repo>.git <frontend-repo>
+git submodule add https://github.com/<owner>/<infra-repo>.git <infra-repo>
 ./scripts/lock.sh
-git add .gitmodules backend frontend infra repos.lock
+git add .gitmodules <backend-repo> <frontend-repo> <infra-repo> repos.lock
 git commit -m "chore: vendor product repos as submodules"
 ```
+
+Add each one at its final path first time. `git mv` relocates a submodule's *path* but
+leaves its *name* — the `[submodule "..."]` key in `.gitmodules` and the directory
+under `.git/modules/` — at the old value, and there is no porcelain command to rename
+it afterwards.
 
 Submodules land in **detached HEAD** on update. Any commit made there is on no branch
 and is easy to lose. `git -C <repo> switch -c <branch>` before any work inside one —

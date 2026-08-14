@@ -6,7 +6,7 @@ reasoning behind each step.
 ## Decisions
 
 - [ ] Repo names agreed
-- [ ] Submodule path → remote name mapping recorded in the control `CLAUDE.md`
+- [ ] Submodule paths match their remote names (they are hard to rename later)
 - [ ] Visibility set (private unless there is a reason)
 - [ ] Default branch identical across all four repos
 

@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 # PreToolUse hook on Bash — closes the gap the Edit deny rules cannot.
 #
-# `Edit(./backend/**)` stops the editing tools. It does not stop a shell command that
+# `Edit(./chatbot-backend/**)` stops the editing tools. It does not stop a shell command that
 # writes into a submodule: `sed -i`, `tee`, `>` redirects, `cp`, `mv`, `rm`.
 #
 # exit 0 = allow, exit 2 = block and tell the agent why.
@@ -12,9 +12,10 @@ set -uo pipefail
 
 PAYLOAD="$(cat)"   # JSON on stdin; grepped raw to stay dependency-free
 
-SUBREPOS='(backend|frontend|infra)'
+SUBREPOS='(chatbot-backend|frontend|infra)'
 
-# a path inside a submodule: backend/... or ./backend/... , not "-C backend"
+# a path inside a submodule: chatbot-backend/... or ./chatbot-backend/... ,
+# not "-C chatbot-backend"
 SUBPATH="(^|[^[:alnum:]_./-])(\./)?$SUBREPOS/"
 
 # a redirect landing inside a submodule
@@ -26,7 +27,7 @@ WRITERS='(^|[^[:alnum:]_./-])(sed[[:space:]]+-i|tee|cp|mv|rm|mkdir|rmdir|touch|c
 if grep -Eq "$REDIRECT" <<< "$PAYLOAD" \
   || { grep -Eq "$WRITERS" <<< "$PAYLOAD" && grep -Eq "$SUBPATH" <<< "$PAYLOAD"; }; then
   cat >&2 <<'MSG'
-Blocked: this command appears to write inside a submodule (backend/, frontend/, infra/).
+Blocked: this command appears to write inside a submodule (chatbot-backend/, frontend/, infra/).
 
 Implementation never happens from the control session. Either:
   - start a session inside that repo, so it picks up its own CLAUDE.md, settings,

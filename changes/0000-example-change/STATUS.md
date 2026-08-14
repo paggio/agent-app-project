@@ -14,11 +14,11 @@
 
 | Repo | Branch | PR | CI | Merged |
 | --- | --- | --- | --- | --- |
-| backend | `feat/0000-<slug>` | <link> | ☐ | ☐ |
+| chatbot-backend | `feat/0000-<slug>` | <link> | ☐ | ☐ |
 | frontend | `feat/0000-<slug>` | <link> | ☐ | ☐ |
 | infra | `feat/0000-<slug>` | <link> | ☐ | ☐ |
 
-Merge order: backend (backward compatible) → frontend → infra as required.
+Merge order: chatbot-backend (backward compatible) → frontend → infra as required.
 
 ## Blockers
 

@@ -7,7 +7,7 @@
 # from the control session.
 set -euo pipefail
 
-REPOS=(backend frontend infra)
+REPOS=(chatbot-backend frontend infra)
 
 CHANGE="${1:?usage: fanout.sh <change-dir-name>}"
 CONTROL="$(pwd)"

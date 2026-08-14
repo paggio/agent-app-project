@@ -6,7 +6,7 @@ sub-repo session can see it.
 
 ## Hard rules
 
-- NEVER edit code inside `backend/`, `frontend/`, `infra/` from this session.
+- NEVER edit code inside `chatbot-backend/`, `frontend/`, `infra/` from this session.
   Implementation happens in a session started inside that repo, or via
   `scripts/fanout.sh`. Here you plan and write contracts.
 - Submodules land in detached HEAD. Before ANY commit inside one:
@@ -28,7 +28,7 @@ sub-repo session can see it.
 
 | Path | Remote |
 | --- | --- |
-| `backend/` | `Paggio/chatbot-backend` |
+| `chatbot-backend/` | `Paggio/chatbot-backend` |
 | `frontend/` | `Paggio/frontend` |
 | `infra/` | `Paggio/infra` |
 

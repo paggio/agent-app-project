@@ -1,5 +1,5 @@
 [submodule "backend"]
-	path = backend
+	path = chatbot-backend
 	url = https://github.com/Paggio/chatbot-backend.git
 [submodule "frontend"]
 	path = frontend

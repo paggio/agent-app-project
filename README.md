@@ -7,7 +7,7 @@ between them.
 | Repo | Submodule path | Contents | Deploy cadence |
 | --- | --- | --- | --- |
 | [`agent-app-project`](https://github.com/Paggio/agent-app-project) | — | contracts, change briefs, cross-cutting docs, orchestration | n/a |
-| [`chatbot-backend`](https://github.com/Paggio/chatbot-backend) | `backend/` | API service | per merge |
+| [`chatbot-backend`](https://github.com/Paggio/chatbot-backend) | `chatbot-backend/` | API service | per merge |
 | [`frontend`](https://github.com/Paggio/frontend) | `frontend/` | web client | per merge |
 | [`infra`](https://github.com/Paggio/infra) | `infra/` | IaC | reviewed, gated |
 
@@ -25,7 +25,7 @@ git submodule update --init --recursive
 sibling repos enters context.
 
 ```bash
-cd backend   # or frontend, infra
+cd chatbot-backend   # or frontend, infra
 claude
 ```
 

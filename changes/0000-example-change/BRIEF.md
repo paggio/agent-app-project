@@ -30,6 +30,6 @@
 
 ## Slices
 
-- `backend.md`
+- `chatbot-backend.md`
 - `frontend.md`
 - `infra.md`
