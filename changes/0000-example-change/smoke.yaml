@@ -1,0 +1,50 @@
+# Acceptance criteria, made executable.
+#
+# These run against the joined stack after every fan-out, and a failure here is fed
+# straight back to the repo named in `owner`. Write them while planning, not after
+# implementing: a criterion in BRIEF.md that never became a step here is a criterion
+# nobody checks.
+#
+# Step shape:
+#   name:    unique, stable — it appears in the repair prompt sent back to the agent
+#   owner:   the repo answerable for this step. THIS FIELD ROUTES THE REPAIR. Guessing
+#            here means a failing backend sends a frontend agent chasing it.
+#   GET/POST/PUT/PATCH/DELETE: path, relative to `base` in change.yaml
+#   headers: map, optional
+#   body:    JSON body, optional         form: form-encoded body, optional
+#   base:    a different origin for this step only (env vars interpolate)
+#   expect:  status (int or list) | json (deep-subset) | body_matches (regex)
+#            body_excludes (regex) | headers {name: regex} | cookie (name or list)
+#   capture: {var: dotted.json.path | header:Name | cookie:name} — bound into ${var}
+#            for later steps
+#   retry:   {attempts: 3, delay: 1.0} for anything eventually consistent
+#   tags:    [infra] to run only after an infra deploy
+#
+# Cookies persist across steps within a run, so register -> login -> me works.
+
+# Replace this with the steps for your change. An empty list is legal and verify.sh will
+# say so out loud — but a change with acceptance criteria and no steps is a change whose
+# criteria nobody checks.
+steps: []
+
+  # - name: <criterion this proves>
+  #   owner: chatbot-backend
+  #   GET: /api/<path>
+  #   expect:
+  #     status: 200
+  #     json: { <field>: <value> }
+
+  # - name: sign-in-sets-a-session
+  #   owner: chatbot-backend
+  #   POST: /api/v1/auth/login
+  #   body: { email: smoke@test.local, password: "${SMOKE_PASSWORD}" }
+  #   expect:
+  #     status: 204
+  #     cookie: session
+  #
+  # - name: session-identifies-the-user
+  #   owner: chatbot-backend
+  #   GET: /api/v1/auth/me
+  #   expect:
+  #     status: 200
+  #     json: { email: smoke@test.local }

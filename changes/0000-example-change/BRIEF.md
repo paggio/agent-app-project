@@ -28,6 +28,16 @@
 
 <!-- If this line has no SHA, the change is not ready to fan out. -->
 
+## Deployment
+
+<!-- The machine-readable version of this lives in change.yaml, which is what the scripts
+     actually read. Written here too because the infra decision is a judgement a human
+     makes, and a bare `infra: true` in a manifest records the answer without the reason. -->
+
+- Local stack and smoke: always. `./scripts/iterate.sh 0000-<slug>` brings up all repos
+  together and runs `smoke.yaml` against the single origin.
+- Infra deploy: <no | yes, because ...>. Set `deploy.infra` in `change.yaml` to match.
+
 ## Slices
 
 - `chatbot-backend.md`

@@ -1,0 +1,34 @@
+# The joined local stack: backend, its datastores, the frontend, and the Caddy proxy
+# that fronts both — one compose project, therefore one network.
+#
+# This file exists HERE and nowhere else. Each product repo's compose file describes only
+# its own repo, correctly: the frontend cannot name a service it does not ship, and the
+# backend has no business knowing a proxy exists. The control repo is the only place that
+# can see both, and CLAUDE.md forbids writing the join into a submodule.
+#
+# `include:` rather than `docker compose -f a -f b`: with -f, every relative path in every
+# file resolves against the FIRST file's directory, which breaks `build: { context: . }`
+# in both of them. `include:` resolves each file's paths against its own directory.
+# Requires Compose >= 2.20; this repo is verified against v5.1.1.
+
+name: agentapp-stack
+
+include:
+  - path: ../chatbot-backend/docker-compose.yml
+  - path: ../frontend/docker-compose.yml
+
+services:
+  # Both included files land in this project, so the proxy's default upstream
+  # (backend:8000) now resolves. Stated explicitly because it is the whole point of the
+  # file — the 502 that frontend/docker-compose.yml documents is what this fixes.
+  proxy:
+    environment:
+      BACKEND_UPSTREAM: backend:8000
+    # The included file gives proxy no healthcheck, so `up --wait` would call it ready the
+    # instant the container starts and smoke would race it. Wait on the origin itself.
+    healthcheck:
+      test: ["CMD", "wget", "-q", "-O", "-", "http://localhost:8080/healthz"]
+      interval: 3s
+      timeout: 3s
+      retries: 20
+      start_period: 3s

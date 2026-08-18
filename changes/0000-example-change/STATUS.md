@@ -20,6 +20,16 @@
 
 Merge order: chatbot-backend (backward compatible) → frontend → infra as required.
 
+## Deploy verification
+
+<!-- Maintained by ./scripts/iterate.sh — edits between the markers are overwritten.
+     A green CI column means each repo is internally consistent; this line is the only
+     thing that says they work together. -->
+
+<!-- iterate:begin -->
+_Never run._
+<!-- iterate:end -->
+
 ## Blockers
 
 - <blocker, owner, what unblocks it>

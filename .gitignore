@@ -8,3 +8,11 @@
 
 # Local agent state (settings.json IS committed; local overrides are not)
 .claude/settings.local.json
+
+# Personal
+instructions.md
+
+# Deploy/smoke evidence from ./scripts/iterate.sh — logs, container output, agent
+# transcripts. Regenerated on every run and often large; report.md is the durable part
+# and is meant to be read in place, not committed.
+changes/*/runs/

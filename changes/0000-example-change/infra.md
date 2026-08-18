@@ -22,6 +22,17 @@ and report it rather than working around it.
 - [ ] <test or check that proves it works>
 - [ ] the repo's own gates pass (`.claude/hooks/gate.sh`)
 
+## Smoke — what this slice is actually judged on
+
+After every slice lands, the control repo deploys all of them together and runs
+`smoke.yaml` against one origin. The steps whose `owner:` is `infra` are yours:
+
+- [ ] `<step name>` — <what it asserts>
+
+These run against your code through a reverse proxy, not against your test doubles, and
+a failure comes back to this repo with the request, the response and your container log
+attached. The assertions belong to the control repo: fix the cause, never the assertion.
+
 ## Notes
 
 - <migration ordering, feature flag, backwards-compatibility constraint>

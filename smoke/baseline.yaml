@@ -1,0 +1,43 @@
+# Cross-repo regression suite. Runs before every change's own smoke file.
+#
+# Steps land here by promotion: when a change merges, the assertions from its
+# changes/NNNN-*/smoke.yaml that are worth keeping forever move into this file. That is
+# how the loop stops re-breaking what an earlier change fixed.
+#
+# Keep it fast and keep it about the SEAM. Anything provable inside one repo belongs in
+# that repo's own test suite, not here.
+
+steps:
+  - name: origin-serves-app
+    owner: frontend
+    GET: /
+    expect:
+      status: 200
+      body_matches: '<div id="root"'
+
+  - name: origin-serves-frontend-health
+    owner: frontend
+    GET: /healthz
+    expect:
+      status: 200
+
+  # The assertion this whole harness exists for. Before stack/compose.yml joined the two
+  # compose projects onto one network, this returned 502 — the proxy could not resolve
+  # `backend`. It is the single check that proves the two repos are actually wired.
+  - name: origin-reaches-backend
+    owner: chatbot-backend
+    GET: /api/healthz
+    expect:
+      status: 200
+      json:
+        status: ok
+
+  - name: backend-direct-health
+    owner: chatbot-backend
+    GET: /healthz
+    # Answered by the backend container directly, bypassing the proxy. When
+    # origin-reaches-backend fails but this passes, the fault is the proxy wiring, not
+    # the backend — which is the difference between a frontend slice and a backend slice.
+    base: ${BACKEND_DIRECT_BASE}
+    expect:
+      status: 200
