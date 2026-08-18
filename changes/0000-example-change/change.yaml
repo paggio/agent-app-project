@@ -1,0 +1,32 @@
+# The machine-readable half of a change. BRIEF.md is for humans and for the implementing
+# agent; this is for the scripts, so that "which repos, and does this need infra" is
+# answered by parsing rather than by grepping prose. Same argument as docs/adr/0001:
+# a machine-readable artifact beats a paragraph three readers will interpret differently.
+
+change: 0000-example-change
+
+# The contract freeze commit. fanout.sh refuses to dispatch without one — implementing
+# against an unfrozen contract is how three repos end up with three interfaces.
+freeze_sha: ""
+
+# Which repos get a slice. Each name must have a matching <name>.md in this directory.
+# Use the SUBMODULE PATH: chatbot-backend, not backend.
+slices:
+  - chatbot-backend
+  - frontend
+  - infra
+
+deploy:
+  # Bring up the joined local stack and smoke it. Effectively always true — it is the
+  # only check that proves the repos work together rather than merely compiling apart.
+  local: true
+  # Opt-in, and it means a real deploy: `make -C infra deploy`, then the produced outputs
+  # are checked against contracts/infra-outputs.yaml. Requires an infra slice.
+  infra: false
+
+smoke:
+  file: smoke.yaml
+  # The single origin the browser uses: app at /, API at /api/. Not the backend's own
+  # port — testing the backend directly cannot catch a broken proxy or CORS posture.
+  base: http://localhost:8080
+  timeout_s: 120
