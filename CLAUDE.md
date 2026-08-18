@@ -44,6 +44,18 @@ sub-repo session can see it.
 
 ## Commands
 
+`make help` lists everything. The ones that matter:
+
+- stack:   `make up down restart ps logs health` — every repo together on one origin
+- poke:    `make chat MSG="hi"`, `make open`, `make rebuild SVC=backend`
+- assert:  `make smoke`, `make verify CHANGE=<dir>`, `make iterate CHANGE=<dir>`
+- across:  `make repos` (branch/SHA vs `repos.lock`), `make prs`, `make lock`, `make check`
+
+Each product repo has its own `make up` that brings up THAT repo alone. `make up` here
+brings them up together, which is the only arrangement where the seams are real.
+
+Change lifecycle:
+
 - `./scripts/new-change.sh <slug>`    scaffold `changes/NNNN-<slug>/`
 - `./scripts/iterate.sh <change>`     the whole loop: dispatch, deploy, smoke, repair
 - `./scripts/lock.sh`                 refresh `repos.lock` from submodule SHAs
