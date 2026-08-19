@@ -21,6 +21,54 @@ belongs in this file. Prose you write in the spec — `summary`, `description`,
 `operationId`, `tags` — IS preserved across re-harvests; only structure is retaken from
 the implementation.
 
+## Auth and sessions
+
+Promised here rather than in `openapi.yaml`, because OpenAPI describes bodies and statuses
+and these are neither — a re-harvest would drop them, and they are exactly the parts a
+consumer cannot discover by reading a response.
+
+**The session cookie.** Named `session`. Its value is an opaque server-side session id
+carrying no claims, so it means nothing without the server's record — which is what makes
+logout immediate rather than eventual.
+
+| Attribute | Value | Why it is promised |
+| --- | --- | --- |
+| `HttpOnly` | always | Script cannot read the cookie, so an XSS cannot exfiltrate the session. |
+| `SameSite` | `Lax`, always explicit | Blocks cross-site POST outright. Set explicitly on purpose: a cookie that merely *omits* `SameSite` gets Chrome's two-minute `Lax-allowing-unsafe-on-top-level` grace period, and declaring the attribute forfeits it. |
+| `Path` | `/` | One session for the whole origin. |
+| `Secure` | wherever the origin is HTTPS | **Environment-conditional, not promised unconditionally.** The local stack is `http://localhost:8080`, and Python's `http.cookiejar` refuses to return a `Secure` cookie over HTTP with no localhost exemption — so a hardcoded `Secure` breaks `smoke.py` at the seam while browsers hide the problem. Smoke asserts the three attributes above and never this one. |
+| `Max-Age` | absent | A browser-session cookie: closing the browser ends it client-side. Server-side expiry is the authority. |
+
+**Lifetime is sliding, seven days idle.** The server record expires seven days after the
+last authenticated request, and a request bearing a valid session pushes the expiry out.
+The rewrite is throttled to at most once an hour so a read does not become a write on
+every request; a client therefore cannot infer exact expiry from behaviour, which is why
+no expiry is exposed in `IdentityResponse` yet.
+
+**CSRF posture, and the invariant it rests on.** `SameSite=Lax` is the primary control.
+On top of it, unsafe methods are refused with `403 AUTH_CROSS_ORIGIN` when `Origin` or
+`Sec-Fetch-Site` is present and does not indicate same-origin. When neither header is
+present the request is allowed: a browser cannot be made to omit `Origin` on a
+cross-origin POST, so the only callers that reach that branch are non-browser clients,
+which were never the CSRF threat model. The check runs before the rate limiter, so a
+cross-site page cannot burn down someone else's attempt budget.
+
+This leaves one invariant that every repo must uphold and no schema can express:
+
+> **No `GET` ever mutates state.** `SameSite=Lax` still sends the cookie on top-level
+> cross-site GET navigation. A mutating GET is therefore a CSRF hole that the cookie
+> attribute cannot close, and adding one silently converts a sound posture into an
+> unsound one.
+
+**Two error shapes, one rule.** `422` keeps the framework's `{"detail": [...]}` shape,
+already frozen for `/v1/chat`; the `{"error": {"code", "message"}}` envelope covers `401`,
+`403`, `409` and `429`. The rule that decides which: **422 means the request was malformed
+or violated a stated policy, the envelope means the request was well-formed and refused.**
+Password-policy failures are therefore `422`, because the policy is stated — they are
+enforced as validation, not as a semantic refusal. Consumers must tolerate an unknown
+`error.code` by falling back to `message`; codes are added additively and exhaustive
+switching on them will break.
+
 ## Changing a contract
 
 1. Additive by default. The repos deploy independently, so production will always

@@ -7,7 +7,7 @@
 openapi: 3.1.0
 info:
   title: agent-app API
-  version: 1.0.0
+  version: 1.1.0
   description: Frozen HTTP contract between the backend and its consumers. Changes are made here only,
     in a dedicated commit, before any implementation.
 servers:
@@ -58,8 +58,206 @@ paths:
             application/json:
               schema:
                 $ref: '#/components/schemas/HTTPValidationError'
+  /v1/auth/register:
+    post:
+      tags:
+      - auth
+      summary: Create an account and sign in
+      description: 'Creates an account and establishes a session in one call, so a caller never has to
+        register and then log in. Gated by a shared signup code supplied to the deployment: without a
+        matching code this endpoint behaves as if registration were closed. The code is checked BEFORE
+        the email is looked up, so 409 is only reachable by a caller who already holds the code — that
+        ordering is what keeps 409 from being an open account-enumeration oracle.'
+      operationId: postAuthRegister
+      requestBody:
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/RegisterRequest'
+        required: true
+      responses:
+        '201':
+          description: The account was created and this response carries its session cookie.
+          headers:
+            Set-Cookie:
+              description: The session cookie. Attributes are promised in contracts/README.md.
+              schema:
+                type: string
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/IdentityResponse'
+        '403':
+          description: The signup code was absent or wrong (`AUTH_SIGNUP_CLOSED`), or the request was
+            cross-origin (`AUTH_CROSS_ORIGIN`).
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+        '409':
+          description: An account already exists for this email (`AUTH_EMAIL_TAKEN`).
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+        '422':
+          description: The body failed validation — including the password policy, which is enforced as
+            validation and therefore reported in this shape rather than in the error envelope.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/HTTPValidationError'
+        '429':
+          description: Too many attempts from this caller (`AUTH_RATE_LIMITED`). `Retry-After` says when
+            to try again.
+          headers:
+            Retry-After:
+              description: Seconds until the next attempt is permitted.
+              schema:
+                type: integer
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+  /v1/auth/login:
+    post:
+      tags:
+      - auth
+      summary: Exchange credentials for a session
+      description: 'On success the response carries the session cookie and the identity it belongs to,
+        so a caller needs no follow-up request to know who it is. Failure is deliberately uninformative:
+        an unknown email and a wrong password return the identical status and code, so this endpoint cannot
+        be used to discover which addresses have accounts.'
+      operationId: postAuthLogin
+      requestBody:
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/LoginRequest'
+        required: true
+      responses:
+        '200':
+          description: The credentials matched and this response carries a session cookie.
+          headers:
+            Set-Cookie:
+              description: The session cookie. Attributes are promised in contracts/README.md.
+              schema:
+                type: string
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/IdentityResponse'
+        '401':
+          description: The email and password do not match an account (`AUTH_BAD_CREDENTIALS`). Returned
+            identically whether or not the email exists.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+        '403':
+          description: The request was cross-origin (`AUTH_CROSS_ORIGIN`). Checked before the rate limiter,
+            so a cross-site page cannot burn through someone else's attempt budget.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+        '422':
+          description: The body failed validation; `detail` lists what.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/HTTPValidationError'
+        '429':
+          description: Too many attempts for this email or from this caller (`AUTH_RATE_LIMITED`).
+          headers:
+            Retry-After:
+              description: Seconds until the next attempt is permitted.
+              schema:
+                type: integer
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+  /v1/auth/logout:
+    post:
+      tags:
+      - auth
+      summary: End the current session
+      description: 'Deletes the session server-side and clears the cookie. Idempotent and safe to call
+        without a session: logging out twice, or logging out when never logged in, is 204 and not an error.
+        Because the record is deleted rather than merely expired, the cookie is dead the instant this
+        returns — there is no window in which a copied cookie still works.'
+      operationId: postAuthLogout
+      security:
+      - cookieAuth: []
+      - {}
+      responses:
+        '204':
+          description: There is no session now, whether or not there was one before.
+          headers:
+            Set-Cookie:
+              description: Clears the session cookie.
+              schema:
+                type: string
+        '403':
+          description: The request was cross-origin (`AUTH_CROSS_ORIGIN`).
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+  /v1/auth/me:
+    get:
+      tags:
+      - auth
+      summary: Who the current session belongs to
+      description: 'The endpoint a client calls on load to decide whether it is signed in. 401 here is
+        a NORMAL state, not a fault — it is the answer "nobody", and a client must distinguish it from
+        a transport failure, which means something entirely different to a user. Never mutates: this is
+        a GET, and the CSRF posture in contracts/README.md depends on no GET mutating anything.'
+      operationId: getAuthMe
+      security:
+      - cookieAuth: []
+      responses:
+        '200':
+          description: The session is valid and belongs to this user.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/IdentityResponse'
+        '401':
+          description: There is no valid session (`AUTH_REQUIRED`) — absent, unknown, or expired cookie.
+            Expected and unremarkable.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
 components:
+  securitySchemes:
+    cookieAuth:
+      type: apiKey
+      in: cookie
+      name: session
+      description: An opaque server-side session id. Carries no claims and means nothing without the
+        server's record, which is what makes logout immediate and revocation real.
   schemas:
+    AuthError:
+      properties:
+        code:
+          type: string
+          description: 'A stable machine-readable reason. Known values: AUTH_REQUIRED, AUTH_BAD_CREDENTIALS,
+            AUTH_EMAIL_TAKEN, AUTH_SIGNUP_CLOSED, AUTH_CROSS_ORIGIN, AUTH_RATE_LIMITED. Consumers MUST
+            tolerate an unknown code by falling back to `message` — codes are added additively and a
+            client that switches exhaustively on this will break.'
+        message:
+          type: string
+          description: Human-readable and safe to show a user. Never names which half of a credential
+            pair was wrong, and never echoes the password.
+      type: object
+      required:
+      - code
+      - message
+      title: AuthError
+      description: 'One semantic failure: why, in a form both code and people can read.'
     ChatRequest:
       properties:
         message:
@@ -83,6 +281,18 @@ components:
       - reply
       title: ChatResponse
       description: Response body for postChat.
+    ErrorResponse:
+      properties:
+        error:
+          $ref: '#/components/schemas/AuthError'
+      type: object
+      required:
+      - error
+      title: ErrorResponse
+      description: 'The envelope for semantic failures — 401, 403, 409, 429. Validation failures do NOT
+        use it: they keep the framework''s 422 `detail` shape, already frozen for /v1/chat. One rule
+        decides which: 422 means the request was malformed or violated a stated policy, this envelope
+        means the request was well-formed and refused.'
     HTTPValidationError:
       properties:
         detail:
@@ -102,6 +312,92 @@ components:
       - status
       title: HealthResponse
       description: Response body for getHealth.
+    IdentityResponse:
+      properties:
+        user:
+          $ref: '#/components/schemas/User'
+      type: object
+      required:
+      - user
+      title: IdentityResponse
+      description: 'Returned by register, login and me alike, so all three answer "who am I" in one shape
+        and a client needs one parser. Nested rather than flat to leave room for session metadata — an
+        expiry, a device list — to arrive additively under its own key.'
+    LoginRequest:
+      properties:
+        email:
+          type: string
+          format: email
+          maxLength: 254
+          minLength: 3
+          description: Compared case-insensitively after trimming, so Foo@Example.com and foo@example.com
+            are the same account.
+        password:
+          type: string
+          maxLength: 128
+          minLength: 1
+          description: Not length-validated against the policy here — an existing account whose password
+            predates a policy change must still be able to sign in.
+      type: object
+      required:
+      - email
+      - password
+      title: LoginRequest
+      description: Request body for postAuthLogin. Unknown fields are ignored rather than rejected.
+    RegisterRequest:
+      properties:
+        email:
+          type: string
+          format: email
+          maxLength: 254
+          minLength: 3
+          description: Normalised by trimming and lower-casing before storage and uniqueness are decided.
+        password:
+          type: string
+          maxLength: 128
+          minLength: 12
+          description: 12-128 characters after NFKC normalisation. No composition rules — no required
+            digit, symbol or mixed case — because they shrink the real search space rather than growing
+            it. Rejected if it appears in the deployment's common-password list.
+        signup_code:
+          type: string
+          minLength: 1
+          description: The deployment's shared signup code. Absent or wrong is 403, not 422 — a closed
+            door is a refusal, not a malformed request.
+        display_name:
+          type: string
+          maxLength: 64
+          minLength: 1
+          description: Optional. Defaults to the part of the email before the @, because clients need
+            something to render and an empty name is not one.
+      type: object
+      required:
+      - email
+      - password
+      - signup_code
+      title: RegisterRequest
+      description: Request body for postAuthRegister. Unknown fields are ignored rather than rejected.
+    User:
+      properties:
+        id:
+          type: string
+          description: Opaque and stable for the life of the account. Not an email, not a row number —
+            nothing may be inferred from its shape.
+        email:
+          type: string
+          format: email
+          description: The normalised form, so it is what a client should display and compare.
+        display_name:
+          type: string
+          description: Always present and never empty. Derived from the email when none was given.
+      type: object
+      required:
+      - id
+      - email
+      - display_name
+      title: User
+      description: An account, as its own session may see it. Contains no password material, no hash,
+        no session id and no timestamps — a field is added here only when a consumer needs it.
     ValidationError:
       properties:
         loc:
