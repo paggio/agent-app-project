@@ -225,7 +225,11 @@ def run_step(client: httpx.Client, step: dict[str, Any], scope: dict[str, Any],
         }
 
         last_err = evaluate(expect, resp, decoded, text)
-        if last_err is None and contract is not None:
+        # `contract: false` marks a step that is not API surface — the app shell, a
+        # static asset, the proxy itself. contracts/openapi.yaml promises the API and
+        # says nothing about those, so checking them against it would only ever produce
+        # false failures.
+        if last_err is None and contract is not None and step.get("contract", True):
             last_err = contract.check(method, path, resp.status_code)
         if last_err is None:
             for var, source in (step.get("capture") or {}).items():
