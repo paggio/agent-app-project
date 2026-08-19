@@ -1,0 +1,42 @@
+# The machine-readable half of a change. BRIEF.md is for humans and for the implementing
+# agent; this is for the scripts, so that "which repos, and does this need infra" is
+# answered by parsing rather than by grepping prose. Same argument as docs/adr/0001:
+# a machine-readable artifact beats a paragraph three readers will interpret differently.
+
+change: 0001-auth
+
+# The contract freeze commit. fanout.sh refuses to dispatch without one — implementing
+# against an unfrozen contract is how three repos end up with three interfaces.
+#
+# Frozen. This is the commit that landed contracts/openapi.yaml 1.1.0 and the
+# "Auth and sessions" section of contracts/README.md, with nothing else in its diff.
+# The slices implement against the contract AS OF THIS COMMIT, not as of whatever
+# contracts/ happens to say when an agent reads it.
+freeze_sha: "3710209d5a73013a6536ce71720a4f24b8dc1740"
+
+# Which repos get a slice. Each name must have a matching <name>.md in this directory.
+# Use the SUBMODULE PATH: chatbot-backend, not backend.
+slices:
+  - chatbot-backend
+  - frontend
+
+deploy:
+  # Bring up the joined local stack and smoke it. Effectively always true — it is the
+  # only check that proves the repos work together rather than merely compiling apart,
+  # and for this change it is the only place the session cookie crosses the proxy.
+  local: true
+  # No: nothing new is provisioned. postgres already exists in compose with a healthcheck
+  # and a volume, and DATABASE_URL is already in the backend's environment — this change
+  # is simply the first code to read it. There is no infra slice, and manifest.py would
+  # reject `true` without one.
+  infra: false
+
+smoke:
+  file: smoke.yaml
+  # The single origin the browser uses: app at /, API at /api/. Not the backend's own
+  # port — testing the backend directly cannot catch a broken proxy or CORS posture.
+  base: http://localhost:8080
+  # Raised from the template's 120s: argon2id is deliberately slow, and this suite makes
+  # roughly twenty password-verifying requests including a throttle loop that retries
+  # until it is refused.
+  timeout_s: 240
