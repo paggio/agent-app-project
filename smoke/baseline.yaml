@@ -8,9 +8,12 @@
 # that repo's own test suite, not here.
 
 steps:
+  # Not API surface: contracts/openapi.yaml promises the API, not the app shell, so
+  # these two opt out of the contract check rather than failing it.
   - name: origin-serves-app
     owner: frontend
     GET: /
+    contract: false
     expect:
       status: 200
       body_matches: '<div id="root"'
@@ -18,6 +21,7 @@ steps:
   - name: origin-serves-frontend-health
     owner: frontend
     GET: /healthz
+    contract: false
     expect:
       status: 200
 
