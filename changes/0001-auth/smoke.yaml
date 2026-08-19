@@ -3,12 +3,16 @@
 # Run against the joined stack at one origin, which is the only place the session cookie
 # actually crosses the proxy. A failure routes back to the repo named in `owner`.
 #
-# PRECONDITIONS — two variables must be in the environment when this runs:
-#   SIGNUP_CODE     the same value stack/compose.yml passes to the backend. smoke.py dies
-#                   on an undefined ${var} rather than guessing, which is the correct
-#                   failure: a suite that silently used the wrong code would report
-#                   "registration is closed" as if it were a bug in the backend.
-#   SMOKE_PASSWORD  any string of 12+ characters that is not on the common-password list.
+# VARIABLES — supplied by the ship process, not by you. verify.sh sources
+# scripts/dev-env.sh before smoking, which fills in anything unset from stack/dev.env:
+#   SIGNUP_CODE     the SAME variable stack/compose.yml passes to the backend, so the suite
+#                   and the service cannot disagree about the code. smoke.py dies on an
+#                   undefined ${var} rather than guessing, which is the correct failure: a
+#                   suite that silently used the wrong code would report "registration is
+#                   closed" as if it were a bug in the backend.
+#   SMOKE_PASSWORD  12+ characters, not on the common-password list.
+# The real environment always wins, so `SIGNUP_CODE=x ./scripts/iterate.sh 0001-auth`
+# overrides the file without editing it.
 #
 # THREE THINGS THIS FILE IS DELIBERATELY CAREFUL ABOUT:
 #

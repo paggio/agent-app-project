@@ -168,14 +168,16 @@ Recorded as `freeze_sha` in `change.yaml`, which is where `fanout.sh` reads it.
   `SIGNUP_CODE` and `SESSION_COOKIE_SECURE`. Neither may ever be committed with a real
   value.
 
-**One task belongs to this repo and to no slice.** `stack/compose.yml` must pass
-`SIGNUP_CODE` through to the backend service, the same way it already overrides the proxy's
-`BACKEND_UPSTREAM` — the backend cannot write that join itself, because a product repo may
-not name the arrangement it is joined into. `smoke.yaml` reads the same variable from the
-environment and `smoke.py` dies on an undefined one rather than guessing, which is the
-right failure: a suite that silently used the wrong code would report "registration is
-closed" as though the backend were broken. Do it when the change ships, not while planning
-— `stack/` is deployment wiring, and this session writes contracts and plans only.
+**One task belonged to this repo and to no slice, and is done.** `stack/compose.yml` now
+passes `SIGNUP_CODE` and `SESSION_COOKIE_SECURE` to the backend, the same way it already
+overrides the proxy's `BACKEND_UPSTREAM` — the backend cannot write that join itself,
+because a product repo may not name the arrangement it is joined into.
+
+Both the stack and the smoke suite read those values from **one** source, `stack/dev.env`,
+loaded by `scripts/dev-env.sh` which `stack.sh` and `verify.sh` source before doing
+anything. So the service and the assertions cannot disagree about the signup code, and no
+change ever needs a human to export a variable before shipping. The real environment wins
+over the file, so a deployment that sets these for real is untouched.
 
 ## Slices
 

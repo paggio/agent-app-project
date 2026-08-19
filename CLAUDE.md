@@ -29,6 +29,9 @@ sub-repo session can see it.
   - `smoke.yaml`   the acceptance criteria as executable steps, each with an `owner`
   - `runs/`        deploy evidence from iterate.sh (gitignored)
 - `stack/`         the joined local stack — every repo in one compose project
+  - `dev.env`      local values for the stack AND the smoke suites, one source. Loaded by
+                   `scripts/dev-env.sh`; the real environment always wins. Never export a
+                   smoke variable by hand — declare it here.
 - `smoke/`         `baseline.yaml`, the cross-repo regression suite
 - `docs/adr/`      cross-cutting decisions
 - `docs/init/`     how this structure is built and re-created

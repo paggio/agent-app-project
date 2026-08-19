@@ -32,9 +32,8 @@ _Never run._
 
 ## Blockers
 
-- `stack/compose.yml` does not yet pass `SIGNUP_CODE` through to the backend, and
-  `smoke.yaml` needs `SIGNUP_CODE` and `SMOKE_PASSWORD` in the environment. Owner: this
-  repo. Unblocks the smoke suite, not the fan-out.
+- None. The smoke environment is supplied by `scripts/dev-env.sh` from `stack/dev.env`,
+  so `./scripts/iterate.sh 0001-auth` needs nothing exported by hand.
 
 ## After merge
 
