@@ -13,6 +13,12 @@
 set -euo pipefail
 
 ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
+
+# Local values for the stack, before any compose call: compose interpolates ${SIGNUP_CODE}
+# and friends at parse time, so an unloaded variable becomes a silently empty environment
+# entry rather than an error. The real environment wins — see scripts/dev-env.sh.
+. "$ROOT/scripts/dev-env.sh"
+
 COMPOSE=(docker compose -f "$ROOT/stack/compose.yml")
 SERVICES=(backend postgres redis frontend proxy)
 

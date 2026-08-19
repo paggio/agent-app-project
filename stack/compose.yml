@@ -18,6 +18,20 @@ include:
   - path: ../frontend/docker-compose.yml
 
 services:
+  # Auth configuration, which the backend repo cannot supply for itself: a product repo may
+  # not name the arrangement it is joined into, and its own compose file describes only its
+  # own repo. Values come from the environment via scripts/dev-env.sh, so the stack and the
+  # smoke suite cannot disagree about the signup code — they read the same variable.
+  backend:
+    environment:
+      # Empty is meaningful: the backend fails closed and refuses registration. Better than
+      # a default baked in here, which would silently open signup in any environment that
+      # forgot to set it.
+      SIGNUP_CODE: ${SIGNUP_CODE:-}
+      # Must stay false for this origin — it is http, and a Secure cookie is never returned
+      # over http by smoke.py's cookie jar. See contracts/README.md.
+      SESSION_COOKIE_SECURE: ${SESSION_COOKIE_SECURE:-false}
+
   # Both included files land in this project, so the proxy's default upstream
   # (backend:8000) now resolves. Stated explicitly because it is the whole point of the
   # file — the 502 that frontend/docker-compose.yml documents is what this fixes.

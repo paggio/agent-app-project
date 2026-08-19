@@ -19,6 +19,12 @@ set -euo pipefail
 ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 cd "$ROOT"
 
+# The variables the smoke suites interpolate, supplied by the ship process rather than by a
+# human remembering to export them. smoke.py dies on an undefined ${VAR} on purpose, so
+# this is what stops "you forgot SIGNUP_CODE" from being a recurring failure mode. The real
+# environment wins — see scripts/dev-env.sh.
+. "$ROOT/scripts/dev-env.sh"
+
 CHANGE=""; KEEP_UP=0; E2E=0; STRICT_BRANCH=0; RUN_DIR=""; BUILD_FLAG=""
 while [ $# -gt 0 ]; do
   case "$1" in

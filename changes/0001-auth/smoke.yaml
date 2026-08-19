@@ -1,0 +1,293 @@
+# 0001 — accounts and sessions, as executable criteria.
+#
+# Run against the joined stack at one origin, which is the only place the session cookie
+# actually crosses the proxy. A failure routes back to the repo named in `owner`.
+#
+# VARIABLES — supplied by the ship process, not by you. verify.sh sources
+# scripts/dev-env.sh before smoking, which fills in anything unset from stack/dev.env:
+#   SIGNUP_CODE     the SAME variable stack/compose.yml passes to the backend, so the suite
+#                   and the service cannot disagree about the code. smoke.py dies on an
+#                   undefined ${var} rather than guessing, which is the correct failure: a
+#                   suite that silently used the wrong code would report "registration is
+#                   closed" as if it were a bug in the backend.
+#   SMOKE_PASSWORD  12+ characters, not on the common-password list.
+# The real environment always wins, so `SIGNUP_CODE=x ./scripts/iterate.sh 0001-auth`
+# overrides the file without editing it.
+#
+# THREE THINGS THIS FILE IS DELIBERATELY CAREFUL ABOUT:
+#
+# 1. Idempotence. `verify.sh --keep-up` leaves postgres running, so a second run meets an
+#    account that already exists. The register step therefore accepts 201 OR 409 and the
+#    session is established by the login step that follows, not by register's own cookie.
+#    A suite that only passed on a cold volume would be useless for the inner loop.
+# 2. Bucket hygiene. The throttle steps deliberately exhaust an attempt bucket, so they
+#    come LAST and use their own email. The per-IP limit must stay well above this whole
+#    suite's failed-attempt count (~20) or these steps would throttle the suite itself —
+#    and behind the proxy every request shares one source address unless the backend reads
+#    X-Forwarded-For, which makes the per-IP bucket very nearly global here.
+# 3. No `Secure` assertion. See contracts/README.md — http.cookiejar will not return a
+#    Secure cookie over the local stack's HTTP origin, so asserting it would fail on a
+#    correct implementation.
+
+steps:
+  # ---------------------------------------------------------------- the happy path
+
+  - name: register-creates-account
+    owner: chatbot-backend
+    POST: /api/v1/auth/register
+    body:
+      email: smoke-0001@auth.test
+      password: "${SMOKE_PASSWORD}"
+      signup_code: "${SIGNUP_CODE}"
+      display_name: Smoke
+    expect:
+      # 201 on a cold volume, 409 when the account survived from an earlier run. Both
+      # prove the endpoint works; neither is a reason to fail. See note 1 above.
+      status: [201, 409]
+
+  - name: login-sets-session-cookie
+    owner: chatbot-backend
+    POST: /api/v1/auth/login
+    body:
+      email: smoke-0001@auth.test
+      password: "${SMOKE_PASSWORD}"
+    expect:
+      status: 200
+      cookie: session
+      json:
+        user:
+          email: smoke-0001@auth.test
+
+  - name: session-cookie-attributes
+    owner: chatbot-backend
+    # A second login on purpose: this asserts the attribute set on its own step so a
+    # missing HttpOnly reports as a cookie-hardening failure rather than as a broken
+    # login. Logging in twice is legal and simply supersedes the first session.
+    POST: /api/v1/auth/login
+    body:
+      email: smoke-0001@auth.test
+      password: "${SMOKE_PASSWORD}"
+    expect:
+      status: 200
+      headers:
+        # Order-independent, and case-insensitive because frameworks disagree on the
+        # casing of the SameSite value. `Secure` is intentionally not among these.
+        set-cookie: '(?i)(?=.*httponly)(?=.*samesite=lax)(?=.*path=/)session='
+
+  - name: me-identifies-the-user
+    owner: chatbot-backend
+    GET: /api/v1/auth/me
+    expect:
+      status: 200
+      json:
+        user:
+          email: smoke-0001@auth.test
+      # A hash or a password reaching this response would be a serious leak, and the
+      # cheapest place to notice is here.
+      body_excludes: '(?i)(argon2|password|\$a2)'
+
+  - name: logout-ends-session
+    owner: chatbot-backend
+    POST: /api/v1/auth/logout
+    expect:
+      status: 204
+
+  - name: logout-is-idempotent
+    owner: chatbot-backend
+    # Now sessionless. 204 again, because logging out when not logged in is not an error.
+    POST: /api/v1/auth/logout
+    expect:
+      status: 204
+
+  - name: me-after-logout-is-401
+    owner: chatbot-backend
+    GET: /api/v1/auth/me
+    expect:
+      status: 401
+      json:
+        error:
+          code: AUTH_REQUIRED
+
+  # --------------------------------------------------------------- credential handling
+
+  - name: login-rejects-wrong-password
+    owner: chatbot-backend
+    POST: /api/v1/auth/login
+    body:
+      email: smoke-0001@auth.test
+      password: definitely-not-the-password
+    expect:
+      status: 401
+      json:
+        error:
+          code: AUTH_BAD_CREDENTIALS
+
+  - name: login-rejects-unknown-email-identically
+    owner: chatbot-backend
+    # Same status and same code as the step above. If these two ever diverge, login has
+    # become an oracle for which addresses have accounts.
+    POST: /api/v1/auth/login
+    body:
+      email: no-such-account-0001@auth.test
+      password: definitely-not-the-password
+    expect:
+      status: 401
+      json:
+        error:
+          code: AUTH_BAD_CREDENTIALS
+
+  - name: register-rejects-short-password
+    owner: chatbot-backend
+    POST: /api/v1/auth/register
+    body:
+      email: smoke-short-0001@auth.test
+      # A nonsense value under 12 characters, chosen so it cannot occur in any validation
+      # message. It is the canary for the next assertion.
+      password: zqx7canary
+      signup_code: "${SIGNUP_CODE}"
+    expect:
+      # 422 and not the error envelope: the policy is stated, so violating it is a
+      # validation failure. See contracts/README.md.
+      status: 422
+      body_matches: 'password'
+      # THE ONE THAT MATTERS. The frozen ValidationError schema has an `input` field, and
+      # the framework populates it with the offending value by default — which means a
+      # rejected password is echoed back in the 422 body unless the handler redacts it.
+      # A correct implementation scrubs `input` for password fields.
+      body_excludes: 'zqx7canary'
+
+  - name: register-rejects-common-password
+    owner: chatbot-backend
+    # Long enough to pass the length rule and still refused, which is the whole reason
+    # the blocklist exists.
+    POST: /api/v1/auth/register
+    body:
+      email: smoke-common-0001@auth.test
+      password: password1234
+      signup_code: "${SIGNUP_CODE}"
+    expect:
+      status: 422
+      body_matches: 'password'
+      # Same redaction rule. `password` on its own still matches the field name in `loc`,
+      # so this excludes the value without weakening the assertion above.
+      body_excludes: 'password1234'
+
+  # ------------------------------------------------------------------------- the gates
+
+  - name: register-rejects-wrong-signup-code
+    owner: chatbot-backend
+    # A fresh email, so a 409 cannot mask the 403 — and the backend must check the code
+    # before the email for exactly that reason.
+    POST: /api/v1/auth/register
+    body:
+      email: smoke-uninvited-0001@auth.test
+      password: "${SMOKE_PASSWORD}"
+      signup_code: not-the-signup-code
+    expect:
+      status: 403
+      json:
+        error:
+          code: AUTH_SIGNUP_CLOSED
+
+  - name: uninvited-email-was-not-created
+    owner: chatbot-backend
+    # The 403 above must have created nothing. If it did, this login succeeds and the
+    # gate was cosmetic.
+    POST: /api/v1/auth/login
+    body:
+      email: smoke-uninvited-0001@auth.test
+      password: "${SMOKE_PASSWORD}"
+    expect:
+      status: 401
+      json:
+        error:
+          code: AUTH_BAD_CREDENTIALS
+
+  - name: cross-origin-login-is-refused
+    owner: chatbot-backend
+    POST: /api/v1/auth/login
+    headers:
+      Origin: http://evil.test
+      Sec-Fetch-Site: cross-site
+    body:
+      email: smoke-0001@auth.test
+      password: "${SMOKE_PASSWORD}"
+    expect:
+      status: 403
+      json:
+        error:
+          code: AUTH_CROSS_ORIGIN
+
+  - name: correct-origin-is-accepted
+    owner: chatbot-backend
+    # The mirror of the step above, and the one that catches an origin check configured
+    # too tightly. A guard that refuses everything also passes the negative test.
+    POST: /api/v1/auth/login
+    headers:
+      Origin: http://localhost:8080
+      Sec-Fetch-Site: same-origin
+    body:
+      email: smoke-0001@auth.test
+      password: "${SMOKE_PASSWORD}"
+    expect:
+      status: 200
+      cookie: session
+
+  # ------------------------------------------------------- the app shell serves the routes
+
+  - name: spa-serves-login-deep-link
+    owner: frontend
+    # Not API surface, so it opts out of the contract check. This catches a real seam bug
+    # rather than a hypothetical one: without an SPA fallback, a deep link to a
+    # client-side route 404s even though in-app navigation to it works.
+    GET: /login
+    contract: false
+    expect:
+      status: 200
+      body_matches: '<div id="root"'
+
+  - name: spa-serves-register-deep-link
+    owner: frontend
+    GET: /register
+    contract: false
+    expect:
+      status: 200
+      body_matches: '<div id="root"'
+
+  # ------------------------------------------------------------------------ the throttle
+  # LAST, and on their own emails. These exhaust a bucket by design — see note 2.
+
+  - name: login-throttles-after-repeated-failures
+    owner: chatbot-backend
+    # `retry` re-issues the request until the expectation holds, so this single step
+    # expresses "keep guessing until the limiter answers" without eleven near-identical
+    # copies. It fails if 429 never arrives, which is the criterion.
+    POST: /api/v1/auth/login
+    body:
+      email: smoke-throttle-0001@auth.test
+      password: wrong-every-single-time
+    retry:
+      attempts: 15
+      delay: 0.2
+    expect:
+      status: 429
+      json:
+        error:
+          code: AUTH_RATE_LIMITED
+      headers:
+        retry-after: '^\d+$'
+
+  - name: throttle-is-scoped-to-the-email
+    owner: chatbot-backend
+    # A different address must still get a normal 401. If this returns 429, the limiter
+    # is global and one attacker can lock every account out — a denial of service wearing
+    # a security control's clothes.
+    POST: /api/v1/auth/login
+    body:
+      email: smoke-unthrottled-0001@auth.test
+      password: also-wrong
+    expect:
+      status: 401
+      json:
+        error:
+          code: AUTH_BAD_CREDENTIALS
