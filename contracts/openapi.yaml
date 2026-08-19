@@ -1,35 +1,126 @@
-# HTTP interface. Owned by this repo; vendored read-only into the product repos.
-# Skeleton — no endpoints defined yet.
+# Frozen interface. Owned by this repo; product repos consume it.
+# Drafted with ./scripts/harvest-contract.py, then reviewed by hand —
+# the draft comes from the implementation, the promise does not.
+# Editing note: this file is rewritten on --write, so comments inside
+# it do not survive. Durable guidance belongs in contracts/README.md.
+
 openapi: 3.1.0
-
 info:
-  title: <service> API
-  version: 0.0.0
-  description: >-
-    Frozen HTTP contract between the backend and its consumers. Changes are made
-    here only, in a dedicated commit, before any implementation.
-
+  title: agent-app API
+  version: 1.0.0
+  description: Frozen HTTP contract between the backend and its consumers. Changes are made here only,
+    in a dedicated commit, before any implementation.
 servers:
-  - url: <https://api.example.test>
-    description: <environment>
-
-paths: {}
-  # /v1/<resource>:
-  #   get:
-  #     operationId: <operationId>
-  #     responses:
-  #       "200":
-  #         description: <description>
-  #         content:
-  #           application/json:
-  #             schema:
-  #               $ref: "#/components/schemas/<Schema>"
-
+- url: /api
+  description: The single origin the browser uses. The proxy strips /api before forwarding, so every path
+    below is written as the backend serves it. Same-origin by design — see the frontend's ADR 0001.
+paths:
+  /healthz:
+    get:
+      tags:
+      - ops
+      summary: Liveness of the API
+      description: Answers 200 as long as the API process is serving. Says nothing about its dependencies,
+        so it is safe to poll and useless as a readiness gate for anything downstream.
+      operationId: getHealth
+      responses:
+        '200':
+          description: The API is serving.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/HealthResponse'
+  /v1/chat:
+    post:
+      tags:
+      - chat
+      summary: Send one message and get one reply
+      description: 'Stateless: no thread, no history, no session. Each call is independent and the caller
+        keeps whatever conversation state it needs. Anything conversational — threads, streaming, persistence
+        — is a later, additive change and is NOT promised here.'
+      operationId: postChat
+      requestBody:
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/ChatRequest'
+        required: true
+      responses:
+        '200':
+          description: The reply to this message.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ChatResponse'
+        '422':
+          description: The body failed validation; `detail` lists what.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/HTTPValidationError'
 components:
-  schemas: {}
-    # <Schema>:
-    #   type: object
-    #   required: [<field>]
-    #   properties:
-    #     <field>:
-    #       type: string
+  schemas:
+    ChatRequest:
+      properties:
+        message:
+          type: string
+          maxLength: 8000
+          minLength: 1
+          description: The user's message. 1-8000 characters.
+      type: object
+      required:
+      - message
+      title: ChatRequest
+      description: Request body for postChat. Unknown fields are ignored rather than rejected, so a caller
+        may send fields a given version does not yet know about.
+    ChatResponse:
+      properties:
+        reply:
+          type: string
+          description: The assistant's reply, complete and unstreamed.
+      type: object
+      required:
+      - reply
+      title: ChatResponse
+      description: Response body for postChat.
+    HTTPValidationError:
+      properties:
+        detail:
+          items:
+            $ref: '#/components/schemas/ValidationError'
+          type: array
+      type: object
+      title: HTTPValidationError
+      description: Returned with 422 when the request body is not valid.
+    HealthResponse:
+      properties:
+        status:
+          type: string
+          const: ok
+      type: object
+      required:
+      - status
+      title: HealthResponse
+      description: Response body for getHealth.
+    ValidationError:
+      properties:
+        loc:
+          items:
+            anyOf:
+            - type: string
+            - type: integer
+          type: array
+        msg:
+          type: string
+        type:
+          type: string
+        input: {}
+        ctx:
+          type: object
+      type: object
+      required:
+      - loc
+      - msg
+      - type
+      title: ValidationError
+      description: 'One validation problem: where it was, and what was wrong.'
