@@ -27,7 +27,8 @@ frontend, whose route guard cannot pass until `/v1/auth/me` answers. No infra sl
      thing that says they work together. -->
 
 <!-- iterate:begin -->
-_Never run._
+- **verified** — 20260819T103439Z, 1 attempt(s)
+- report: `changes/0001-auth/runs/20260819T103439Z/report.md`
 <!-- iterate:end -->
 
 ## Blockers
