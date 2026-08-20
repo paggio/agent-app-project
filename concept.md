@@ -3,7 +3,13 @@
 Reference document for initializing a three-tier system (backend, frontend,
 infrastructure) developed primarily through AI coding agents.
 
-**Status:** initial version — conventions, not yet battle-tested.
+**Status:** a snapshot of the original design, kept for the reasoning behind it.
+
+> **Where this disagrees with `docs/adr/` or `docs/init/`, they win.** This file quotes file
+> contents and script bodies that have since moved on — most notably `fanout.sh`, which is
+> described here in the form `docs/adr/0002` was written to replace. It is not maintained
+> against the tree; the ADRs are the record of what was decided and `docs/init/` is the
+> record of what was run.
 **Review cadence:** revisit after ~10 completed changes, and after any major model release.
 
 ---

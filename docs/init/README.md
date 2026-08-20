@@ -75,13 +75,26 @@ Adds, on top of the same idea:
 
 ```
 contracts/          the interfaces — owned here and only here
-changes/NNNN-*/     one directory per cross-repo feature
-scripts/            new-change.sh, fanout.sh, lock.sh
+changes/NNNN-*/     one directory per cross-repo feature; change.yaml is its machine half
+stack/compose.yml   every repo joined into ONE compose project, so the seams are real
+stack/dev.env       the one source of values for the stack AND the suites
+smoke/baseline.yaml the cross-repo regression suite, every step with an owner
+scripts/            new-change.sh scaffolds; manifest.py --validate is the ship gate;
+                    fanout.sh dispatches; verify.sh is the oracle; iterate.sh is the
+                    loop; smoke.py asserts; lock.sh pins. `--help` on any of them.
 repos.lock          the SHA triple known to work together
 docs/init/          this playbook
-.claude/commands/   slash commands for the orchestration steps
+.github/workflows/  check-docs.py and manifest.py --validate over every change
+.claude/commands/   ship.md — the one orchestration step that takes an argument
+.claude/skills/     the four lanes' depth: freeze-contract, align-contract,
+                    plan-cross-repo-change, deploy-to-aws
 .claude/hooks/no-subrepo-edits.sh   PreToolUse guard on Bash
 ```
+
+Steps 1-4 of this playbook produce a documents-and-scripts repo. `stack/`, `smoke/` and the
+deploy-verify machinery arrived with `docs/adr/0002`, which also made this repo depend on
+Docker and on the submodules being checked out. Planning still works without them; shipping
+does not.
 
 The `deny` rules in `.claude/settings.json` stop the editing tools from reaching a
 submodule. They do not stop a shell command — `sed -i`, `tee`, a redirect. The

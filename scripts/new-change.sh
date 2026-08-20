@@ -23,6 +23,19 @@ for f in "$DEST"/*.md "$DEST"/*.yaml; do
   LC_ALL=C sed -i '' -e "s/0000/$NEXT/g" -e "s/<slug>/$SLUG/g" "$f" 2>/dev/null \
     || LC_ALL=C sed -i -e "s/0000/$NEXT/g" -e "s/<slug>/$SLUG/g" "$f"
 done
+
+# Strip the TEMPLATE-ONLY blocks. Without this every scaffolded change inherits them —
+# 0001-auth still said "EXAMPLE / TEMPLATE" at the top of its STATUS.md after shipping.
+for f in "$DEST"/*.md; do
+  [ -f "$f" ] || continue
+  python3 - "$f" <<'PY'
+import re, sys
+p = sys.argv[1]
+s = open(p).read()
+s = re.sub(r"<!--\s*TEMPLATE-ONLY:.*?-->\n?", "", s, flags=re.S)
+open(p, "w").write(s)
+PY
+done
 # The example directory is named 0000-example-change; the copy is NNNN-<slug>.
 LC_ALL=C sed -i '' -e "s/^change: .*/change: $NEXT-$SLUG/" "$DEST/change.yaml" 2>/dev/null \
   || LC_ALL=C sed -i -e "s/^change: .*/change: $NEXT-$SLUG/" "$DEST/change.yaml"

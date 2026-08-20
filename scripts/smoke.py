@@ -272,9 +272,16 @@ def subset_of(expected: Any, actual: Any, path: str = "") -> str | None:
 class Contract:
     """The frozen OpenAPI spec, used to assert that smoke only exercises declared surface.
 
-    This catches mechanically what the contract-conformance agent catches by reading: a
-    route that works but was never frozen. A green suite over undeclared endpoints is the
-    failure mode this exists to prevent.
+    A green suite over undeclared endpoints is the failure mode this exists to prevent: a
+    route that works but was never frozen.
+
+    NOTE WHAT THIS IS NOT. It answers three questions — is the prefix-stripped path in
+    `paths:`, is the method declared, is the returned status listed — and nothing else. It
+    never inspects `requestBody`, response schemas, required fields or types, so a response
+    whose body violates the frozen schema passes as long as its status is declared. The
+    structural check is `harvest-contract.py --diff`, which verify.sh runs before smoke, and
+    each product repo's own `make contract`. docs/adr/0003 records the residual gap as an
+    accepted cost rather than leaving it implied.
     """
 
     def __init__(self, spec_path: str, strip_prefix: str = "") -> None:
