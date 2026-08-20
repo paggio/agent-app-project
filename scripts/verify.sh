@@ -66,6 +66,12 @@ TS="$(date -u +%Y%m%dT%H%M%SZ)"
 [ -n "$RUN_DIR" ] || RUN_DIR="$CHANGE_DIR/runs/$TS"
 mkdir -p "$RUN_DIR"
 
+# The run nonce that namespaces every identity a suite creates. Lowercased, because it ends
+# up in an email local part and the backend normalises addresses to lower case — an
+# uppercase nonce could never match the value it just registered.
+SMOKE_RUN_ID="$(printf '%s' "$TS" | tr '[:upper:]' '[:lower:]')"
+export SMOKE_RUN_ID
+
 eval "$(./scripts/manifest.py "$CHANGE_DIR" --shell)"
 [ "${MANIFEST_OK:-0}" = "1" ] || {
   echo "verify: change.yaml has problems (above) — fix them first" >&2; exit 2; }
@@ -340,7 +346,7 @@ if [ "$CHANGE_DEPLOY_LOCAL" = "1" ]; then
   # `remote` steps assert the deployed origin and cannot pass here. Excluded rather than
   # filtered in, so an ordinary untagged step is asserted against BOTH origins by default.
   set +e
-  BACKEND_DIRECT_BASE="$DIRECT_BASE" SMOKE_ORIGIN="$BASE" SMOKE_RUN_ID="$TS" \
+  BACKEND_DIRECT_BASE="$DIRECT_BASE" SMOKE_ORIGIN="$BASE" SMOKE_RUN_ID="$SMOKE_RUN_ID" \
     ./scripts/smoke.py "${SUITES[@]}" \
       --base "$BASE" \
       --contract contracts/openapi.yaml \
@@ -471,7 +477,7 @@ elif [ "$CHANGE_DEPLOY_INFRA" = "1" ]; then
   # remote analogue, and the per-process throttle. Everything else is asserted against
   # both origins, which is the point of the default.
   set +e
-  SMOKE_ORIGIN="$INFRA_APP_BASE_URL" SMOKE_RUN_ID="$TS" \
+  SMOKE_ORIGIN="$INFRA_APP_BASE_URL" SMOKE_RUN_ID="$SMOKE_RUN_ID" \
     ./scripts/smoke.py smoke/baseline.yaml "$CHANGE_SUITE" \
       --base "$INFRA_APP_BASE_URL" \
       --contract contracts/openapi.yaml \

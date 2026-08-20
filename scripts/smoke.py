@@ -341,7 +341,13 @@ def run_step(client: httpx.Client, step: dict[str, Any], scope: dict[str, Any],
     headers = interpolate(step.get("headers") or {}, scope)
     body = interpolate(step.get("body"), scope) if "body" in step else None
     form = interpolate(step.get("form"), scope) if "form" in step else None
-    expect = step.get("expect") or {}
+    # Interpolated like the request, which it was NOT before: a `${VAR}` inside expect stayed
+    # a literal, so an assertion could never match a value the request had templated. It
+    # surfaced the moment identities were namespaced with ${SMOKE_RUN_ID} — the request
+    # registered smoke-0001-<nonce>@auth.test and the expectation compared against the raw
+    # `${SMOKE_RUN_ID}` string. An expectation that cannot reference what the request sent
+    # is not much of an expectation.
+    expect = interpolate(step.get("expect") or {}, scope)
     retry = step.get("retry") or {}
     attempts = int(retry.get("attempts", 1))
     delay = float(retry.get("delay", 1.0))

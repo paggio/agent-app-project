@@ -109,6 +109,10 @@ if [ ! -d "$FROZEN_CONTRACTS" ]; then
     exit 2
   fi
 fi
+# Absolute, resolved once. The dispatched session's cwd is the submodule, so a relative
+# path would not resolve there — and naively prefixing $CONTROL breaks when --run-dir is
+# already absolute, which is how iterate.sh may call this.
+FROZEN_ABS="$(cd "$FROZEN_CONTRACTS" && pwd)"
 
 PIDS=()
 LAUNCHED=()
@@ -130,8 +134,8 @@ for r in $TARGETS; do
   PROMPT="Implement your slice of this change: $CONTROL/$SLICE
 Read $CONTROL/$CHANGE_DIR/BRIEF.md for full context and acceptance criteria.
 
-The contracts you build against are at $CONTROL/$FROZEN_CONTRACTS — contracts/ exactly as
-of ${CHANGE_FREEZE_SHA}, extracted for this run. The control repo's working copy is not
+The contracts you build against are at $FROZEN_ABS — contracts/ exactly as of
+${CHANGE_FREEZE_SHA}, extracted for this run. The control repo's working copy is not
 available to you; it may have moved on. If your slice appears to require a contract
 change, STOP and report it rather than working around it.
 
@@ -193,6 +197,7 @@ $EXTRA"
     "$CLAUDE_BIN" -p "$PROMPT" \
       --permission-mode auto \
       --add-dir "$CONTROL/$CHANGE_DIR" \
+      --add-dir "$FROZEN_ABS" \
       --add-dir "$CONTROL/smoke" \
       --add-dir "$CONTROL/stack"
     # --add-dir rather than the additionalDirectories setting: the setting grants file
