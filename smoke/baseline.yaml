@@ -43,5 +43,52 @@ steps:
     # origin-reaches-backend fails but this passes, the fault is the proxy wiring, not
     # the backend — which is the difference between a frontend slice and a backend slice.
     base: ${BACKEND_DIRECT_BASE}
+    # The only local-only step in the baseline. A container port has no remote analogue,
+    # and a directly reachable backend in a deployed environment is a finding, not a
+    # fixture. That the rest of this file is origin-portable is a good sign.
+    tags: [local]
     expect:
       status: 200
+
+  # --------------------------------------------------------- the /api prefix posture
+  # contracts/README.md § "The /api prefix is an asserted invariant". These are untagged
+  # because they are invariants of ANY origin, and asserting them locally too is what
+  # keeps the local pass honest about the same property.
+
+  - name: api-prefix-reaches-the-api
+    owner: chatbot-backend
+    GET: /api/healthz
+    expect:
+      status: 200
+      json:
+        status: ok
+      # The `json` clause already forces a decodable body, so the SPA shell fails it. This
+      # is belt-and-braces AND documentation: a future author cannot weaken this step
+      # without deleting a line that says what it is for. The frontend answers any
+      # unmatched path with the shell and a 200, so an edge that fails to match /api/*
+      # returns 200 text/html rather than a 404.
+      body_excludes: '<div id="root"'
+
+  - name: api-prefix-is-not-doubled
+    owner: chatbot-backend
+    # THE ONE THAT EARNS ITS PLACE. Locally Caddy's handle_path strips one /api, the
+    # backend sees /api/healthz, and 404 is the pass. If someone makes the backend
+    # prefix-aware instead — FastAPI(root_path="/api") — it serves 200 and this fails.
+    # That catches the shortcut from outside, without reading any code, at the moment it
+    # is introduced rather than when someone notices the contract has become a lie.
+    GET: /api/api/healthz
+    # A deliberately undeclared path must not be checked against the spec.
+    contract: false
+    expect:
+      status: 404
+
+  - name: prefix-boundary-is-respected
+    owner: frontend
+    # A path that merely BEGINS with the characters `api` must reach the app. handle_path
+    # /api/* already gets this right, so it is free locally; remotely it catches a rule
+    # written /api* instead of /api/*.
+    GET: /apiary
+    contract: false
+    expect:
+      status: 200
+      body_matches: '<div id="root"'

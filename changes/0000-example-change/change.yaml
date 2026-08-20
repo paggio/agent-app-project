@@ -17,6 +17,16 @@ slices:
   - infra
 
 deploy:
+  # Which environment an infra deploy targets. REQUIRED when infra is true, and there is
+  # no default — a default is how prod gets applied by a typo. `prod` is not in the
+  # allowlist in scripts/manifest.py; adding one is a reviewed commit in this repo, not a
+  # change author's decision. See docs/adr/0004.
+  #
+  # Note this is NOT "local". deploy.local is the separate boolean below that means "bring
+  # up stack/compose.yml"; conflating the two would make `environment: local` expressible
+  # and meaningless.
+  # environment: staging
+
   # Bring up the joined local stack and smoke it. Effectively always true — it is the
   # only check that proves the repos work together rather than merely compiling apart.
   local: true

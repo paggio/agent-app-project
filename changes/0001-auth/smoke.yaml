@@ -36,7 +36,7 @@ steps:
     owner: chatbot-backend
     POST: /api/v1/auth/register
     body:
-      email: smoke-0001@auth.test
+      email: smoke-0001-${SMOKE_RUN_ID}@auth.test
       password: "${SMOKE_PASSWORD}"
       signup_code: "${SIGNUP_CODE}"
       display_name: Smoke
@@ -49,14 +49,14 @@ steps:
     owner: chatbot-backend
     POST: /api/v1/auth/login
     body:
-      email: smoke-0001@auth.test
+      email: smoke-0001-${SMOKE_RUN_ID}@auth.test
       password: "${SMOKE_PASSWORD}"
     expect:
       status: 200
       cookie: session
       json:
         user:
-          email: smoke-0001@auth.test
+          email: smoke-0001-${SMOKE_RUN_ID}@auth.test
 
   - name: session-cookie-attributes
     owner: chatbot-backend
@@ -65,7 +65,7 @@ steps:
     # login. Logging in twice is legal and simply supersedes the first session.
     POST: /api/v1/auth/login
     body:
-      email: smoke-0001@auth.test
+      email: smoke-0001-${SMOKE_RUN_ID}@auth.test
       password: "${SMOKE_PASSWORD}"
     expect:
       status: 200
@@ -74,6 +74,35 @@ steps:
         # casing of the SameSite value. `Secure` is intentionally not among these.
         set-cookie: '(?i)(?=.*httponly)(?=.*samesite=lax)(?=.*path=/)session='
 
+  - name: session-cookie-is-secure-on-https
+    owner: chatbot-backend
+    # REMOTE ONLY, and the only assertion that catches a deployed environment which forgot
+    # SESSION_COOKIE_SECURE=true. Over HTTPS the cookie jar accepts a cookie WITHOUT
+    # `Secure` perfectly happily, so every session-carrying step below still passes while
+    # the flag is missing — this is the one place the omission becomes visible.
+    #
+    # `expect.headers` reads the raw Set-Cookie header, which bypasses the jar entirely;
+    # that is why this cannot be expressed through `expect.cookie`, and why the local suite
+    # can safely omit `Secure` (see contracts/README.md).
+    #
+    # OWNERSHIP IS ARGUABLE, and it is decided by what this change contains. In a deployed
+    # environment the app's environment is supplied by infra, so infra is the more natural
+    # owner — but this change has no infra slice, and a step owned by a repo that is not a
+    # slice is a failure nobody can be sent to fix. So: chatbot-backend, which reads the
+    # setting. When a change with an infra slice inherits this step, revisit it.
+    #
+    # This step does not run for THIS change: 0001-auth is deploy.infra: false, so there is
+    # no remote pass. It is written now because the assertion is the durable part.
+    tags: [remote]
+    POST: /api/v1/auth/login
+    body:
+      email: smoke-0001-${SMOKE_RUN_ID}@auth.test
+      password: "${SMOKE_PASSWORD}"
+    expect:
+      status: 200
+      headers:
+        set-cookie: '(?i)(?=.*secure)session='
+
   - name: me-identifies-the-user
     owner: chatbot-backend
     GET: /api/v1/auth/me
@@ -81,7 +110,7 @@ steps:
       status: 200
       json:
         user:
-          email: smoke-0001@auth.test
+          email: smoke-0001-${SMOKE_RUN_ID}@auth.test
       # A hash or a password reaching this response would be a serious leak, and the
       # cheapest place to notice is here.
       body_excludes: '(?i)(argon2|password|\$a2)'
@@ -114,7 +143,7 @@ steps:
     owner: chatbot-backend
     POST: /api/v1/auth/login
     body:
-      email: smoke-0001@auth.test
+      email: smoke-0001-${SMOKE_RUN_ID}@auth.test
       password: definitely-not-the-password
     expect:
       status: 401
@@ -140,7 +169,7 @@ steps:
     owner: chatbot-backend
     POST: /api/v1/auth/register
     body:
-      email: smoke-short-0001@auth.test
+      email: smoke-short-0001-${SMOKE_RUN_ID}@auth.test
       # A nonsense value under 12 characters, chosen so it cannot occur in any validation
       # message. It is the canary for the next assertion.
       password: zqx7canary
@@ -162,7 +191,7 @@ steps:
     # the blocklist exists.
     POST: /api/v1/auth/register
     body:
-      email: smoke-common-0001@auth.test
+      email: smoke-common-0001-${SMOKE_RUN_ID}@auth.test
       password: password1234
       signup_code: "${SIGNUP_CODE}"
     expect:
@@ -180,7 +209,7 @@ steps:
     # before the email for exactly that reason.
     POST: /api/v1/auth/register
     body:
-      email: smoke-uninvited-0001@auth.test
+      email: smoke-uninvited-0001-${SMOKE_RUN_ID}@auth.test
       password: "${SMOKE_PASSWORD}"
       signup_code: not-the-signup-code
     expect:
@@ -195,7 +224,7 @@ steps:
     # gate was cosmetic.
     POST: /api/v1/auth/login
     body:
-      email: smoke-uninvited-0001@auth.test
+      email: smoke-uninvited-0001-${SMOKE_RUN_ID}@auth.test
       password: "${SMOKE_PASSWORD}"
     expect:
       status: 401
@@ -210,7 +239,7 @@ steps:
       Origin: http://evil.test
       Sec-Fetch-Site: cross-site
     body:
-      email: smoke-0001@auth.test
+      email: smoke-0001-${SMOKE_RUN_ID}@auth.test
       password: "${SMOKE_PASSWORD}"
     expect:
       status: 403
@@ -224,10 +253,10 @@ steps:
     # too tightly. A guard that refuses everything also passes the negative test.
     POST: /api/v1/auth/login
     headers:
-      Origin: http://localhost:8080
+      Origin: ${SMOKE_ORIGIN}
       Sec-Fetch-Site: same-origin
     body:
-      email: smoke-0001@auth.test
+      email: smoke-0001-${SMOKE_RUN_ID}@auth.test
       password: "${SMOKE_PASSWORD}"
     expect:
       status: 200
@@ -262,9 +291,17 @@ steps:
     # `retry` re-issues the request until the expectation holds, so this single step
     # expresses "keep guessing until the limiter answers" without eleven near-identical
     # copies. It fails if 429 never arrives, which is the criterion.
+    #
+    # LOCAL ONLY, and for flakiness rather than danger — the nonce above means this burns
+    # a fresh bucket, so it is safe against a shared environment. The reason is that the
+    # limiter's buckets are per-process, so with two or more backend tasks the effective
+    # limit multiplies by the replica count and the 429 may never arrive within `attempts`.
+    # A suite that flakes as a function of replica count is the worst kind: it looks like a
+    # security regression. Drop this tag when the limiter moves to a shared store.
+    tags: [local]
     POST: /api/v1/auth/login
     body:
-      email: smoke-throttle-0001@auth.test
+      email: smoke-throttle-0001-${SMOKE_RUN_ID}@auth.test
       password: wrong-every-single-time
     retry:
       attempts: 15
@@ -282,9 +319,13 @@ steps:
     # A different address must still get a normal 401. If this returns 429, the limiter
     # is global and one attacker can lock every account out — a denial of service wearing
     # a security control's clothes.
+    #
+    # Local only for the same reason, and one more: its meaning depends on the step above
+    # having exhausted a bucket. Splitting the pair across passes makes it assert nothing.
+    tags: [local]
     POST: /api/v1/auth/login
     body:
-      email: smoke-unthrottled-0001@auth.test
+      email: smoke-unthrottled-0001-${SMOKE_RUN_ID}@auth.test
       password: also-wrong
     expect:
       status: 401

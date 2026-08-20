@@ -451,8 +451,10 @@ elif [ "$CHANGE_DEPLOY_INFRA" = "1" ]; then
   . "$RUN_DIR/infra-outputs.env"
 
   stage "infra: cross-checks"
-  ./scripts/infra-crosscheck.sh --outputs "$RUN_DIR/infra-outputs.json" \
+  ./scripts/infra-crosscheck.py --outputs "$RUN_DIR/infra-outputs.json" \
       --contract contracts/openapi.yaml --strip-prefix "$INFRA_API_PATH_PREFIX" \
+      --backend-sha "$(git -C chatbot-backend rev-parse HEAD 2>/dev/null || true)" \
+      --frontend-sha "$(git -C frontend rev-parse HEAD 2>/dev/null || true)" \
     || fail_stage "infra: the deployed environment disagrees with the frozen contract" "infra"
 
   stage "remote: readiness at $INFRA_APP_BASE_URL"
