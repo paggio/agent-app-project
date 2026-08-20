@@ -21,7 +21,15 @@
 #                          repos still go out in parallel
 #     --run-dir DIR        where logs and fanout.json land
 #     --attempt N          label for the run directory and the prompt
+#     --require-brief      refuse to dispatch a repo with no failure-<repo>.md. iterate.sh
+#                          passes this on every repair pass: re-running an agent over code
+#                          it just wrote, with no evidence, is a blind retry.
+#     --timeout-s N        kill a slice that has not finished in N seconds (default 3600)
 #     --dry-run            print what would be dispatched, launch nothing
+#
+# Exit 0 = every slice reported ok. Exit 1 = slices ran, some failed. Exit 2 = refused to
+# dispatch anything (bad manifest, missing brief, nothing to do). The caller MUST treat 2
+# as fatal — see docs/adr/0003.
 set -euo pipefail
 
 ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
@@ -29,6 +37,8 @@ cd "$ROOT"
 CONTROL="$ROOT"
 
 CHANGE=""; ONLY=""; PROMPT_EXTRA=""; PROMPT_EXTRA_DIR=""; RUN_DIR=""; DRY=0; ATTEMPT=1
+REQUIRE_BRIEF=0; TIMEOUT_S="${FANOUT_TIMEOUT_S:-3600}"
+CLAUDE_BIN="${CLAUDE_BIN:-claude}"
 while [ $# -gt 0 ]; do
   case "$1" in
     --repos) ONLY="$(echo "$2" | tr ',' ' ')"; shift ;;
@@ -36,8 +46,10 @@ while [ $# -gt 0 ]; do
     --prompt-extra-dir) PROMPT_EXTRA_DIR="$2"; shift ;;
     --run-dir) RUN_DIR="$2"; shift ;;
     --attempt) ATTEMPT="$2"; shift ;;
+    --require-brief) REQUIRE_BRIEF=1 ;;
+    --timeout-s) TIMEOUT_S="$2"; shift ;;
     --dry-run) DRY=1 ;;
-    -h|--help) sed -n '2,25p' "${BASH_SOURCE[0]}"; exit 0 ;;
+    -h|--help) sed -n '2,33p' "${BASH_SOURCE[0]}"; exit 0 ;;
     -*) echo "fanout: unknown option $1" >&2; exit 2 ;;
     *) CHANGE="$1" ;;
   esac
@@ -54,23 +66,11 @@ eval "$(./scripts/manifest.py "$CHANGE_DIR" --shell)"
   exit 2
 }
 
-# The freeze SHA is a precondition, not a warning. The old check was
-# `grep -q '[0-9a-f]\{7,\}' BRIEF.md`, which any stray hex in prose satisfied — so a
-# change could fan out against an unfrozen contract and three agents would each invent
-# their own interface, which is the exact failure docs/adr/0001 exists to prevent.
-if [ -z "$CHANGE_FREEZE_SHA" ]; then
-  echo "fanout: change.yaml has no freeze_sha — freeze the contract first (see the" >&2
-  echo "fanout: freeze-contract skill), then record the commit in change.yaml." >&2
-  exit 1
-fi
-if ! git cat-file -e "${CHANGE_FREEZE_SHA}^{commit}" 2>/dev/null; then
-  echo "fanout: freeze_sha ${CHANGE_FREEZE_SHA} is not a commit in this repo" >&2
-  exit 1
-fi
-if ! git merge-base --is-ancestor "$CHANGE_FREEZE_SHA" HEAD 2>/dev/null; then
-  echo "fanout: warning — freeze_sha ${CHANGE_FREEZE_SHA} is not an ancestor of HEAD;" >&2
-  echo "fanout: the slices would be built against a contract this branch does not have." >&2
-fi
+# The freeze SHA is checked by manifest.py --validate, which ran above: it must be a real
+# commit and an ancestor of HEAD, and contracts/ must be clean. Those three checks used to
+# live here, which meant they only ran on the dispatch path — and iterate.sh swallowed this
+# script's exit code, so a change with no freeze SHA was deployed and smoked anyway and
+# reported `verified`. One gate, three callers.
 
 TARGETS="$CHANGE_SLICES"
 if [ -n "$ONLY" ]; then
@@ -96,16 +96,44 @@ fi
 
 echo "fanout: change=$CHANGE attempt=$ATTEMPT repos=[${TARGETS# }] run=$RUN_DIR"
 
+# The contracts the slices build against, extracted from the freeze commit rather than
+# handed over as the working tree. The prompt used to SAY "FROZEN at <sha>" while granting
+# --add-dir on contracts/, i.e. on whatever that directory happened to contain — so the
+# freeze was prose the agent was trusted to honour. Now it is the only tree it can read.
+FROZEN_CONTRACTS="$RUN_DIR/contracts"
+if [ ! -d "$FROZEN_CONTRACTS" ]; then
+  mkdir -p "$FROZEN_CONTRACTS"
+  if ! git archive "$CHANGE_FREEZE_SHA" contracts \
+       | tar -x -C "$RUN_DIR" 2>/dev/null; then
+    echo "fanout: could not extract contracts/ at $CHANGE_FREEZE_SHA" >&2
+    exit 2
+  fi
+fi
+
 PIDS=()
 LAUNCHED=()
+WATCHDOGS=()
 for r in $TARGETS; do
   SLICE="$CHANGE_DIR/$r.md"
-  [ -f "$SLICE" ] || { echo "fanout: missing slice file $SLICE" >&2; exit 1; }
+  [ -f "$SLICE" ] || { echo "fanout: missing slice file $SLICE" >&2; exit 2; }
+
+  # A repair pass with no evidence is a blind re-run: the agent cannot tell attempt 2 from
+  # attempt 1, and it re-reads code it just wrote with no reason to change its approach.
+  if [ "$REQUIRE_BRIEF" = "1" ] \
+     && { [ -z "$PROMPT_EXTRA_DIR" ] || [ ! -f "$PROMPT_EXTRA_DIR/failure-$r.md" ]; }; then
+    echo "fanout: attempt $ATTEMPT for $r has no failure brief at" >&2
+    echo "fanout:   ${PROMPT_EXTRA_DIR:-<none>}/failure-$r.md" >&2
+    echo "fanout: a repair pass with no evidence is a blind re-run. Refusing." >&2
+    exit 2
+  fi
 
   PROMPT="Implement your slice of this change: $CONTROL/$SLICE
 Read $CONTROL/$CHANGE_DIR/BRIEF.md for full context and acceptance criteria.
-The contracts under $CONTROL/contracts/ are FROZEN at ${CHANGE_FREEZE_SHA}. If your slice
-appears to require a contract change, STOP and report it rather than working around it.
+
+The contracts you build against are at $CONTROL/$FROZEN_CONTRACTS — contracts/ exactly as
+of ${CHANGE_FREEZE_SHA}, extracted for this run. The control repo's working copy is not
+available to you; it may have moved on. If your slice appears to require a contract
+change, STOP and report it rather than working around it.
 
 After every slice lands, the control repo brings up all of these repos together as one
 stack and runs $CONTROL/$CHANGE_DIR/$CHANGE_SMOKE_FILE against a single origin
@@ -114,7 +142,25 @@ whose owner is '$r' are what your slice will actually be judged on, and they run
 your code through a reverse proxy, not against your test doubles.
 
 Finish with your repo's gates passing, then open a pull request.
-Return exactly OK or FAIL:<one-line reason> as the last line of your output."
+
+When you are done, print this block as the LAST thing you output. Markdown around it is
+fine; the three lines themselves must be exact.
+
+<<<SLICE-RESULT
+{\"status\": \"...\", \"summary\": \"...\", \"pr\": \"...\", \"contract_gap\": null}
+SLICE-RESULT>>>
+
+status is exactly one of:
+  \"ok\"                   your slice is implemented, your repo's gates pass, PR opened
+  \"failed\"               you could not finish. summary says what stopped you.
+  \"blocked-by-contract\"  the slice CANNOT be implemented without changing the contracts
+                         above. Set contract_gap to the exact entry and the change
+                         required. Use this status ONLY for that. A red contract test in
+                         your own repo is \"failed\", not \"blocked-by-contract\" — this
+                         status stops the whole change with no retry and sends it back for
+                         a re-freeze.
+summary: one line, <= 200 characters.  pr: the URL, or null.
+If you do not print this block, your slice is recorded as failed."
 
   EXTRA="$SHARED_EXTRA"
   if [ -n "$PROMPT_EXTRA_DIR" ] && [ -f "$PROMPT_EXTRA_DIR/failure-$r.md" ]; then
@@ -138,23 +184,36 @@ $EXTRA"
   # Submodules land in detached HEAD; committing there loses the work. Branch first.
   git -C "$r" switch -c "feat/$CHANGE" 2>/dev/null || git -C "$r" switch "feat/$CHANGE"
 
+  # `set -m` so the child gets its own process group and the watchdog can kill the whole
+  # tree. A dispatched session spawns test runners and build tools that would otherwise
+  # outlive a plain `kill`.
+  set -m
   (
     cd "$r"
-    claude -p "$PROMPT" \
+    "$CLAUDE_BIN" -p "$PROMPT" \
       --permission-mode auto \
       --add-dir "$CONTROL/$CHANGE_DIR" \
-      --add-dir "$CONTROL/contracts" \
       --add-dir "$CONTROL/smoke" \
       --add-dir "$CONTROL/stack"
     # --add-dir rather than the additionalDirectories setting: the setting grants file
     # access only, while the flag also loads skills from the added directory.
     # smoke/ and stack/ are added so the agent can read what will be asserted against it
     # and how it will be deployed. Both are read-only to it by the control repo's hooks.
+    # contracts/ is NOT granted: the frozen copy inside $CHANGE_DIR/runs/... is, and it is
+    # already covered by the first --add-dir.
   ) > "$RUN_DIR/$r.log" 2>&1 &
+  pid=$!
+  set +m
 
-  PIDS+=($!)
+  # No timeout existed anywhere in the harness, so one hung session blocked the loop
+  # forever. `timeout(1)` is not on macOS, hence a watchdog per slice.
+  ( sleep "$TIMEOUT_S"; kill -TERM -"$pid" 2>/dev/null && touch "$RUN_DIR/.timeout-$r" ) \
+    >/dev/null 2>&1 &
+  WATCHDOGS+=($!)
+
+  PIDS+=("$pid")
   LAUNCHED+=("$r")
-  echo "fanout: dispatched $r (pid ${PIDS[${#PIDS[@]}-1]}) -> $RUN_DIR/$r.log"
+  echo "fanout: dispatched $r (pid $pid, timeout ${TIMEOUT_S}s) -> $RUN_DIR/$r.log"
 done
 
 if [ "$DRY" = "1" ]; then
@@ -170,22 +229,22 @@ RESULTS="$RUN_DIR/fanout.json"
 for i in "${!PIDS[@]}"; do
   r="${LAUNCHED[$i]}"
   if wait "${PIDS[$i]}"; then code=0; else code=$?; fi
-  last="$(grep -v '^[[:space:]]*$' "$RUN_DIR/$r.log" 2>/dev/null | tail -1 || true)"
-  case "$last" in
-    OK|OK.*)      status="ok";     reason="" ;;
-    FAIL:*)       status="failed"; reason="${last#FAIL:}" ;;
-    *)            if [ "$code" = "0" ]; then
-                    status="unclear"; reason="agent exited 0 without an OK/FAIL line"
-                  else
-                    status="failed";  reason="agent exited $code"
-                  fi ;;
-  esac
-  [ "$status" = "ok" ] || FAILED="$FAILED $r"
+  timed_out=0
+  [ -f "$RUN_DIR/.timeout-$r" ] && timed_out=1
   branch="$(git -C "$r" rev-parse --abbrev-ref HEAD 2>/dev/null || echo unknown)"
-  printf '%s\t%s\t%s\t%s\t%s\n' "$r" "$status" "$code" "$branch" "$reason" \
-    >> "$RUN_DIR/.results.tsv"
+  # The result is a parsed field, not a matched line. `case "$last" in OK|OK.*)` needed a
+  # literal dot, so `OK — done` and `**OK**` all fell through to "unclear", which counted
+  # as failed — a successful slice routinely earned a repair pass.
+  ./scripts/slice-result.py --log "$RUN_DIR/$r.log" --repo "$r" --exit "$code" \
+      --branch "$branch" --timed-out "$timed_out" >> "$RUN_DIR/.results.tsv"
+  status="$(tail -1 "$RUN_DIR/.results.tsv" | cut -f2)"
+  reason="$(tail -1 "$RUN_DIR/.results.tsv" | cut -f5)"
+  [ "$status" = "ok" ] || FAILED="$FAILED $r"
   echo "fanout: $r -> $status${reason:+ ($reason)}"
 done
+
+# Watchdogs are no longer needed; leaving them would keep the script alive for the timeout.
+for w in "${WATCHDOGS[@]:-}"; do kill "$w" 2>/dev/null || true; done
 
 python3 - "$RUN_DIR/.results.tsv" "$RESULTS" "$CHANGE" "$ATTEMPT" "$RUN_DIR" <<'PY'
 import json, os, sys
@@ -194,12 +253,16 @@ repos = {}
 for line in open(tsv):
     if not line.strip():
         continue
-    repo, status, code, branch, reason = (line.rstrip("\n").split("\t") + [""] * 5)[:5]
+    parts = (line.rstrip("\n").split("\t") + [""] * 7)[:7]
+    repo, status, code, branch, reason, pr, gap = parts
     repos[repo] = {
         "status": status,
         "exit": int(code) if code.isdigit() else code,
         "branch": branch,
         "reason": reason or None,
+        "pr": pr or None,
+        # A field, so iterate.sh stops grepping the whole file for the word "contract".
+        "contract_gap": gap or None,
         "log": os.path.join(run_dir, f"{repo}.log"),
     }
 json.dump({
@@ -207,10 +270,12 @@ json.dump({
     "attempt": int(attempt) if str(attempt).isdigit() else attempt,
     "ok": all(r["status"] == "ok" for r in repos.values()),
     "failed": sorted(k for k, v in repos.items() if v["status"] != "ok"),
+    "contract_gaps": sorted(k for k, v in repos.items()
+                            if v["status"] == "blocked-by-contract"),
     "repos": repos,
 }, open(out, "w"), indent=2)
 PY
-rm -f "$RUN_DIR/.results.tsv"
+rm -f "$RUN_DIR/.results.tsv" "$RUN_DIR"/.timeout-* 2>/dev/null || true
 
 echo "fanout: results -> $RESULTS"
 if [ -n "$FAILED" ]; then

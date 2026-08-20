@@ -21,6 +21,7 @@ import argparse
 import json
 import os
 import re
+import sys
 
 # Which containers a repo is answerable for. `primary` logs are always included;
 # `supporting` ones only when they actually complained, because a healthy datastore's
@@ -113,12 +114,17 @@ def main() -> int:
             out.append(f"- reason: {mine['reason']}")
         out.append("")
 
-    # The assertions this repo owns that failed.
+    # The assertions this repo owns that failed. smoke-remote.json is the deployed-origin
+    # pass; smoke-infra.json is kept so briefs from older runs still resolve.
     failures = []
-    for name in ("smoke.json", "smoke-infra.json"):
+    for name in ("smoke.json", "smoke-remote.json", "smoke-infra.json"):
         data = read_json(os.path.join(rd, name))
         if data:
-            failures += [f for f in data.get("failures", []) if f.get("owner") == repo]
+            for f in data.get("failures", []):
+                if f.get("owner") == repo:
+                    f = dict(f)
+                    f["_pass"] = "remote" if "remote" in name else "local"
+                    failures.append(f)
 
     if failures:
         out.append("## Failing assertions you own")
@@ -126,6 +132,9 @@ def main() -> int:
         for f in failures:
             out.append(f"### {f.get('name')}")
             out.append("")
+            # Which origin it failed against changes the diagnosis entirely: the same step
+            # failing remotely but not locally is an environment or edge problem.
+            out.append(f"- pass: `{f.get('_pass', 'local')}`")
             out.append(f"- request: `{f.get('request')}`")
             out.append(f"- expected: `{json.dumps(f.get('expected'))}`")
             actual = f.get("actual") or {}
@@ -176,20 +185,50 @@ def main() -> int:
         if content:
             section(f"### `{svc}` (errors and warnings only)", content)
 
+    # infra owns no containers, so the loop above finds nothing for it and its brief used to
+    # arrive carrying a stage string and nothing else. Its evidence lives in different
+    # files — including the outputs check, which nothing read at all.
+    infra_evidence = 0
+    if repo == "infra":
+        check = read_json(os.path.join(rd, "infra-outputs-check.json"))
+        if check and (check.get("problems") or check.get("warnings")):
+            body = "\n".join(["problems:"] + [f"  - {p}" for p in check.get("problems") or []]
+                             + ["warnings:"] + [f"  - {w}" for w in check.get("warnings") or []])
+            section("### outputs versus `contracts/infra-outputs.yaml`", body)
+            infra_evidence += 1
+        for name, title in (("infra-plan.txt", "the plan"),
+                            ("infra-deploy.log", "the apply"),
+                            ("infra-outputs.err", "the outputs target's stderr")):
+            content = tail(os.path.join(rd, name), args.log_lines)
+            if content:
+                section(f"### `{name}` — {title}", content)
+                infra_evidence += 1
+
     out.append("## Rules for this pass")
     out.append("")
     out.append("- Fix the cause. Do NOT change, weaken or delete the smoke assertion to make")
     out.append("  it pass — the assertion is the acceptance criterion, and it is owned by the")
     out.append("  control repo, not by you.")
-    out.append("- The contracts are still FROZEN. If the only correct fix requires changing")
-    out.append("  the contract, STOP and reply `FAIL:contract — <what needs to change>`.")
+    out.append("- The contracts are still FROZEN, and the copy you were given is the frozen")
+    out.append("  one. If the only correct fix requires changing the contract, STOP and")
+    out.append("  report `blocked-by-contract` with the exact entry that must change.")
     out.append("- Full evidence for this run, including the other repos' logs, is in")
     out.append(f"  `{os.path.abspath(rd)}`.")
     out.append("")
 
     with open(args.out, "w") as fh:
         fh.write("\n".join(out))
-    print(f"failure-brief: wrote {args.out} ({len(failures)} owned assertion failure(s))")
+
+    # A brief with no failing assertion, no log and no infra artefact says only "something
+    # went wrong somewhere". Dispatching that is a blind retry, so say so and let the loop
+    # decide — exit 3 rather than a silent 0.
+    evidence = len(failures) + (1 if logs_added else 0) + infra_evidence
+    print(f"failure-brief: wrote {args.out} ({len(failures)} owned assertion failure(s), "
+          f"evidence: {evidence})")
+    if evidence == 0:
+        print(f"failure-brief: no evidence was captured for {repo} — a repair pass from this "
+              f"brief would be a blind re-run", file=sys.stderr)
+        return 3
     return 0
 
 
