@@ -312,6 +312,19 @@ if [ "$CHANGE_DEPLOY_INFRA" = "1" ] && [ "$NO_INFRA" = "0" ]; then
   record_stage publish pass
 fi
 
+# Each product repo verifies its implementation against its OWN vendored copy. A slice that
+# implements the frozen contract without re-vendoring leaves its CI green against the old
+# promise — observed on 0002, in both slices at once. check-docs.py knows how to spot it but
+# runs as a make/CI gate, so the loop was blind to exactly the drift it exists to catch.
+for _r in $CHANGE_SLICES; do
+  for _f in openapi.yaml infra-outputs.yaml; do
+    [ -f "$_r/contracts/$_f" ] || continue
+    if ! cmp -s "contracts/$_f" "$_r/contracts/$_f"; then
+      fail_stage "preflight: $_r/contracts/$_f differs from contracts/$_f — re-vendor it in the slice, or its own CI is green against the wrong promise" "$_r" slice
+    fi
+  done
+done
+
 note "preflight ok"
 
 # The change's own suite must exist. It used to be a note, and the run continued on the
@@ -355,7 +368,13 @@ if [ "$CHANGE_DEPLOY_LOCAL" = "1" ]; then
   set -e
   case "$HARVEST_RC" in
     0) record_stage contract_harvest pass ;;
-    1) fail_stage "contract: the implementation has drifted from the frozen contract in a way that breaks a consumer — see $RUN_DIR/harvest.log" "$CHANGE_SLICES" slice ;;
+    1) case " $CHANGE_SLICES " in
+         *" chatbot-backend "*)
+           fail_stage "contract: the served spec has drifted from the frozen contract in a way that breaks a consumer — see $RUN_DIR/harvest.log" "chatbot-backend" slice ;;
+         # The backend is not a slice of this change, so nothing dispatched here can have
+         # caused it: either contracts/ is wrong or the backend drifted in another change.
+         *) fail_stage "contract: the served spec disagrees with contracts/openapi.yaml, and chatbot-backend is not a slice of this change — see $RUN_DIR/harvest.log" "" harness ;;
+       esac ;;
     *) fail_stage "contract: could not read the served spec at $DIRECT_BASE/openapi.json" "" harness ;;
   esac
 fi

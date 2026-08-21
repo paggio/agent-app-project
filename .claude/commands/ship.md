@@ -76,7 +76,11 @@ acceptance criteria are any good — read them yourself.
 ./scripts/iterate.sh <change>
 ```
 
-One command, and the only one you need. It dispatches a `claude -p` per slice, each with
+One command, and the only one you need. **It takes tens of minutes** — it runs a full
+agent session per slice, then builds and brings up every repo. Start it in the background
+so it outlives your own turn; a loop killed mid-attempt reports `unattributable` with no
+assertion evidence, which is the harness being honest about a run that did not finish, not
+a result about the change. It dispatches a `claude -p` per slice, each with
 its working directory inside the real product repo so that repo's own `CLAUDE.md`, settings,
 skills, hooks and gates apply; brings every repo up as one stack on one network; runs the
 baseline suite and the change's suite through the single origin; and on failure sends the

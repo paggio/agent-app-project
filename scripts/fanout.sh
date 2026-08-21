@@ -134,6 +134,12 @@ ${CHANGE_FREEZE_SHA}, extracted for this run. The control repo's working copy is
 available to you; it may have moved on. If your slice appears to require a contract
 change, STOP and report it rather than working around it.
 
+Your repo carries its OWN vendored copy of contracts/, and its CI verifies your
+implementation against that copy rather than against the frozen tree above. So if the
+frozen tree differs from your vendored copy, part of your slice is to update your
+vendored copy to match it byte for byte, in the same branch. Skipping that leaves your
+CI green against the old promise, and the control repo will refuse the run.
+
 After every slice lands, the control repo brings up all of these repos together as one
 stack and runs $CONTROL/$CHANGE_DIR/$CHANGE_SMOKE_FILE against a single origin
 ($CHANGE_SMOKE_BASE — the app at /, this API under /api/). Read that file: the steps
