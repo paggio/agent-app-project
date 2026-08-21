@@ -15,17 +15,16 @@ DEST="changes/$NEXT-$SLUG"
 cp -R "$TEMPLATE" "$DEST"
 rm -rf "$DEST/runs"   # the template may carry a previous run's evidence; the copy must not
 
-# change.yaml and smoke.yaml get the same substitution as the prose. The manifest is what
-# the scripts read, so a scaffolded change that still said 0000 would dispatch and verify
-# under the wrong name.
+# The manifest is what the scripts read, so a scaffolded change still saying 0000 would
+# dispatch and verify under the wrong name.
 for f in "$DEST"/*.md "$DEST"/*.yaml; do
   [ -f "$f" ] || continue
   LC_ALL=C sed -i '' -e "s/0000/$NEXT/g" -e "s/<slug>/$SLUG/g" "$f" 2>/dev/null \
     || LC_ALL=C sed -i -e "s/0000/$NEXT/g" -e "s/<slug>/$SLUG/g" "$f"
 done
 
-# Strip the TEMPLATE-ONLY blocks. Without this every scaffolded change inherits them —
-# 0001-auth still said "EXAMPLE / TEMPLATE" at the top of its STATUS.md after shipping.
+# Strip the TEMPLATE-ONLY blocks; manifest.py --validate now refuses a change that still
+# carries one, in STATUS.md as well as BRIEF.md.
 for f in "$DEST"/*.md; do
   [ -f "$f" ] || continue
   python3 - "$f" <<'PY'
@@ -42,10 +41,4 @@ LC_ALL=C sed -i '' -e "s/^change: .*/change: $NEXT-$SLUG/" "$DEST/change.yaml" 2
 
 echo "created $DEST"
 echo
-echo "next:"
-echo "  1. fill in BRIEF.md, and delete the slices that do not apply"
-echo "  2. prune change.yaml: slices, and deploy.infra if this needs a real infra deploy"
-echo "  3. write smoke.yaml — the acceptance criteria, as steps, each with an owner"
-echo "  4. freeze the contract, then record the commit as freeze_sha in change.yaml"
-echo
-echo "then: ./scripts/iterate.sh $NEXT-$SLUG"
+echo "next: /ship $NEXT-$SLUG picks up from here — brief, criteria as steps, freeze, dispatch."
