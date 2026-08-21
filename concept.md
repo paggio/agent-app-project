@@ -3,7 +3,13 @@
 Reference document for initializing a three-tier system (backend, frontend,
 infrastructure) developed primarily through AI coding agents.
 
-**Status:** initial version — conventions, not yet battle-tested.
+**Status:** a snapshot of the original design, kept for the reasoning behind it.
+
+> **Where this disagrees with `docs/adr/` or `docs/init/`, they win.** This file quotes file
+> contents and script bodies that have since moved on — most notably `fanout.sh`, which is
+> described here in the form `docs/adr/0002` was written to replace. It is not maintained
+> against the tree; the ADRs are the record of what was decided and `docs/init/` is the
+> record of what was run.
 **Review cadence:** revisit after ~10 completed changes, and after any major model release.
 
 ---
@@ -662,6 +668,111 @@ git clone --recurse-submodules <url> platform
 # or, after a plain clone:
 git submodule update --init --recursive
 ```
+
+### Concrete Example
+
+Let's say we are working on a cross-repo change, and we have a couple of PRs opened in the product repos.
+It will be normal that git will see changes to the `chatbot-backend`/`frontend` repos.
+
+That is expected, and it is not something to tidy away mid-change. Here is the whole
+lifecycle of `0001-auth`, and what to do at each stage.
+
+**What the parent is even showing you.** A submodule is one SHA, not a branch: in the parent
+repo it is a *gitlink*, a tree entry with mode `160000` whose entire content is a single
+commit id. So a submodule "change" is always a pointer move, never a file edit:
+
+```
+-Subproject commit f5d3044…      what the parent currently records
++Subproject commit 9a66269…      what is checked out on disk
+```
+
+Nothing inside the submodule is dirty. If it were, that repo's own status would say so
+separately.
+
+#### Stage 1 — dispatch
+
+`fanout.sh` runs `git -C <repo> switch -c feat/0001-auth` in each slice repo, and the agents
+commit there. The parent immediately shows two modified submodules.
+
+**Do nothing.** The parent still points at the last merged code, which is correct: nothing
+has been reviewed yet.
+
+#### Stage 2 — ship and verify
+
+`verify.sh` asserts **what is checked out**, not what the parent records and not what
+`repos.lock` pins. That is deliberate — the point is to test the code the PRs contain. It is
+also why "ahead of `repos.lock`" is printed as a note rather than treated as a failure.
+
+Still nothing to commit in the parent.
+
+#### Stage 3 — merge the product PRs, in dependency order
+
+This is the step that has to come first, and the order is a real constraint rather than a
+preference. For `0001-auth`:
+
+1. `chatbot-backend` — additive and backward compatible on its own.
+2. `frontend` — its route guard cannot pass until `/v1/auth/me` answers.
+
+Merging in the other order leaves `main` briefly broken in a way no single repo's CI can
+see. `STATUS.md` for each change records the intended order for exactly this reason.
+
+#### Stage 4 — only now, bump the parent
+
+```bash
+git -C chatbot-backend switch main && git -C chatbot-backend pull
+git -C frontend switch main && git -C frontend pull
+./scripts/lock.sh
+git add chatbot-backend frontend repos.lock
+git commit -m "chore: bump submodules for 0001-auth"
+```
+
+**Why `lock.sh` comes after the merges, and never before.** `lock.sh` records whatever
+commit each submodule currently has checked out. Run it while the submodules are still on
+`feat/0001-auth` and `repos.lock` names unmerged commits — and if the product repo
+squash-merges, those SHAs stop existing on any branch. The lock would then pin the triple to
+commits that cannot be checked out, which is worse than a stale lock because it looks
+authoritative.
+
+The same argument applies to `git add`ing the pointers early. Both are the same mistake: the
+parent should only ever record commits that are permanently reachable on a product repo's
+`main`.
+
+#### Stage 5 — everything agrees again
+
+There are **three independently-moving values** per submodule, and this is the moment they
+converge. Mistaking one for another causes nearly every submodule mistake in this layout:
+
+| | what it is | during the change | after stage 4 |
+| --- | --- | --- | --- |
+| gitlink in the parent's `HEAD` | what the parent *records* | `f5d3044` | the merged `main` |
+| what is checked out | what is *on disk* | `9a66269` (`feat/0001-auth`) | the same merged `main` |
+| `repos.lock` | the human-readable duplicate | `67a9383` (older still) | the same merged `main` |
+
+`make repos` reports the disagreement in one place, at any stage:
+
+```
+chatbot-backend  feat/0001-auth   9a66269   ahead of 67a9383
+frontend         feat/0001-auth   d20f93b   ahead of 1a7ddef
+infra            main             6eebe0a   matches
+```
+
+#### The rules this example illustrates
+
+1. Read a submodule row as *"the pointer would move"*, not *"files changed"*.
+2. Never `git add` a submodule path casually — and never `git add -A` at the parent root,
+   which sweeps every pointer in as a side effect.
+3. Branch inside the submodule before committing there. Always (failure mode 1).
+4. Do not run `git submodule update --remote --merge` while work is in flight; it yanks
+   checked-out submodules back and discards in-flight commits. `make init` only touches
+   submodules that are not checked out at all.
+5. Merge first, then `lock.sh`, then bump the pointers — as one commit, containing only the
+   pointers and `repos.lock` (failure mode 2).
+
+Note the paths in stage 4: the submodule was renamed from `backend` to `chatbot-backend`, so
+the snippet earlier in this section is stale — one of several reasons this file loses to
+`docs/init/` where they disagree.
+
+
 
 ---
 

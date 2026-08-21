@@ -11,6 +11,7 @@
 
 # Personal
 instructions.md
+TODO.md
 
 # Deploy/smoke evidence from ./scripts/iterate.sh — logs, container output, agent
 # transcripts. Regenerated on every run and often large; report.md is the durable part

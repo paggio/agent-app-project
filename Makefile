@@ -18,7 +18,7 @@ REPOS := chatbot-backend frontend infra
 
 .DEFAULT_GOAL := help
 .PHONY: help up down restart ps logs rebuild urls open health chat smoke verify iterate \
-        e2e repos lock prs check init clean
+        e2e repos lock prs check check-docs init clean
 
 help: ## Show this list
 	@echo "The full local stack — backend, datastores, frontend, proxy — on one origin."
@@ -81,9 +81,16 @@ chat: ## POST a message through the proxy: make chat MSG="hello"
 
 # ── verification ─────────────────────────────────────────────────────────────────────
 
+# dev-env.sh supplies the variables, so this no longer hand-exports one. That was the
+# pattern stack/dev.env exists to eliminate, and it was in the baseline suite, which every
+# change runs. `remote` steps are excluded because there is no deployed origin here.
 smoke: ## Run the baseline suite against the running stack
-	@BACKEND_DIRECT_BASE=$(BACKEND_BASE) ./scripts/smoke.py smoke/baseline.yaml \
-		--base $(BASE) --contract contracts/openapi.yaml
+	@. ./scripts/dev-env.sh && SMOKE_ORIGIN=$(BASE) SMOKE_RUN_ID=make \
+		./scripts/smoke.py smoke/baseline.yaml \
+		--base $(BASE) --contract contracts/openapi.yaml --exclude-tag remote
+
+check-docs: ## The prose-versus-mechanism checks (see scripts/check-docs.py)
+	@./scripts/check-docs.py
 
 verify: ## Deploy a change and assert it: make verify CHANGE=0001-auth
 	@test -n "$(CHANGE)" || { echo "usage: make verify CHANGE=<change-dir>"; exit 2; }
@@ -121,7 +128,14 @@ prs: ## Open pull requests in each product repo
 		(cd $$r && gh pr list --limit 10 2>/dev/null) || echo "  (gh unavailable here)"; \
 	done
 
-check: ## Each repo's own read-only gates — lint and typecheck, no formatting
+check: ## This repo's gates, then each product repo's read-only ones
+	@echo "── control"
+	@./scripts/check-docs.py || exit 1
+	@for d in changes/*/; do \
+		case "$$d" in changes/0000-example-change/) continue ;; esac; \
+		./scripts/manifest.py "$$d" --validate >/dev/null || exit 1; \
+	done
+	@echo "  every change validates"
 	@for r in chatbot-backend frontend; do \
 		echo "── $$r"; \
 		$(MAKE) -C $$r lint typecheck || exit 1; \

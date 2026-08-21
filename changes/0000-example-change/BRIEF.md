@@ -1,6 +1,6 @@
 # 0000 — <change title>
 
-<!-- EXAMPLE / TEMPLATE. Run ./scripts/new-change.sh to scaffold a copy of this
+<!-- TEMPLATE-ONLY: Run ./scripts/new-change.sh to scaffold a copy of this
      directory for each cross-repo feature. Written by hand in a planning session, before any
      implementation. -->
 

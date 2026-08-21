@@ -13,17 +13,37 @@
 #   headers: map, optional
 #   body:    JSON body, optional         form: form-encoded body, optional
 #   base:    a different origin for this step only (env vars interpolate)
-#   expect:  status (int or list) | json (deep-subset) | body_matches (regex)
+#   expect:  REQUIRED. status (int or list) | json (deep-subset) | body_matches (regex)
 #            body_excludes (regex) | headers {name: regex} | cookie (name or list)
+#            A step with no expect: passes on any response, including a 500, so there is
+#            no exemption — a capture-only step still states a status.
 #   capture: {var: dotted.json.path | header:Name | cookie:name} — bound into ${var}
 #            for later steps
 #   retry:   {attempts: 3, delay: 1.0} for anything eventually consistent
-#   tags:    [infra] to run only after an infra deploy
+#   contract: false — this step is not API surface (the app shell, a static asset, the
+#            proxy itself), so do not check it against contracts/openapi.yaml
+#   tags:    [local] or [remote]. UNTAGGED IS THE DEFAULT AND RUNS IN BOTH PASSES — that
+#            is the point: an ordinary step gets asserted against the deployed origin
+#            without anyone thinking about it. Tag a step only to opt it OUT.
+#              local  — no remote analogue (a container port, a per-process limiter)
+#              remote — cannot hold locally (a Secure cookie over plain HTTP)
+#            A difference between origins is an extra tagged step, never a parameterised
+#            expectation. See contracts/README.md § "Two origins, one suite".
 #
-# Cookies persist across steps within a run, so register -> login -> me works.
+# Cookies persist across steps within a run, so register -> login -> me works. The two
+# passes are separate processes, so a step may never depend on a variable captured in the
+# other one.
+#
+# Variables: declare them in stack/dev.env. ${SMOKE_RUN_ID} is the run nonce — use it in
+# every identity a step creates, so a shared environment cannot collide across runs and a
+# repair attempt gets fresh rate-limit buckets. ${SMOKE_ORIGIN} is the origin under test,
+# which is what an Origin header should carry rather than a hardcoded localhost.
+#
+# `./scripts/smoke.py --lint <suite>` checks all of the above without making a request,
+# and `manifest.py --validate` runs it for you.
 
-# Replace this with the steps for your change. An empty list is legal and verify.sh will
-# say so out loud — but a change with acceptance criteria and no steps is a change whose
+# Replace this with the steps for your change. `steps: []` is REFUSED by
+# manifest.py --validate — a change with acceptance criteria and no steps is a change whose
 # criteria nobody checks.
 steps: []
 

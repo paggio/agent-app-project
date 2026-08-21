@@ -16,7 +16,24 @@ guessing or asking a human.
 Usage:
   smoke.py SUITE.yaml [SUITE.yaml ...] --base http://localhost:8080
            [--contract contracts/openapi.yaml] [--json out.json]
-           [--only NAME] [--tag TAG] [--keep-going] [--quiet]
+           [--only NAME] [--tag TAG] [--exclude-tag TAG] [--keep-going] [--quiet]
+  smoke.py --lint SUITE.yaml [...]      validate the step schema, make no requests
+
+Exit codes (docs/adr/0003):
+  0  every selected step passed
+  1  at least one assertion failed; the suite itself is well-formed
+  2  the suite or its inputs are invalid, so NO assertion result is meaningful —
+     a malformed step, an undefined ${VAR}, a missing contract, an empty selection
+
+The distinction matters because verify.sh routes exit 1 to the owning repo as a repair
+brief and exit 2 to the control repo as its own bug. They used to share a stage string, so
+"this suite is broken" was reported to an agent as "your code is broken".
+
+TAGS. Exactly two are meaningful: `local` and `remote`. An UNTAGGED step runs in both
+passes — that default is the point, because it means an ordinary step is asserted against
+the deployed origin without anyone having to think about it. Tag a step only to opt it out:
+`local` for something with no remote analogue (a container port, the per-process throttle),
+`remote` for something that cannot hold locally (a Secure cookie over plain HTTP).
 """
 from __future__ import annotations
 
@@ -34,12 +51,150 @@ import yaml
 METHODS = ("GET", "POST", "PUT", "PATCH", "DELETE", "HEAD", "OPTIONS")
 VAR = re.compile(r"\$\{([A-Za-z_][A-Za-z0-9_]*)\}")
 
+# The whole step vocabulary, in one place. An unknown key used to be silently ignored, so
+# `expects:` for `expect:` produced a step that passed on any response at all.
+STEP_KEYS = {"name", "owner", "headers", "body", "form", "base", "expect", "capture",
+             "retry", "tags", "contract", "_suite"} | set(METHODS)
+EXPECT_KEYS = {"status", "json", "body_matches", "body_excludes", "headers", "cookie"}
+TAGS = {"local", "remote"}
+
+# Set by main() so die() can still write the --json summary before exiting 2. Without it a
+# malformed suite produced no JSON, verify.sh found no owners, and a control-repo bug was
+# reported as an unattributable failure.
+_JSON_OUT: str | None = None
+
 
 # --------------------------------------------------------------------------- helpers
 
 def die(msg: str) -> None:
     print(f"smoke: {msg}", file=sys.stderr)
+    if _JSON_OUT:
+        try:
+            with open(_JSON_OUT, "w") as fh:
+                json.dump({"ok": False, "error": msg, "passed": 0, "failed": 0,
+                           "owners_failing": [], "failures": [], "steps": []}, fh, indent=2)
+        except OSError:
+            pass
     raise SystemExit(2)
+
+
+def suggest(word: str, known: set[str]) -> str:
+    """`did you mean` for a misspelled key — the message has to name the fix."""
+    import difflib
+    near = difflib.get_close_matches(word, sorted(known), n=1, cutoff=0.6)
+    return f" — did you mean {near[0]!r}?" if near else ""
+
+
+def declared_vars() -> set[str]:
+    """Names a suite may interpolate without being told at run time.
+
+    stack/dev.env is the declared source (CLAUDE.md: never export a smoke variable by
+    hand), so the linter reads it rather than requiring the ship process to be running.
+    Anything already in the environment counts too — the real environment always wins.
+    """
+    names = set(os.environ)
+    root = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+    dev_env = os.environ.get("DEV_ENV_FILE") or os.path.join(root, "stack", "dev.env")
+    try:
+        for line in open(dev_env):
+            line = line.strip()
+            if line and not line.startswith("#") and "=" in line:
+                names.add(line.split("=", 1)[0].strip())
+    except OSError:
+        pass
+    # Supplied by verify.sh per pass rather than declared in a file: the origin under
+    # test, the run nonce, and whatever the infra outputs promised.
+    names |= {"SMOKE_ORIGIN", "SMOKE_RUN_ID", "BACKEND_DIRECT_BASE"}
+    return names
+
+
+def lint_steps(steps: list[dict[str, Any]]) -> list[str]:
+    """Everything checkable without making a request.
+
+    `expect` is required, with no exemption for capture-only steps: a step with nothing to
+    expect passes on any response including a 500, which is precisely the vacuous-pass hole
+    docs/adr/0003 closes. `expect: {status: 200}` is one line.
+    """
+    problems: list[str] = []
+    captured: set[str] = set()
+    available = declared_vars()
+
+    for i, step in enumerate(steps, 1):
+        step = step or {}
+        label = f"step {i}" + (f" ({step.get('name')!r})" if step.get("name") else "")
+
+        for key in step:
+            if key not in STEP_KEYS:
+                problems.append(f"{label}: unknown key {key!r}{suggest(key, STEP_KEYS)} "
+                                f"(known: {' '.join(sorted(STEP_KEYS - {'_suite'}))})")
+
+        found = [m for m in METHODS if m in step]
+        if len(found) != 1:
+            problems.append(f"{label}: must have exactly one of {', '.join(METHODS)} — "
+                            f"found {', '.join(found) if found else 'none'}")
+
+        expect = step.get("expect")
+        if expect is None:
+            problems.append(f"{label}: no expect: block — a step with nothing to expect "
+                            f"passes on any response, including 500")
+        elif not isinstance(expect, dict):
+            problems.append(f"{label}: expect must be a mapping, got {type(expect).__name__}")
+        else:
+            for key, value in expect.items():
+                if key not in EXPECT_KEYS:
+                    problems.append(f"{label}: unknown expect key {key!r}"
+                                    f"{suggest(key, EXPECT_KEYS)} "
+                                    f"(known: {' '.join(sorted(EXPECT_KEYS))})")
+                    continue
+                if key == "status":
+                    vals = value if isinstance(value, list) else [value]
+                    if not all(isinstance(v, int) and not isinstance(v, bool) for v in vals):
+                        problems.append(
+                            f"{label}: expect.status must be an integer or a list of "
+                            f"integers, got {value!r} — a quoted status never equals the "
+                            f"response code")
+                if key in ("body_matches", "body_excludes"):
+                    try:
+                        re.compile(str(value))
+                    except re.error as exc:
+                        problems.append(f"{label}: expect.{key} is not a valid regex: {exc}")
+                if key == "headers" and isinstance(value, dict):
+                    for hname, pattern in value.items():
+                        try:
+                            re.compile(str(pattern))
+                        except re.error as exc:
+                            problems.append(
+                                f"{label}: expect.headers[{hname}] is not a valid regex: {exc}")
+
+        for tag in step.get("tags") or []:
+            if tag not in TAGS:
+                problems.append(f"{label}: unknown tag {tag!r}{suggest(tag, TAGS)} — only "
+                                f"{' and '.join(sorted(TAGS))} are meaningful; an untagged "
+                                f"step runs in both passes")
+
+        if "contract" in step and not isinstance(step["contract"], bool):
+            problems.append(f"{label}: contract must be true or false, got {step['contract']!r}")
+
+        retry = step.get("retry")
+        if retry is not None and not isinstance(retry, dict):
+            problems.append(f"{label}: retry must be a mapping of attempts/delay")
+
+        # Variables, checked before the run rather than mid-flight. smoke.py used to die at
+        # exit 2 partway through a suite, which read as "assertions failed" with no owner.
+        blob = json.dumps({k: v for k, v in step.items() if k != "_suite"}, default=str)
+        for name in VAR.findall(blob):
+            # INFRA_* are produced by `make -C infra outputs` and exported by verify.sh
+            # only after the outputs pass their contract check, so they cannot be
+            # resolved at lint time and must not be reported as undeclared.
+            if name.startswith("INFRA_"):
+                continue
+            if name not in captured and name not in available:
+                problems.append(
+                    f"{label}: ${{{name}}} is not captured by an earlier step and not set "
+                    f"in the environment — declare it in stack/dev.env")
+        captured |= set((step.get("capture") or {}).keys())
+
+    return problems
 
 
 def interpolate(value: Any, scope: dict[str, Any]) -> Any:
@@ -117,9 +272,16 @@ def subset_of(expected: Any, actual: Any, path: str = "") -> str | None:
 class Contract:
     """The frozen OpenAPI spec, used to assert that smoke only exercises declared surface.
 
-    This catches mechanically what the contract-conformance agent catches by reading: a
-    route that works but was never frozen. A green suite over undeclared endpoints is the
-    failure mode this exists to prevent.
+    A green suite over undeclared endpoints is the failure mode this exists to prevent: a
+    route that works but was never frozen.
+
+    NOTE WHAT THIS IS NOT. It answers three questions — is the prefix-stripped path in
+    `paths:`, is the method declared, is the returned status listed — and nothing else. It
+    never inspects `requestBody`, response schemas, required fields or types, so a response
+    whose body violates the frozen schema passes as long as its status is declared. The
+    structural check is `harvest-contract.py --diff`, which verify.sh runs before smoke, and
+    each product repo's own `make contract`. docs/adr/0003 records the residual gap as an
+    accepted cost rather than leaving it implied.
     """
 
     def __init__(self, spec_path: str, strip_prefix: str = "") -> None:
@@ -179,7 +341,13 @@ def run_step(client: httpx.Client, step: dict[str, Any], scope: dict[str, Any],
     headers = interpolate(step.get("headers") or {}, scope)
     body = interpolate(step.get("body"), scope) if "body" in step else None
     form = interpolate(step.get("form"), scope) if "form" in step else None
-    expect = step.get("expect") or {}
+    # Interpolated like the request, which it was NOT before: a `${VAR}` inside expect stayed
+    # a literal, so an assertion could never match a value the request had templated. It
+    # surfaced the moment identities were namespaced with ${SMOKE_RUN_ID} — the request
+    # registered smoke-0001-<nonce>@auth.test and the expectation compared against the raw
+    # `${SMOKE_RUN_ID}` string. An expectation that cannot reference what the request sent
+    # is not much of an expectation.
+    expect = interpolate(step.get("expect") or {}, scope)
     retry = step.get("retry") or {}
     attempts = int(retry.get("attempts", 1))
     delay = float(retry.get("delay", 1.0))
@@ -300,20 +468,58 @@ def main() -> int:
     ap.add_argument("--json", dest="json_out")
     ap.add_argument("--only", action="append", default=[])
     ap.add_argument("--tag", action="append", default=[])
+    ap.add_argument("--exclude-tag", action="append", default=[],
+                    help="drop steps carrying any of these tags; an untagged step is "
+                         "never dropped, which is why untagged means 'assert everywhere'")
+    ap.add_argument("--allow-empty", action="store_true",
+                    help="permit a selection that matches no steps. Without it an empty "
+                         "selection is exit 2 — reporting a pass over zero assertions is "
+                         "the vacuous pass docs/adr/0003 exists to prevent")
+    ap.add_argument("--lint", action="store_true",
+                    help="validate the step schema and exit; make no requests")
     ap.add_argument("--keep-going", action="store_true",
                     help="run every step instead of stopping at the first failure")
     ap.add_argument("--timeout", type=float, default=20.0)
     ap.add_argument("--quiet", action="store_true")
     args = ap.parse_args()
 
+    global _JSON_OUT
+    _JSON_OUT = args.json_out
+
     steps = load_steps(args.suites)
+
+    problems = lint_steps(steps)
+    if args.lint:
+        for p in problems:
+            print(f"smoke: {p}", file=sys.stderr)
+        if problems:
+            return 2
+        if not args.quiet:
+            print(f"smoke: {len(steps)} step(s) across {len(args.suites)} suite(s) are well-formed")
+        return 0
+    if problems:
+        # Refuse to run a malformed suite rather than discovering it halfway through.
+        for p in problems:
+            print(f"smoke: {p}", file=sys.stderr)
+        die(f"{len(problems)} problem(s) in the suite — nothing was asserted")
+
     if args.only:
         steps = [s for s in steps if s.get("name") in args.only]
     if args.tag:
         steps = [s for s in steps if set(s.get("tags") or []) & set(args.tag)]
+    if args.exclude_tag:
+        steps = [s for s in steps if not (set(s.get("tags") or []) & set(args.exclude_tag))]
+
+    if not steps and not args.allow_empty:
+        die("no steps matched the selection — refusing to report a pass over zero "
+            "assertions (pass --allow-empty if an empty run is genuinely intended)")
 
     contract = None
-    if args.contract and os.path.exists(args.contract):
+    if args.contract:
+        # A wrong path used to silently disable every contract assertion. That is the
+        # purest form of the defect class: a gate that reports nothing when absent.
+        if not os.path.exists(args.contract):
+            die(f"no such contract: {args.contract}")
         contract = Contract(args.contract, args.strip_prefix)
         if contract.empty and not args.quiet:
             print(f"smoke: note — {args.contract} declares no paths; "

@@ -1,0 +1,67 @@
+# The control repo's own gates. Independent of the agent harness on purpose: hooks can be
+# bypassed, CI cannot.
+#
+# Neither job needs Docker or the submodules, which is what keeps them fast enough to be
+# required checks. The things that DO need them — the joined stack, the smoke suite — are
+# `./scripts/iterate.sh`, run by a human or a loop, not by CI. Running them here would mean
+# CI checking out three private repos and paying for a deploy on every push, which is the
+# coupling docs/adr/0001 spent its whole budget avoiding.
+name: ci
+
+on:
+  pull_request:
+  push:
+    branches: [main]
+
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  docs:
+    # Six greps and a byte-comparison, each mapping to a documentation defect that actually
+    # happened — see the docstring in scripts/check-docs.py. This is the job that would have
+    # caught `freeze-contract` telling agents to record the freeze SHA in BRIEF.md.
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          # No submodules: the vendored-contract comparison self-skips when they are absent,
+          # and the other six checks are about this repo's own prose.
+          submodules: false
+      - uses: astral-sh/setup-uv@v5
+      - name: Documentation is consistent with the mechanisms
+        run: ./scripts/check-docs.py
+
+  manifests:
+    # Every change directory must be shippable-or-explicitly-not. A change that cannot be
+    # validated is a change that would be dispatched against an unfrozen contract, or
+    # deployed with nothing asserted about a slice.
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          # The freeze-SHA ancestry check needs history, not just the tip.
+          fetch-depth: 0
+      - uses: astral-sh/setup-uv@v5
+      - name: Every change validates
+        run: |
+          rc=0
+          for d in changes/*/; do
+            # The template is deliberately unshippable: empty freeze_sha, no steps. It is
+            # the thing new-change.sh copies, so it is exempt by name rather than by an
+            # `|| true` that would exempt everything.
+            case "$d" in changes/0000-example-change/) continue ;; esac
+            echo "== $d"
+            ./scripts/manifest.py "$d" --validate || rc=1
+          done
+          exit $rc
+      - name: Every suite is well-formed
+        run: ./scripts/smoke.py --lint smoke/*.yaml changes/*/smoke.yaml
+
+  # Not armed yet, and each needs a decision rather than a copy-paste:
+  # - secret scanning. docs/init/README.md calls it non-negotiable and it runs nowhere in
+  #   this org yet. It belongs in all four repos at once, with one tool, so it is its own
+  #   change.
+  # - shellcheck over scripts/. Worth it; expect a backlog of warnings on first run, which
+  #   is exactly the "unverified gate" trap if landed unread.

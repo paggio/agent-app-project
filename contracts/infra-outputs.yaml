@@ -4,13 +4,96 @@
 # Outputs are additive. Removing one is its own change, with every consumer updated
 # first — otherwise a deploy ordering that is normally harmless becomes an outage.
 #
-# Skeleton — nothing promised yet.
+# THERE IS NO ENVIRONMENT DIMENSION HERE, ON PURPOSE. The environment lives in the
+# invocation — `make -C infra outputs ENV=staging` prints the flat JSON object for that
+# environment. A per-environment block here would let staging promise less than prod,
+# which institutionalises the drift it claims to describe. What consumers need is that
+# the NAMES are invariant and only the values move. The contract is schema; environments
+# are data.
+#
+# `kind` is what distinguishes a value from the NAME of something. It has exactly one
+# mechanical consequence: verify.sh exports only `kind: value` outputs into the
+# environment a smoke suite can interpolate, which is what stops a secret reference from
+# being interpolable into a request body.
+#
+#   value          the output IS the value — a URL, a prefix, an image reference
+#   env_var_name   the output names an environment variable the app must read
+#   secret_ref     the output names a secret (an ARN or a parameter path), never its value
 
-version: 0
+version: 1
 
-outputs: {}
-  # <output_name>:
-  #   description: <what it is and who consumes it>
-  #   type: string | number | bool
-  #   consumers: [backend, frontend]
-  #   example: "<illustrative value — never a real secret>"
+outputs:
+  app_base_url:
+    description: >
+      The single published origin, scheme included. The app is served at / and the API
+      under the prefix below, which the edge strips before the request reaches the
+      backend. The smoke suite retargets its whole run at this, so it is the one output
+      without which a remote pass cannot happen at all.
+    type: string
+    kind: value
+    consumers: [smoke, frontend]
+    example: "https://staging.agentapp.example.test"
+
+  api_path_prefix:
+    description: >
+      The prefix under which the API is served at the origin, and which the edge STRIPS
+      before forwarding. Locally this is Caddy's `handle_path /api/*`; contracts/openapi.yaml
+      declares it as servers[0].url and writes every path as the backend serves it.
+      Promised here so that three things can be cross-checked against each other before a
+      remote pass runs: what infra configured, what the contract declares, and what
+      smoke.py strips before matching. An ALB path rule does NOT strip a prefix without an
+      explicit rewrite, and because the frontend answers any unmatched path with the SPA
+      shell and a 200, getting this wrong produces `200 text/html` for API calls rather
+      than a loud 404.
+    type: string
+    kind: value
+    consumers: [smoke]
+    example: "/api"
+
+  deployed_backend_image:
+    description: >
+      The full image reference the environment is actually running for the backend, tag
+      included. verify.sh asserts the tag equals the submodule SHA it just verified
+      locally. Without this the remote pass asserts whatever image happened to be
+      deployed, so a repair attempt's fix would be invisible remotely and the loop could
+      report verified for an environment running last week's code.
+    type: string
+    kind: value
+    consumers: [smoke]
+    example: "000000000000.dkr.ecr.eu-west-1.amazonaws.com/chatbot-backend:9a66269a1b2c"
+
+  deployed_frontend_image:
+    description: The same, for the frontend.
+    type: string
+    kind: value
+    consumers: [smoke]
+    example: "000000000000.dkr.ecr.eu-west-1.amazonaws.com/frontend:d20f93b91281"
+
+  backend_image_repository:
+    description: >
+      Where scripts/publish.sh pushes the backend image. Created by
+      `make -C infra bootstrap`, which runs once per environment and is never called by
+      verify.sh — a registry must exist before an image can be pushed, and an image must
+      exist before the apply that references it.
+    type: string
+    kind: value
+    consumers: [smoke]
+    example: "000000000000.dkr.ecr.eu-west-1.amazonaws.com/chatbot-backend"
+
+  frontend_image_repository:
+    description: The same, for the frontend.
+    type: string
+    kind: value
+    consumers: [smoke]
+    example: "000000000000.dkr.ecr.eu-west-1.amazonaws.com/frontend"
+
+  signup_code_secret_ref:
+    description: >
+      Where the deployed backend reads SIGNUP_CODE from. A name, never a value — which is
+      why this is `secret_ref` and therefore never exported into the smoke environment.
+      The backend fails closed when the code is empty, so a deployment that cannot resolve
+      this refuses registration rather than opening it.
+    type: string
+    kind: secret_ref
+    consumers: [backend]
+    example: "/agentapp/staging/signup-code"

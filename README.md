@@ -19,28 +19,41 @@ git clone --recurse-submodules git@github.com:Paggio/agent-app-project.git
 git submodule update --init --recursive
 ```
 
-## Two workflows
+## Four lanes
 
-**Single-repo change (~80% of work).** Work inside the product repo. Nothing from the
-sibling repos enters context.
+**Solo (~80% of work).** Work inside the product repo. Nothing from the sibling repos
+enters context. That repo's CI fails if the work turns out to touch contract surface, which
+is your signal to come back here for a contract pass.
 
 ```bash
 cd chatbot-backend   # or frontend, infra
 claude
 ```
 
-**Cross-repo change.** Plan and freeze the contract here, then fan out.
+**Contract pass.** An interface between repos changes, and nothing else does. Sequential,
+single session, one commit containing only `contracts/`. That commit is the freeze point.
+Use the `freeze-contract` skill to decide a new interface, `align-contract` to promote one
+that already works.
+
+**Cross-repo change.** Plan and freeze here, then ship.
 
 ```bash
 claude
-# 1. plan      → changes/NNNN-<slug>/BRIEF.md + per-repo slices
-# 2. freeze    → edit contracts/, commit; that commit is the freeze point
-# 3. fan out   → ./scripts/fanout.sh NNNN-<slug>
-# 4. review    → three independently green PRs
-# 5. merge     → dependency order, then ./scripts/lock.sh && commit repos.lock
+# 1. plan   → ./scripts/new-change.sh <slug>, then the plan-cross-repo-change skill
+# 2. freeze → contracts/ alone; record that commit as freeze_sha in change.yaml
+# 3. ship   → /ship NNNN-<slug>   (./scripts/iterate.sh does the whole loop)
+# 4. merge  → dependency order, then ./scripts/lock.sh && commit repos.lock
 ```
 
-Never overlap steps 2 and 3.
+Never overlap steps 2 and 3. **Step 3 is what "shipped" means** — the repos deployed
+together with the smoke suite passing. Three independently green PRs is not shipped; see
+`docs/adr/0002`.
+
+**Cross-repo change that must reach AWS.** As above, plus `deploy.infra: true`, an `infra`
+slice, and a target environment. The same suite is then asserted twice: against the local
+stack and against the deployed origin. Load the `deploy-to-aws` skill — and note that each
+repair attempt is a real `terraform apply`, which is why the attempt budget is 1 by
+default. See `docs/adr/0004`.
 
 ## Where things live
 

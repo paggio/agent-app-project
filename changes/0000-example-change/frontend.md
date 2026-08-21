@@ -1,6 +1,6 @@
 # 0000 — frontend slice
 
-<!-- EXAMPLE / TEMPLATE. Read by an agent working alone inside the frontend repo. It
+<!-- TEMPLATE-ONLY: Read by an agent working alone inside the frontend repo. It
      can see BRIEF.md and contracts/ (passed in with --add-dir) and nothing else from
      the control repo. Say what changes here; say nothing about the other repos'
      internals. -->

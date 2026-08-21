@@ -15,9 +15,12 @@ no implementation, no contract edits in the same pass.
 4. Write `BRIEF.md`: why, acceptance criteria, out of scope, contract changes needed.
 5. Write `smoke.yaml` — the acceptance criteria as executable steps. See below.
 6. Write one slice file per repo touched. Delete the ones that are not, and prune
-   `slices:` in `change.yaml` to match. Set `deploy.infra` if this needs a real infra
-   deploy.
-7. Stop. The human reviews and edits by hand — this is where their judgement is worth
+   `slices:` in `change.yaml` to match. If this needs AWS, load the `deploy-to-aws` skill
+   before writing `change.yaml` — the target environment and which steps are `local` or
+   `remote` are planning decisions, not ship-time ones.
+7. Run `./scripts/manifest.py changes/<change> --validate`. It names what is still
+   missing, and a freshly scaffolded change fails it on several counts by design.
+8. Stop. The human reviews and edits by hand — this is where their judgement is worth
    the most.
 
 ## Acceptance criteria are the oracle

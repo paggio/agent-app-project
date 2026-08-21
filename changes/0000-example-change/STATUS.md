@@ -1,9 +1,12 @@
 # 0000 — status
 
-<!-- EXAMPLE / TEMPLATE. Updated as the change moves. This is the only place that
-     knows the state of all three PRs at once. -->
+<!-- TEMPLATE-ONLY: this comment is stripped by new-change.sh. Updated as the change
+     moves. This is the only place that knows the state of all three PRs at once.
 
-**State:** planning | contract frozen | fanned out | in review | merged
+     There is deliberately no `State:` field. It had no writer, so it drifted — 0001-auth
+     read "contract frozen — ready to fan out" directly above an iterate-maintained block
+     saying "verified". A field that contradicts the machine-maintained region below it is
+     worse than no field. The PR table and the Deploy verification block are the state. -->
 
 ## Contract freeze
 

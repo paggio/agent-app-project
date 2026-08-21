@@ -1,75 +1,60 @@
 # Control repo — agent-app-project
 
-Three INDEPENDENT projects, vendored as submodules. Each has its own git history, CI,
-deploy cadence and CLAUDE.md. This file is extra context only — never assume a
-sub-repo session can see it.
+Three INDEPENDENT projects vendored as submodules, each with its own git history, CI,
+deploy cadence and CLAUDE.md. This file is additive context — never assume a sub-repo
+session can see it.
+
+## Which lane am I in?
+
+First yes wins. Never run two lanes in one session, and never plan, freeze and implement
+in one pass.
+
+| The work | Lane | Do this |
+| --- | --- | --- |
+| One repo, no interface change | solo | Not here — `cd <repo> && claude`. That repo's CI fails if the work turns out to touch contract surface; come back for lane 2 if it does. |
+| An interface between repos changes, nothing else | contract | `freeze-contract` to decide a new interface, `align-contract` to promote one that already works |
+| Two or more repos must change together | cross-repo | `plan-cross-repo-change` → a contract pass → `/ship <change>` |
+| …and it must reach AWS | deploy | the above, plus `deploy-to-aws` |
 
 ## Hard rules
 
-- NEVER edit code inside `chatbot-backend/`, `frontend/`, `infra/` from this session.
-  Implementation happens in a session started inside that repo, or via
-  `scripts/fanout.sh`. Here you plan and write contracts.
-- Submodules land in detached HEAD. Before ANY commit inside one:
-  `git -C <repo> switch -c <branch>` first. Verify with `git -C <repo> status`.
-- `contracts/` is owned here and only here. Product repos consume, never edit.
-- Contract changes are sequential and single-session; implementation is parallel.
-  Never both at once.
-- After merging a change, run `./scripts/lock.sh` and commit `repos.lock`.
-- Smoke assertions are owned here, like contracts. A product repo never edits one to
-  make its slice pass — a failing assertion means fix the cause, or change the criterion
-  here on purpose.
-- "Three PRs exist" is not shipped. A change is shipped when the repos have been deployed
-  together and the smoke suite passed. See `docs/adr/0002`.
+- NEVER edit inside `chatbot-backend/`, `frontend/`, `infra/` from here. Implementation
+  happens in a session started inside that repo, or via `./scripts/fanout.sh`.
+- `contracts/` is owned here and only here. Product repos vendor it and verify against it;
+  they never edit it.
+- Smoke assertions are owned here too. A failing assertion means fix the cause, or change
+  the criterion here on purpose — never in a product repo.
+- Submodules land in detached HEAD. `git -C <repo> switch -c <branch>` before ANY commit
+  inside one.
+- The freeze point is the commit that lands `contracts/` alone. Its SHA goes in that
+  change's `change.yaml` as `freeze_sha`. Nowhere else — nothing reads anywhere else.
+- "Three PRs exist" is not shipped. Shipped means deployed together with the smoke suite
+  passing. See `docs/adr/0002`.
+- Every variable a smoke suite interpolates is declared in `stack/dev.env`. Never export
+  one by hand.
+- Exit 1 = the thing under test failed. Exit 2 = the harness refused. See `docs/adr/0003`.
+- After a human merges: `./scripts/lock.sh`, commit `repos.lock`, and promote the durable
+  smoke steps into `smoke/baseline.yaml`.
 
 ## Layout
 
-- `contracts/`     frozen interfaces (HTTP, events, infra outputs)
-- `changes/NNNN-*/` one directory per cross-repo feature
-  - `change.yaml`  the machine-readable half: slices, freeze SHA, deploy flags
-  - `smoke.yaml`   the acceptance criteria as executable steps, each with an `owner`
-  - `runs/`        deploy evidence from iterate.sh (gitignored)
-- `stack/`         the joined local stack — every repo in one compose project
-  - `dev.env`      local values for the stack AND the smoke suites, one source. Loaded by
-                   `scripts/dev-env.sh`; the real environment always wins. Never export a
-                   smoke variable by hand — declare it here.
-- `smoke/`         `baseline.yaml`, the cross-repo regression suite
-- `docs/adr/`      cross-cutting decisions
-- `docs/init/`     how this structure is built and re-created
-- `repos.lock`     the SHA triple known to work together
-
-## Submodules
-
-| Path | Remote |
-| --- | --- |
-| `chatbot-backend/` | `Paggio/chatbot-backend` |
-| `frontend/` | `Paggio/frontend` |
-| `infra/` | `Paggio/infra` |
+- `contracts/`      the interfaces. `openapi.yaml` and `infra-outputs.yaml` are real;
+                    `events/` is still a skeleton.
+- `changes/NNNN-*/` `change.yaml` is the machine half — slices, `freeze_sha`, deploy flags,
+                    environment. `smoke.yaml` is the criteria as steps, each `owner`ed.
+- `stack/`          the joined local stack. `dev.env` is one source for the stack and the
+                    suites; the real environment always wins.
+- `smoke/baseline.yaml`  the cross-repo regression suite
+- `docs/adr/`       decisions and their accepted costs — read before proposing a redesign
+- `repos.lock`      the SHA triple known to work together
 
 ## Commands
 
-`make help` lists everything. The ones that matter:
+`make help` lists everything; every script takes `--help`.
 
-- stack:   `make up down restart ps logs health` — every repo together on one origin
-- poke:    `make chat MSG="hi"`, `make open`, `make rebuild SVC=backend`
-- assert:  `make smoke`, `make verify CHANGE=<dir>`, `make iterate CHANGE=<dir>`
-- across:  `make repos` (branch/SHA vs `repos.lock`), `make prs`, `make lock`, `make check`
-
-Each product repo has its own `make up` that brings up THAT repo alone. `make up` here
-brings them up together, which is the only arrangement where the seams are real.
-
-Change lifecycle:
-
-- `./scripts/new-change.sh <slug>`    scaffold `changes/NNNN-<slug>/`
-- `./scripts/iterate.sh <change>`     the whole loop: dispatch, deploy, smoke, repair
-- `./scripts/lock.sh`                 refresh `repos.lock` from submodule SHAs
-
-Underneath `iterate.sh`, usable on their own:
-
-- `./scripts/verify.sh <change>`      deploy and assert, no agents involved
-- `./scripts/fanout.sh <change>`      dispatch slices only
-- `./scripts/stack.sh up|down|logs`   drive the joined stack by hand
-- `./scripts/smoke.py <suite>...`     run assertions against a running stack
-- `./scripts/manifest.py <dir>`       read or validate a change.yaml
-
-The fast inner loop while iterating: `./scripts/verify.sh <change> --keep-up`, then
-`./scripts/stack.sh rebuild backend` and re-run smoke, instead of a full cold cycle.
+- `make up down ps logs health` — all three repos on one origin. A product repo's own
+  `make up` brings up that repo alone; only this arrangement makes the seams real.
+- `make smoke` · `make verify CHANGE=<dir>` · `make iterate CHANGE=<dir>`
+- `make repos lock prs check check-docs` — state across the repos
+- `./scripts/new-change.sh <slug>` scaffolds · `manifest.py <dir> --validate` is the ship
+  gate and names what to fix · `harvest-contract.py --diff` is contract versus served

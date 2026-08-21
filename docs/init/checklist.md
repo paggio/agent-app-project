@@ -29,6 +29,9 @@ reasoning behind each step.
 ## Control repo
 
 - [ ] `contracts/` present, owned exclusively here
+- [ ] `stack/compose.yml` joins every repo into one project, on one origin
+- [ ] `smoke/baseline.yaml` asserts the seam, every step with an `owner`
+- [ ] `.github/workflows/ci.yml` runs `check-docs.py` and `manifest.py --validate`
 - [ ] `changes/` template present, `new-change.sh` produces a usable directory
 - [ ] `scripts/*.sh` executable
 - [ ] Submodule `deny` rules in `.claude/settings.json`
@@ -50,7 +53,12 @@ Per product repo, once the toolchain exists:
 - [ ] Self-sufficiency: clone one product repo alone into a fresh directory, run a
       session, ask for a small change — nothing essential is missing
 - [ ] One deliberately small cross-repo change run end to end: plan → freeze →
-      `fanout.sh` → three green PRs → merge in dependency order → `lock.sh`
+      `iterate.sh` → outcome `verified` → merge in dependency order → `lock.sh`.
+      Per-repo CI going green is not the finish line; the joined deploy and the smoke
+      suite are (`docs/adr/0002`).
+- [ ] A gate proved by breaking it on purpose: scaffold a change with
+      `new-change.sh` and confirm `manifest.py --validate` refuses it. A fresh scaffold
+      must be unshippable until someone writes the criteria.
 - [ ] Submodule branching survived it (no work stranded on a detached HEAD)
 
 ## Housekeeping
