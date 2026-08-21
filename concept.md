@@ -1,839 +1,264 @@
-# Project Structure & Agentic Development Conventions
+# Why this repo looks like this
 
-Reference document for initializing a three-tier system (backend, frontend,
-infrastructure) developed primarily through AI coding agents.
+The reasoning behind a four-repo, contract-first layout developed primarily through AI
+coding agents. `docs/adr/` is the record of each decision and its accepted costs;
+`docs/init/` is how the repos were created. This file is the argument that ties them
+together — the part worth reading once, before proposing a redesign.
 
-**Status:** a snapshot of the original design, kept for the reasoning behind it.
-
-> **Where this disagrees with `docs/adr/` or `docs/init/`, they win.** This file quotes file
-> contents and script bodies that have since moved on — most notably `fanout.sh`, which is
-> described here in the form `docs/adr/0002` was written to replace. It is not maintained
-> against the tree; the ADRs are the record of what was decided and `docs/init/` is the
-> record of what was run.
-**Review cadence:** revisit after ~10 completed changes, and after any major model release.
+**It holds no file contents and no script bodies.** An earlier version quoted both, and
+that is precisely what rotted: it went on teaching a form of `fanout.sh` that
+`docs/adr/0002` had replaced, at five times this length. Where prose and mechanism disagree,
+the mechanism wins, and the mechanism is never quoted here.
 
 ---
 
-## 1. Purpose and scope
-
-This document defines:
-
-- how the repositories are split and why,
-- where instructions for coding agents live, and which of the four destinations each kind of document belongs in,
-- what is enforced mechanically versus what is advisory,
-- the two development workflows (single-repo and cross-repo),
-- a concrete file-by-file layout with example contents.
-
-It assumes Claude Code as the primary harness, but the layout is harness-agnostic:
-everything is plain markdown, shell scripts, and CI configuration.
-
----
-
-## 2. Architecture decisions
-
-### 2.1 Polyrepo with a control repo
-
-Four repositories:
+## 1. Four repos, one of them a control repo
 
 | Repo | Contents | Deploy cadence |
 | --- | --- | --- |
-| `platform` (control) | contracts, change briefs, cross-cutting docs, orchestration | n/a |
-| `backend` | API service | per-merge |
-| `frontend` | web client | per-merge |
+| `agent-app-project` (control) | contracts, change artifacts, cross-cutting docs, orchestration | n/a |
+| `chatbot-backend` | API service and agent graph | per merge |
+| `frontend` | web client | per merge |
 | `infra` | IaC | reviewed, gated |
 
-The three product repos are vendored into the control repo as **git submodules**.
+The three product repos are vendored here as git submodules.
 
-**Rationale.** Each product repo keeps its own git history, CI pipeline, deploy
-cadence, secret scope, and observability. The control repo exists to hold the one
-thing that cannot live inside any single product repo: the interface between them.
+**Why split at all.** Each product repo keeps its own git history, CI pipeline, deploy
+cadence, secret scope and observability. A shared pipeline couples deploy risk across tiers
+with very different review requirements — infra is gated, the app repos are per-merge.
 
-**Known cost.** A feature spanning all three repos produces three pull requests and
-three CI runs, and cannot merge atomically. Version skew between repos is a permanent
-tax, paid via expand-contract migrations and feature flags (see §8.3). This cost is
-accepted deliberately; if it becomes the dominant source of friction, the fallback is
-to merge `backend` + `frontend` + `contracts` into one repo and keep `infra` separate.
+**Why a control repo.** Three agents working in three repos will each re-derive the
+interface between them if allowed to, and they will disagree in small ways that surface in
+production rather than in review. Prose cannot prevent that, because **instruction text
+cannot fail a build**. A contract can. The control repo exists to hold the one thing that
+cannot live inside any single product repo.
 
-### 2.2 Contract-first coordination
-
-**The control repo owns `contracts/`. No product repo may modify it.**
-
-A cross-repo feature is not coordinated by an orchestrating agent or by prose
-instructions. It is coordinated by a frozen, machine-readable artifact that each
-repo's own CI verifies conformance against:
-
-```
-contracts/openapi.yaml        HTTP interface
-contracts/events/*.json       async message schemas
-contracts/infra-outputs.yaml  what infra promises the app repos (ARNs, URLs, secret names)
-```
-
-Three agents working in three repos will each independently re-derive an interface if
-allowed to, and they will disagree in small ways. No amount of instruction text
-prevents this, because instruction text cannot fail a build. A contract can.
-
-**Corollary:** contract changes are sequential and single-session. Implementation is
-parallel. Never both at once.
-
-### 2.3 Self-sufficiency of sub-repos
-
-Because CI clones each product repo on its own, and because a developer may clone
-only `backend`, the following rule is absolute:
-
-> **The control repo's `CLAUDE.md` is additive context. It is never load-bearing.**
-> Every product repo must be fully self-describing in isolation.
-
-Test this periodically: clone a product repo into a fresh directory outside the
-submodule tree, start an agent session, and ask it to implement a small change. If it
-is missing context, the split is wrong.
+**The accepted costs**, stated because an argument that lists only benefits is a sales
+pitch: a feature spanning all three repos produces three pull requests and three CI runs
+and cannot merge atomically; version skew is a permanent tax, paid via expand-contract
+migrations and feature flags; and submodules are a sharp edge (§5). The fallback, if the
+three-PR overhead ever becomes the dominant friction, is to merge backend + frontend +
+contracts into one repo and keep infra separate. `docs/adr/0001`.
 
 ---
 
-## 3. Where instructions live: the four destinations
+## 2. The contract is the coordination mechanism
 
-The single most common configuration mistake is putting everything in one place.
-The correct question for each document is **when should this enter the context window?**
+`contracts/` is edited **here and only here**. Product repos vendor a read-only copy and
+verify conformance in their own CI.
+
+- `openapi.yaml` — the HTTP interface
+- `infra-outputs.yaml` — what infra promises the app repos (ARNs, URLs, secret names)
+- `README.md` — the normative prose neither file can hold: cookie attributes, the CSRF
+  posture, the `/api/` prefix invariant, the rule that decides between two error shapes
+
+**The freeze is a commit, and then a tree.** A contract change lands in a commit containing
+nothing else; that commit's SHA goes in the change's `change.yaml` as `freeze_sha`; and the
+dispatch extracts `contracts/` at exactly that SHA and gives the implementing sessions
+nothing else. So "frozen" is not a promise an agent is trusted to honour — it is the only
+tree it can read. That distinction is the whole design: an earlier version said FROZEN in
+the prompt while granting access to the working copy.
+
+Additive by default, because the repos deploy independently and production will always
+briefly run mismatched versions. New fields optional, new endpoints alongside old ones,
+removals in a later change once every consumer is updated.
+
+---
+
+## 3. Verification is what makes any of it true
+
+A contract says what the interface *should* be. It says nothing about whether the interface
+is honoured at runtime, and for a while nothing filled that gap: three repos could each be
+internally green while the seam between them was broken, and nobody found out until someone
+ran the whole thing by hand. The frontend's tests passed against mock clients; the backend's
+passed against itself; the proxy could not resolve the backend at all.
+
+So the control repo also owns:
+
+- **the joined stack** — every repo in one compose project and therefore one network,
+  behind the single origin a browser would use. Neither product repo may own this: the
+  frontend cannot name a service it does not ship, and the backend has no business knowing
+  a proxy exists.
+- **the cross-repo smoke suite** — `smoke/baseline.yaml` plus a `smoke.yaml` per change,
+  asserted through that origin. Every step names an `owner`: the repo answerable for it.
+  That field is what makes a failure routable to one agent with the request, the response
+  and the container log attached, instead of a group email.
+
+Keep the suite about the **seam**. Anything provable inside one repo belongs in that repo's
+own tests. `docs/adr/0002`.
+
+### A pass requires counted evidence
+
+Every gate here fails closed, and that is a decision rather than an implementation detail.
+The rules:
+
+1. **Exit 1 means the thing under test failed. Exit 2 means the harness refused to judge
+   it.** No caller may conflate the two. A malformed suite, an undefined variable, an
+   unparseable manifest and an empty step selection are the control repo's fault, reported
+   as such rather than routed to a product repo as a repair brief.
+2. **A pass requires counted assertions**, including at least one from the change's own
+   suite. A run that proves only that the stack still works says so, and fails.
+3. **Every dispatched agent returns a structured result, or is recorded as failed.** "No
+   result" is a defined outcome, not an accident.
+
+Each of those exists because the opposite happened: an outcome inferred from the absence of
+a failure signal rather than from the presence of evidence. `docs/adr/0003`.
+
+---
+
+## 4. Two commands
+
+| The work | Lane |
+| --- | --- |
+| One repo, no interface change | none — `cd <repo> && claude` |
+| Two or more repos, or any change to `contracts/` | `/ship` |
+| The product PRs are merged and this repo is behind | `/realign` |
+
+`/ship` is plan → freeze → gate → dispatch-and-repair → pull requests, in one invocation.
+`/realign` is bump → re-check the contract against what is served → re-run the baseline →
+pin → promote.
+
+**Why one command rather than three.** The invariant that matters is that the freeze commit
+precedes the dispatch and lands alone, and that is machine-enforced. Keeping plan, freeze and
+implementation in separate sessions was a proxy for the same thing, and the proxy cost a
+handoff per change while buying nothing the gate does not. It also produced four competing
+skills describing one activity, which is how the documentation drifted in the first place.
+`docs/adr/0005`.
+
+**Why the control repo dispatches processes rather than spawning subagents.** Each
+dispatched session starts with its working directory inside the real product repo, so it
+picks up that repo's `CLAUDE.md` chain, its settings, its skills, its hooks and its git
+remote. A subagent of the control session would inherit the control session's context, which
+is exactly the coupling the split exists to avoid.
+
+**Agents implement; they do not decide whether the change is done.** The control flow, the
+attribution and the stopping conditions live in shell where they can be read and audited.
+The suite decides.
+
+---
+
+## 5. Submodules, the sharpest edge
+
+Two failure modes recur, and one example covers both.
+
+**Detached HEAD.** `git submodule update` leaves each submodule detached. Commits made there
+are on no branch and are easy to lose. Branch before any work — the dispatch does this;
+interactive sessions must do it themselves.
+
+**Stale pointers.** The control repo pins SHAs, and they have to be bumped after the product
+PRs merge — in that order, never before.
+
+There are **three independently-moving values** per submodule, and mistaking one for another
+causes nearly every submodule mistake in this layout:
+
+| | what it is | mid-change | after the bump |
+| --- | --- | --- | --- |
+| the gitlink in the parent's `HEAD` | what the parent *records* | the last merged commit | the merged `main` |
+| what is checked out | what is *on disk* | the feature branch | the same merged `main` |
+| `repos.lock` | the human-readable duplicate | older still | the same merged `main` |
+
+A submodule is one SHA, not a branch: in the parent it is a tree entry whose entire content
+is a commit id. So a submodule "change" in `git status` is always a pointer move, never a
+file edit — read it as *"the pointer would move"*, and leave it alone mid-change. The parent
+should only ever record commits that are permanently reachable on a product repo's `main`.
+
+The rules that follow:
+
+1. Never `git add` a submodule path casually, and never `git add -A` at the parent root,
+   which sweeps every pointer in as a side effect.
+2. Branch inside the submodule before committing there. Always.
+3. Do not run `git submodule update --remote --merge` while work is in flight; it yanks
+   checked-out submodules back and discards in-flight commits.
+4. Merge first, then pin, then bump the pointers — as one commit containing only the
+   pointers and `repos.lock`. Pinning first records commits that a squash-merge deletes,
+   which is worse than a stale pin because it looks authoritative.
+
+`make repos` reports the disagreement between all three values, at any stage. `/realign`
+performs the sequence.
+
+---
+
+## 6. Where instructions live
+
+The most common configuration mistake is putting everything in one place. The right question
+for each document is **when should this enter the context window?**
 
 | Destination | Loads | Contents |
 | --- | --- | --- |
-| `CLAUDE.md` | Every session, always | Commands, layout map, hard rules, gotchas. **40–60 lines maximum.** |
-| `.claude/skills/*/SKILL.md` | On demand, when the agent judges it relevant | **Procedures with a natural trigger:** how tests are written, how to add an endpoint, release runbook |
-| `.claude/rules/*.md` (with `paths:` frontmatter) | When the agent touches a matching file | **Hard local rules** for a specific area: migrations, auth, generated code |
-| `docs/` | Never automatically | **Durable source of truth:** ADRs, architecture, product specs |
+| `CLAUDE.md` | every session | commands, layout, hard rules, gotchas. **40–60 lines.** |
+| `.claude/commands/*.md` | when invoked | the lanes. One per thing this repo does. |
+| `.claude/skills/*/SKILL.md` | on the model's judgement | procedures with a natural trigger |
+| `.claude/rules/*.md` (`paths:`) | when a matching file is touched | hard local rules for one area |
+| `docs/` | never automatically | durable truth: ADRs, architecture, interfaces |
 
-### Skills are procedures. Docs are truth.
+**Reference is not a procedure.** This repo has no skills, on purpose. Four of them once
+described one activity — planning, freezing, aligning, deploying — and competed to activate;
+what each actually held was reference that has to be *exactly* right at the moment it is
+read. That belongs in a file read deliberately (`docs/`, `contracts/README.md`) with a
+command routing to it, not in a skill that fires on a description match. A product spec has
+no natural trigger phrase either: as a skill it never activates or always does.
 
-A product spec has no natural trigger phrase, so as a skill it either never activates
-or activates constantly. Keep it in `docs/` and let a *skill* instruct the agent when
-to go read it. This is why the plan is not "move `context/*.md` into skills" but
-rather: most of that content becomes `docs/`, with a thin skill layer pointing at it.
-
-### CLAUDE.md sizing discipline
-
-For each line in a `CLAUDE.md`, ask: *would removing this cause the agent to make a
-mistake?* If not, delete it. An over-long `CLAUDE.md` causes the agent to ignore the
-rules that matter, because the important ones get lost in the noise. Symptom to watch
-for: the agent repeatedly violating a rule that is written down. The fix is almost
-always to shorten the file, not to add emphasis.
+**`CLAUDE.md` sizing.** For each line, ask: *would removing this cause a mistake?* If not,
+delete it. An over-long file causes the rules that matter to be lost in the noise. The
+symptom is an agent repeatedly violating a rule that is written down, and the fix is almost
+always to shorten the file, not to add emphasis. This is checked mechanically, because the
+file drifted past its own budget while stating it.
 
 Note that `.claude/settings.json` does **not** layer from parent directories the way
-`CLAUDE.md` does — it loads only from the directory the session starts in. Each
-product repo therefore needs a complete, self-contained settings file.
+`CLAUDE.md` does — it loads only from the directory the session starts in. Each product repo
+therefore needs a complete, self-contained file.
 
 ---
 
-## 4. Repository layout
+## 7. Enforcement
 
-### 4.1 Control repo
+Instructions are advisory. Hooks and gates are deterministic. Anything that genuinely must
+not happen belongs in a mechanism, not in prose.
 
-```
-platform/
-├── CLAUDE.md                                 # additive context; never load-bearing
-├── README.md
-├── .gitmodules
-├── repos.lock                                # human-readable SHA triple
-├── .claude/
-│   ├── settings.json                         # root-session hooks + deny rules
-│   ├── skills/
-│   │   ├── plan-cross-repo-change/SKILL.md
-│   │   └── freeze-contract/SKILL.md
-│   ├── agents/
-│   │   └── contract-conformance.md
-│   ├── commands/
-│   │   └── ship.md                           # /ship 0042-csv-export
-│   └── hooks/
-│       └── no-subrepo-edits.sh
-├── contracts/
-│   ├── openapi.yaml
-│   ├── events/
-│   │   └── account-activity.schema.json
-│   └── infra-outputs.yaml
-├── changes/
-│   └── 0042-csv-export/
-│       ├── BRIEF.md                          # what, why, acceptance criteria
-│       ├── backend.md
-│       ├── frontend.md
-│       ├── infra.md
-│       └── STATUS.md                         # PR links, SHAs, blockers
-├── docs/
-│   ├── adr/
-│   │   └── 0001-contract-first-polyrepo.md
-│   └── product/
-│       └── overview.md
-├── scripts/
-│   ├── fanout.sh
-│   ├── lock.sh
-│   └── new-change.sh
-├── backend/                                  # submodule
-├── frontend/                                 # submodule
-└── infra/                                    # submodule
-```
+- **Per product repo:** a `Stop` hook that refuses to end a turn until typecheck, tests and
+  contract conformance pass. This converts "looks done" into "provably done" and is the
+  single highest-leverage file in the layout. Keep it fast; a gate that takes two minutes
+  gets disabled.
+- **Here:** `manifest.py --validate` is the ship gate; `smoke.py --lint` owns the step
+  schema; `check-docs.py` holds the prose to the mechanisms, each check tied to a
+  documentation defect that actually happened; a `PreToolUse` hook blocks shell writes into
+  a submodule, and `test-hooks.py` probes that guard in both directions — a guard that fires
+  on ordinary work is one the agent learns to route around.
+- **Every product repo's CI**, as required checks: typecheck, lint, unit and integration
+  tests, contract conformance, secret scanning.
 
-### 4.2 Product repo (backend shown; frontend and infra follow the same shape)
-
-```
-backend/
-├── CLAUDE.md
-├── .claude/
-│   ├── settings.json
-│   ├── skills/
-│   │   ├── add-endpoint/SKILL.md
-│   │   ├── testing/SKILL.md
-│   │   └── db-migration/SKILL.md
-│   ├── rules/
-│   │   └── migrations.md                     # paths: migrations/**
-│   ├── agents/
-│   │   ├── adversarial-reviewer.md
-│   │   └── security-reviewer.md
-│   └── hooks/
-│       ├── format.sh
-│       └── gate.sh
-├── contracts/
-│   └── openapi.yaml                          # vendored copy; CI-verified, never edited here
-├── docs/
-│   ├── adr/
-│   ├── architecture.md                       # modules, boundaries, data flow
-│   └── product/
-├── src/
-├── tests/
-├── migrations/
-└── .github/workflows/ci.yml
-```
+A guard that is documented must be called. Three here were not — a variable consumed and
+never set, labels read and never declared, a diff gate cited in three files and wired to
+nothing — and each read as protection while providing none.
 
 ---
 
-## 5. Control repo file contents
+## 8. Managing version skew
 
-### 5.1 `platform/CLAUDE.md`
+Production will always briefly run mismatched versions.
 
-```markdown
-# Control repo
-
-Three INDEPENDENT projects, vendored as submodules. Each has its own git history,
-CI, deploy cadence, and CLAUDE.md. This file is extra context only — never assume a
-sub-repo session can see it.
-
-## Hard rules
-- NEVER edit code inside backend/, frontend/, infra/ from this session. Implementation
-  happens in a session started inside that repo, or via scripts/fanout.sh. Here you
-  plan and write contracts.
-- Submodules land in detached HEAD. Before ANY commit inside one:
-  `git -C <repo> switch -c <branch>` first. Verify with `git -C <repo> status`.
-- contracts/ is owned here and only here. Product repos consume, never edit.
-- After merging a change, run ./scripts/lock.sh and commit repos.lock.
-
-## Layout
-- contracts/    frozen interfaces (OpenAPI, event schemas, infra outputs)
-- changes/NNNN/ one directory per cross-repo feature
-- docs/adr/     cross-cutting decisions
-- repos.lock    the SHA triple known to work together
-
-## Commands
-- ./scripts/new-change.sh <slug>     scaffold changes/NNNN-<slug>/
-- ./scripts/fanout.sh <change-dir>   dispatch a change to all three repos
-- ./scripts/lock.sh                  refresh repos.lock from submodule SHAs
-```
-
-### 5.2 `platform/.claude/settings.json`
-
-```json
-{
-  "permissions": {
-    "deny": [
-      "Edit(./backend/**)",
-      "Edit(./frontend/**)",
-      "Edit(./infra/**)"
-    ]
-  },
-  "hooks": {
-    "PreToolUse": [
-      {
-        "matcher": "Bash",
-        "hooks": [
-          { "type": "command", "command": ".claude/hooks/no-subrepo-edits.sh" }
-        ]
-      }
-    ]
-  }
-}
-```
-
-The `deny` rules cover the agent's file-editing tools. The `PreToolUse` hook covers
-the gap: shell commands that write into a submodule (`sed -i`, `tee`, redirects) are
-not caught by `Edit` rules.
-
-### 5.3 `platform/changes/0042-csv-export/BRIEF.md`
-
-The brief is the substitute for a spec framework. Written by hand, in a planning
-session, before any implementation.
-
-```markdown
-# 0042 — CSV export of user activity
-
-## Why
-Support spends roughly 3 hours per week manually pulling activity data for account
-reviews. Self-service export removes that.
-
-## Acceptance criteria (these are the oracle)
-- [ ] GET /v1/accounts/{id}/activity.csv returns text/csv, streamed, never fully buffered
-- [ ] Requires the `activity:read` scope; 403 otherwise, covered by a test
-- [ ] A 50,000-row export completes in under 30s in staging
-- [ ] Frontend: "Export" button on the Activity tab, disabled while a job is pending
-- [ ] Infra: S3 bucket for exports exceeding 5 minutes, 7-day lifecycle rule
-
-## Out of scope
-XLSX format. Scheduled or recurring exports. Email delivery.
-
-## Contract changes
-contracts/openapi.yaml: +1 path, +ExportJob schema. Frozen as of <commit sha>.
-
-## Slices
-- backend.md
-- frontend.md
-- infra.md
-```
-
-Acceptance criteria are written as checkable statements, not aspirations. Each one
-should map to a test, a metric, or a manual verification step someone can perform.
-
-### 5.4 `platform/scripts/fanout.sh`
-
-```bash
-#!/usr/bin/env bash
-set -euo pipefail
-
-CHANGE="${1:?usage: fanout.sh <change-dir-name>}"
-CONTROL="$(pwd)"
-[ -d "changes/$CHANGE" ] || { echo "no such change: $CHANGE" >&2; exit 1; }
-
-for r in backend frontend infra; do
-  [ -f "changes/$CHANGE/$r.md" ] || continue
-
-  git -C "$r" switch -c "feat/$CHANGE" 2>/dev/null || git -C "$r" switch "feat/$CHANGE"
-
-  (
-    cd "$r"
-    claude -p "Implement your slice of this change: $CONTROL/changes/$CHANGE/$r.md
-Read $CONTROL/changes/$CHANGE/BRIEF.md for full context and acceptance criteria.
-The contracts under $CONTROL/contracts/ are FROZEN. If your slice appears to require
-a contract change, STOP and report it rather than working around it.
-Finish with your repo's gates passing, then open a pull request.
-Return exactly OK or FAIL:<one-line reason>." \
-      --permission-mode auto \
-      --add-dir "$CONTROL/changes/$CHANGE" \
-      --add-dir "$CONTROL/contracts"
-  ) &
-done
-
-wait
-echo "fanout complete — review the three PRs before merging anything"
-```
-
-Each invocation starts with its working directory *inside* the real product repo, so
-it picks up that repo's `CLAUDE.md` chain, its `.claude/settings.json`, its skills,
-its hooks, and its git remote. This is why the fan-out uses separate processes rather
-than subagents spawned from the control session.
-
-`--add-dir` is used rather than the `additionalDirectories` setting: the setting grants
-file access only, while the flag also loads skills from the added directory.
-
-### 5.5 `platform/scripts/lock.sh`
-
-```bash
-#!/usr/bin/env bash
-set -euo pipefail
-{
-  echo "# Submodule SHAs known to work together"
-  echo "# Regenerate with ./scripts/lock.sh"
-  echo "# Updated: $(date -u +%Y-%m-%dT%H:%M:%SZ)"
-  for r in backend frontend infra; do
-    printf '%-10s %s\n' "$r" "$(git -C "$r" rev-parse HEAD)"
-  done
-} > repos.lock
-cat repos.lock
-```
-
-### 5.6 `platform/.claude/agents/contract-conformance.md`
-
-```markdown
----
-name: contract-conformance
-description: Verifies a repo's implementation matches contracts/. Use after any slice completes.
-tools: Read, Grep, Glob, Bash
-model: sonnet
----
-
-Compare the implementation against contracts/openapi.yaml.
-
-Report ONLY:
-- endpoints in the contract that are not implemented
-- request or response shapes that differ from the contract
-- implemented endpoints absent from the contract
-- status codes returned but not documented
-
-Do not comment on style, naming, file structure, or test quality. If everything
-matches, say so in one line.
-```
-
-A reviewer agent asked to find problems will find some, whether or not they exist.
-Narrow scope, as above, is what keeps review output actionable instead of producing
-speculative refactors.
+- **Backend:** additive within a release. New fields optional, new endpoints alongside old,
+  deprecations in a later change.
+- **Frontend:** feature-flagged, so it can merge and deploy before the capability exists.
+- **Database:** expand-contract across separate merges, never one breaking DDL.
+- **Infra:** outputs are additive; removing one is its own change, consumers first.
 
 ---
 
-## 6. Product repo file contents
+## 9. Maintenance
 
-### 6.1 `backend/CLAUDE.md`
+**Review the harness every three to six months, and after every major model release.**
+Rules written to work around a weaker model become pure friction on a stronger one. Prune
+aggressively; assume a rule is obsolete until it earns its place.
 
-```markdown
-# backend — Node 22 / TypeScript / Fastify / Postgres
+**Watch for the drift signal.** If an agent repeatedly violates a written rule, the file is
+too long and the rule is being lost. Shorten before adding emphasis. If prose describes a
+mechanism that does not exist, that is not a documentation bug — it is a missing mechanism
+or a lie, and both are worse than silence.
 
-Standalone repo. Everything needed to work here is in this repo.
-
-## Commands
-- test:      `npm test`                  (vitest; single file: `npm test -- <path>`)
-- typecheck: `npm run typecheck`          MUST pass before work is considered done
-- lint:      `npm run lint -- --fix`
-- contract:  `npm run contract:check`     implementation vs contracts/openapi.yaml
-- dev:       `npm run dev`                port 3001; requires `docker compose up db`
-
-## Hard rules
-- contracts/openapi.yaml is vendored from the control repo. NEVER edit it. If an
-  endpoint needs to change, stop and say so — that is a control-repo change.
-- No raw SQL in route handlers. Query builders live in src/db/.
-- Every new endpoint needs: handler, integration test, contract entry.
-- Migrations are append-only. Never edit a migration that has been merged.
-
-## Source of truth
-- Architecture and module boundaries: docs/architecture.md
-- Why things are the way they are: docs/adr/ — read before proposing a redesign
-- What we are building and for whom: docs/product/
-
-If you change behaviour described in docs/architecture.md, or make a decision a
-future reader would ask "why?" about, update the doc or add an ADR in the SAME
-commit. This is enforced by .claude/hooks/gate.sh.
-```
-
-The final paragraph is deliberately paired with mechanical enforcement. On its own it
-is advisory and will be ignored eventually; §7 is what makes it real.
-
-### 6.2 `backend/.claude/settings.json`
-
-```json
-{
-  "permissions": {
-    "deny": [
-      "Edit(./contracts/**)",
-      "Edit(./migrations/*.sql)",
-      "Read(./dist/**)",
-      "Read(./coverage/**)",
-      "Read(./**/*.generated.*)"
-    ]
-  },
-  "hooks": {
-    "PostToolUse": [
-      {
-        "matcher": "Edit|Write",
-        "hooks": [{ "type": "command", "command": ".claude/hooks/format.sh" }]
-      }
-    ],
-    "Stop": [
-      {
-        "hooks": [{ "type": "command", "command": ".claude/hooks/gate.sh" }]
-      }
-    ]
-  }
-}
-```
-
-### 6.3 `backend/.claude/skills/add-endpoint/SKILL.md`
-
-```markdown
----
-name: add-endpoint
-description: Adding or modifying a REST endpoint in backend. Use when creating routes, handlers, or changing request/response shapes.
----
-
-## Before writing code
-1. Confirm the endpoint exists in `contracts/openapi.yaml`. If it does not, STOP —
-   this is a control-repo change, not a backend change.
-2. Read `docs/architecture.md` § "Request lifecycle".
-3. Find the closest existing route in `src/routes/` and follow its shape.
-
-## Order of work
-1. Integration test in `tests/routes/<name>.test.ts`. It must fail first.
-2. Handler in `src/routes/<name>.ts`, exporting a Fastify plugin.
-3. Domain logic in `src/domain/`. Handlers stay thin; no business rules in them.
-4. Run `npm run contract:check` and `npm test`.
-
-## Conventions
-- Validate with the zod schema generated from the contract, never hand-written.
-- Return 4xx via `throw new AppError(...)`, never `reply.code(400).send()` directly.
-- Every handler emits exactly one structured log line including `requestId`.
-```
-
-Skill descriptions are used to decide whether the skill applies, and they get
-shortened when many skills are in scope. Lead with words a real request would contain.
-
-### 6.4 `backend/.claude/rules/migrations.md`
-
-```markdown
----
-paths: ["migrations/**", "src/db/schema.ts"]
----
-
-- Migrations are immutable once merged. To change a merged migration, write a new one.
-- Every migration must be expand-contract: add nullable column → backfill → enforce
-  constraint. Never a single breaking DDL, because backend and frontend deploy
-  independently and will be skewed in production.
-- Include a `-- rollback:` block describing how to reverse the change.
-- Update `src/db/schema.ts` in the same commit.
-```
-
-### 6.5 `backend/docs/architecture.md` (skeleton)
-
-```markdown
-# Architecture
-
-## Module map
-| Directory | Responsibility | May import from |
-| --- | --- | --- |
-| src/routes/ | HTTP surface, validation, serialization | domain, db (read-only) |
-| src/domain/ | business rules, invariants | db |
-| src/db/ | queries, migrations, schema | — |
-
-## Request lifecycle
-1. ...
-
-## Boundaries and invariants
-- Domain code never imports from routes.
-- ...
-
-## Known gaps and deliberate omissions
-- ...
-```
-
-The module table is the highest-value part of this file: it gives an agent something
-concrete to check its own work against, rather than prose it can interpret loosely.
-
----
-
-## 7. Enforcement: hooks and gates
-
-Instructions in `CLAUDE.md` and skills are advisory. Hooks are deterministic. Anything
-that genuinely must not happen belongs in a hook or a `deny` rule, not in prose.
-
-### 7.1 `backend/.claude/hooks/gate.sh` — the Stop hook
-
-A `Stop` hook blocks the agent's turn from ending until it passes. This converts
-"looks done" into "provably done" and is the single highest-leverage file in this
-layout. (Claude Code overrides the hook after 8 consecutive blocks, so it cannot
-deadlock a session permanently.)
-
-```bash
-#!/usr/bin/env bash
-set -uo pipefail
-
-fail() { echo "$1" >&2; exit 2; }   # exit 2 = block the turn, send message to the agent
-
-npm run typecheck --silent      || fail "typecheck failed — fix before finishing"
-npm test -- --run --silent      || fail "tests are failing"
-npm run contract:check          || fail "implementation drifted from contracts/openapi.yaml"
-
-# Documentation freshness: architectural surface changed without any doc change
-CHANGED="$(git diff --name-only HEAD 2>/dev/null; git diff --cached --name-only 2>/dev/null)"
-if grep -qE '^src/(routes|domain)/' <<< "$CHANGED" && ! grep -qE '^docs/' <<< "$CHANGED"; then
-  fail "You changed src/routes/ or src/domain/ without touching docs/. Update docs/architecture.md or add docs/adr/NNNN-*.md, then finish."
-fi
-
-exit 0
-```
-
-Keep it fast. A gate that takes two minutes will get disabled. If the full test suite
-is slow, gate on the affected subset and leave the full suite to CI.
-
-### 7.2 `backend/.claude/hooks/format.sh` — the PostToolUse hook
-
-```bash
-#!/usr/bin/env bash
-set -uo pipefail
-npx prettier --write --log-level warn "$@" 2>/dev/null || true
-exit 0
-```
-
-Formatting must never block. Exit 0 unconditionally.
-
-### 7.3 Optional: instruction drift detection
-
-A `Stop` hook receives the path to the session transcript. A script can read it and
-propose `CLAUDE.md` or skill updates while the gap that exposed the need is still
-fresh. Worth adding once the base gates are stable — not on day one.
-
-### 7.4 CI gates (independent of the agent harness)
-
-Every product repo's CI must enforce, as required status checks:
-
-- typecheck, lint, unit tests, integration tests
-- contract conformance against the vendored `contracts/`
-- vendored contract matches the control repo at the pinned SHA
-- secret scanning — non-negotiable, and never delegated to the agent's judgement
-- SAST / dependency audit
-
-Additionally, for auditability: label agent-opened PRs with the tool and session
-identifier so a finding in production can be traced back to the originating session.
-
----
-
-## 8. Workflows
-
-### 8.1 Single-repo feature (the common case, ~80% of work)
-
-```bash
-cd backend
-claude
-```
-
-The session loads `backend/CLAUDE.md` plus the control repo's `CLAUDE.md` (found by
-walking up the directory tree), `backend/.claude/settings.json`, and only that repo's
-skills. Nothing from `frontend/` or `infra/` enters context.
-
-No orchestration, no fan-out, no multi-agent setup. Plan mode first if the change
-spans several files or the approach is uncertain; straight to implementation if the
-diff could be described in one sentence.
-
-### 8.2 Cross-repo feature
-
-```bash
-cd platform
-claude
-```
-
-1. **Plan.** In plan mode, have the agent read `docs/`, interview you about the hard
-   parts, then write `changes/NNNN-<slug>/BRIEF.md` and the per-repo slice files.
-   Review and edit these by hand — this is where your judgement is worth the most.
-2. **Freeze the contract.** Edit `contracts/` yourself or with the agent. Commit.
-   This commit is the freeze point and should be referenced in `BRIEF.md`.
-3. **Fan out.** `./scripts/fanout.sh 0042-csv-export`. Three parallel sessions, each
-   inside its real repo with its real gates.
-4. **Review.** Three PRs, each independently green. Run the deeper multi-agent review
-   on anything substantial before merging.
-5. **Merge in dependency order.** Backend first (expand-contract means it is backward
-   compatible), then frontend, then infra as required. Bump `repos.lock` and commit.
-
-**Never overlap steps 2 and 3.** Implementation agents working against an unfrozen
-contract is exactly the failure mode this structure exists to prevent.
-
-### 8.3 Managing version skew
-
-Because the three repos cannot merge atomically, production will always briefly run
-mismatched versions.
-
-- **Backend:** additive changes only within a release. New fields optional, new
-  endpoints alongside old ones, old endpoints deprecated in a later change.
-- **Frontend:** feature-flagged, so it can merge and deploy before the backend
-  capability is enabled.
-- **Database:** expand-contract in three separate merges, never one.
-- **Infra:** outputs are additive; removing an output is its own change with the
-  consumers updated first.
-
----
-
-## 9. Submodule operating rules
-
-Submodules are the sharpest edge in this layout. Two failure modes recur:
-
-**Detached HEAD.** `git submodule update` leaves each submodule on a detached HEAD.
-Commits made there are not on any branch and are easy to lose. Always
-`git -C <repo> switch -c <branch>` before any work. `fanout.sh` does this; interactive
-sessions must do it manually. This is why it appears in the control repo's
-`CLAUDE.md` hard rules.
-
-**Stale pointers.** The control repo pins SHAs. After merging product-repo PRs:
-
-```bash
-git submodule update --remote --merge
-./scripts/lock.sh
-git add backend frontend infra repos.lock
-git commit -m "chore: bump submodules for 0042-csv-export"
-```
-
-`repos.lock` duplicates information git already stores in the submodule pointers, on
-purpose: it is human- and agent-readable without git plumbing, and it is what CI reads
-to verify the vendored contract matches.
-
-**Clone instructions** belong in the control repo's `README.md`:
-
-```bash
-git clone --recurse-submodules <url> platform
-# or, after a plain clone:
-git submodule update --init --recursive
-```
-
-### Concrete Example
-
-Let's say we are working on a cross-repo change, and we have a couple of PRs opened in the product repos.
-It will be normal that git will see changes to the `chatbot-backend`/`frontend` repos.
-
-That is expected, and it is not something to tidy away mid-change. Here is the whole
-lifecycle of `0001-auth`, and what to do at each stage.
-
-**What the parent is even showing you.** A submodule is one SHA, not a branch: in the parent
-repo it is a *gitlink*, a tree entry with mode `160000` whose entire content is a single
-commit id. So a submodule "change" is always a pointer move, never a file edit:
-
-```
--Subproject commit f5d3044…      what the parent currently records
-+Subproject commit 9a66269…      what is checked out on disk
-```
-
-Nothing inside the submodule is dirty. If it were, that repo's own status would say so
-separately.
-
-#### Stage 1 — dispatch
-
-`fanout.sh` runs `git -C <repo> switch -c feat/0001-auth` in each slice repo, and the agents
-commit there. The parent immediately shows two modified submodules.
-
-**Do nothing.** The parent still points at the last merged code, which is correct: nothing
-has been reviewed yet.
-
-#### Stage 2 — ship and verify
-
-`verify.sh` asserts **what is checked out**, not what the parent records and not what
-`repos.lock` pins. That is deliberate — the point is to test the code the PRs contain. It is
-also why "ahead of `repos.lock`" is printed as a note rather than treated as a failure.
-
-Still nothing to commit in the parent.
-
-#### Stage 3 — merge the product PRs, in dependency order
-
-This is the step that has to come first, and the order is a real constraint rather than a
-preference. For `0001-auth`:
-
-1. `chatbot-backend` — additive and backward compatible on its own.
-2. `frontend` — its route guard cannot pass until `/v1/auth/me` answers.
-
-Merging in the other order leaves `main` briefly broken in a way no single repo's CI can
-see. `STATUS.md` for each change records the intended order for exactly this reason.
-
-#### Stage 4 — only now, bump the parent
-
-```bash
-git -C chatbot-backend switch main && git -C chatbot-backend pull
-git -C frontend switch main && git -C frontend pull
-./scripts/lock.sh
-git add chatbot-backend frontend repos.lock
-git commit -m "chore: bump submodules for 0001-auth"
-```
-
-**Why `lock.sh` comes after the merges, and never before.** `lock.sh` records whatever
-commit each submodule currently has checked out. Run it while the submodules are still on
-`feat/0001-auth` and `repos.lock` names unmerged commits — and if the product repo
-squash-merges, those SHAs stop existing on any branch. The lock would then pin the triple to
-commits that cannot be checked out, which is worse than a stale lock because it looks
-authoritative.
-
-The same argument applies to `git add`ing the pointers early. Both are the same mistake: the
-parent should only ever record commits that are permanently reachable on a product repo's
-`main`.
-
-#### Stage 5 — everything agrees again
-
-There are **three independently-moving values** per submodule, and this is the moment they
-converge. Mistaking one for another causes nearly every submodule mistake in this layout:
-
-| | what it is | during the change | after stage 4 |
-| --- | --- | --- | --- |
-| gitlink in the parent's `HEAD` | what the parent *records* | `f5d3044` | the merged `main` |
-| what is checked out | what is *on disk* | `9a66269` (`feat/0001-auth`) | the same merged `main` |
-| `repos.lock` | the human-readable duplicate | `67a9383` (older still) | the same merged `main` |
-
-`make repos` reports the disagreement in one place, at any stage:
-
-```
-chatbot-backend  feat/0001-auth   9a66269   ahead of 67a9383
-frontend         feat/0001-auth   d20f93b   ahead of 1a7ddef
-infra            main             6eebe0a   matches
-```
-
-#### The rules this example illustrates
-
-1. Read a submodule row as *"the pointer would move"*, not *"files changed"*.
-2. Never `git add` a submodule path casually — and never `git add -A` at the parent root,
-   which sweeps every pointer in as a side effect.
-3. Branch inside the submodule before committing there. Always (failure mode 1).
-4. Do not run `git submodule update --remote --merge` while work is in flight; it yanks
-   checked-out submodules back and discards in-flight commits. `make init` only touches
-   submodules that are not checked out at all.
-5. Merge first, then `lock.sh`, then bump the pointers — as one commit, containing only the
-   pointers and `repos.lock` (failure mode 2).
-
-Note the paths in stage 4: the submodule was renamed from `backend` to `chatbot-backend`, so
-the snippet earlier in this section is stale — one of several reasons this file loses to
-`docs/init/` where they disagree.
-
-
-
----
-
-## 10. Bootstrap checklist
-
-Order matters — the gates should exist before the first feature, not after.
-
-1. Create the four GitHub repositories.
-2. In each product repo: language toolchain, one passing test, working CI with
-   required status checks including secret scanning.
-3. In each product repo: `CLAUDE.md` (short), `.claude/settings.json`,
-   `.claude/hooks/gate.sh` (+ `chmod +x`), `docs/architecture.md` skeleton.
-   Verify the Stop hook actually blocks by breaking a test on purpose.
-4. Write the first real skill per repo — the testing one. Do not pre-write skills you
-   have not needed yet.
-5. Create the control repo; add the three as submodules; write `CLAUDE.md`,
-   `scripts/`, and an empty `contracts/`.
-6. Write `docs/adr/0001-contract-first-polyrepo.md` recording the decision in §2 and
-   its accepted costs.
-7. Install a code-intelligence plugin per language so the agent resolves symbols via
-   the language server instead of scanning files.
-8. Run one deliberately small cross-repo change end to end through §8.2 to shake out
-   the fan-out script and the submodule branching.
-9. Verify sub-repo self-sufficiency: clone one product repo alone into `/tmp`, run a
-   session, confirm nothing essential is missing.
-
----
-
-## 11. Maintenance
-
-**Harness review every three to six months, and after every major model release.**
-Rules written to work around a weaker model become pure friction on a stronger one —
-for example, an instruction to break refactors into single-file changes. Prune
-aggressively; the default assumption should be that a rule is obsolete until it earns
-its place.
-
-**Track which skills never activate.** With OpenTelemetry logs enabled and tool
-details unredacted, skill invocation events record which skills fire and what
-triggered them. Retire or consolidate the ones that never do.
-
-**Review `CLAUDE.md` and skill changes in pull requests** like any other
+**Review `CLAUDE.md`, command and skill changes in pull requests** like any other
 documentation, so conventions track the code rather than drifting from it.
 
-**Watch for the drift signal:** if the agent repeatedly violates a written rule, the
-file is too long and the rule is being lost. Shorten before adding emphasis.
-
----
-
-## 12. Deliberately deferred
-
-These are real capabilities that do not yet solve a problem this project has. Adopt
-each only when a specific symptom demands it.
-
-| Deferred | Adopt when |
-| --- | --- |
-| Spec-driven frameworks (OpenSpec, Spec Kit, BMAD) | `changes/` has ~10 entries and hand-written briefs are visibly drifting from the code |
-| Agent teams | `fanout.sh` proves insufficient because slices genuinely need to negotiate mid-flight |
-| Dynamic workflows / high-effort orchestration modes | A task needs dozens of agents, e.g. a repo-wide migration or audit |
-| Deep multi-agent cloud review | Change size makes local review unreliable; use per-merge on substantial diffs |
-| Shared-convention plugin in an internal marketplace | Per-repo skill duplication becomes a maintenance burden |
-
-Everything in §1–§11 except `gate.sh` is documentation, and documentation degrades
-silently. `gate.sh` is the part that cannot be ignored by a model having a bad day.
-If effort has to be spent somewhere, spend it there.
+**Deliberately deferred**, each until a specific symptom demands it: spec-driven frameworks,
+agent teams that negotiate mid-flight, repo-wide dynamic orchestration, a shared-convention
+plugin. `docs/init/README.md` holds the adoption triggers.
