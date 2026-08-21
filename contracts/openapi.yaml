@@ -7,7 +7,7 @@
 openapi: 3.1.0
 info:
   title: agent-app API
-  version: 1.1.0
+  version: 1.2.0
   description: Frozen HTTP contract between the backend and its consumers. Changes are made here only,
     in a dedicated commit, before any implementation.
 servers:
@@ -35,10 +35,14 @@ paths:
       tags:
       - chat
       summary: Send one message and get one reply
-      description: 'Stateless: no thread, no history, no session. Each call is independent and the caller
-        keeps whatever conversation state it needs. Anything conversational — threads, streaming, persistence
-        — is a later, additive change and is NOT promised here.'
+      description: 'Requires a session, and refuses before any model is invoked — an unauthenticated caller
+        must cost nothing, because a reply is bought from a real provider. Conversationally stateless even
+        so: no thread, no history, and the session identifies the caller without carrying any conversation
+        state. Each call is independent and the caller keeps whatever state it needs. Anything conversational
+        — threads, streaming, persistence — is a later, additive change and is NOT promised here.'
       operationId: postChat
+      security:
+      - cookieAuth: []
       requestBody:
         content:
           application/json:
@@ -52,8 +56,18 @@ paths:
             application/json:
               schema:
                 $ref: '#/components/schemas/ChatResponse'
+        '401':
+          description: There is no valid session (`AUTH_REQUIRED`) — absent, unknown, expired, or revoked
+            by logout. The refusal carries no reply, because the provider was never called. A client should
+            treat it the way it treats a 401 from /v1/auth/me — sign the user in — and not as a fault.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
         '422':
-          description: The body failed validation; `detail` lists what.
+          description: The body failed validation; `detail` lists what. Reachable only with a valid session
+            — authentication is a gate in FRONT of validation, so an anonymous caller sending a malformed
+            body gets 401 rather than 422.
           content:
             application/json:
               schema:
