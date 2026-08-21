@@ -379,10 +379,13 @@ components:
           description: The deployment's shared signup code. Absent or wrong is 403, not 422 — a closed
             door is a refusal, not a malformed request.
         display_name:
-          type: string
-          maxLength: 64
-          minLength: 1
-          description: Optional. Defaults to the part of the email before the @, because clients need
+          anyOf:
+          - type: string
+            maxLength: 64
+            minLength: 1
+          - type: 'null'
+          description: Optional, and explicitly nullable — omitting it and sending null are both accepted
+            and mean the same thing. Defaults to the part of the email before the @, because clients need
             something to render and an empty name is not one.
       type: object
       required:
