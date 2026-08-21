@@ -235,6 +235,53 @@ def check_dead_wiring() -> None:
                  f"without enforcement — wire it or delete it")
 
 
+# --- a gate the loop is documented to call, is called by the loop --------------------
+# The generalisation of every dead guard this repo has had. DEV_ENV_DEFAULTED was consumed
+# and never set; the agentapp.owner labels were read and never declared;
+# harvest-contract.py --diff was cited in three files as a stage verify.sh runs and had no
+# caller; and prs.sh was announced in docs/adr/0005 AND in the commit that added it as
+# something iterate.sh calls on a green outcome, while iterate.sh never mentioned it. Each
+# read as protection and provided none, and each was found by a person rather than a check.
+# One table, asserted.
+LOOP_CALLS = {
+    "prs.sh": ("iterate.sh",),
+    "failure-brief.py": ("iterate.sh",),
+    "fanout.sh": ("iterate.sh",),
+    "verify.sh": ("iterate.sh",),
+    "vendor-contracts.sh": ("fanout.sh",),
+    "slice-result.py": ("fanout.sh",),
+    "harvest-contract.py": ("verify.sh",),
+    "smoke.py": ("verify.sh",),
+    "service-owner.sh": ("verify.sh",),
+    "infra-outputs.py": ("verify.sh",),
+    "infra-crosscheck.py": ("verify.sh",),
+    "publish.sh": ("verify.sh",),
+    "stack.sh": ("verify.sh",),
+    "dev-env.sh": ("verify.sh", "stack.sh"),
+}
+
+
+def check_loop_calls() -> None:
+    for script, callers in sorted(LOOP_CALLS.items()):
+        if not os.path.exists(os.path.join(ROOT, "scripts", script)):
+            fail("loop-calls", f"LOOP_CALLS names scripts/{script}, which does not exist")
+            continue
+        found = []
+        for caller in callers:
+            path = os.path.join(ROOT, "scripts", caller)
+            try:
+                if script in open(path, errors="replace").read():
+                    found.append(caller)
+            except OSError:
+                fail("loop-calls", f"LOOP_CALLS names scripts/{caller} as a caller of "
+                                   f"{script}, and it does not exist")
+        if not found:
+            fail("loop-calls",
+                 f"scripts/{script} is documented as part of the loop but is called by none "
+                 f"of {', '.join(callers)}. A gate that is described and never invoked "
+                 f"produces confidence without enforcement — wire it or stop claiming it.")
+
+
 def check_gate_messages() -> None:
     """A gate's failure message is the prose an agent reads under the most pressure.
 
@@ -525,7 +572,7 @@ def main() -> int:
               check_banned_phrases, check_claude_md_size, check_dead_wiring,
               check_vendored_contracts, check_commands,
               check_scripts_are_not_the_entry_point, check_env_layers,
-              check_gate_messages, report_readme_divergence)
+              check_gate_messages, check_loop_calls, report_readme_divergence)
     for fn in checks:
         try:
             fn()

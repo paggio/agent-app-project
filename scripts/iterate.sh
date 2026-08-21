@@ -251,6 +251,20 @@ release_lock() {
 REPORTED=0
 finish() {
   REPORTED=1
+  # The pull requests, on a green outcome only — a PR for a change that did not verify is
+  # an invitation to merge something nothing asserted. Idempotent, so a slice that opened
+  # its own keeps it, and prs.json is the checked fact next to fanout.json's claim.
+  case "$OUTCOME" in
+    verified|verified-local)
+      banner "$CHANGE — pull requests"
+      if ./scripts/prs.sh --create "$CHANGE" --run-dir "$RUN_ROOT"; then
+        record ""
+        record "**Pull requests:** opened or already open — see \`$RUN_ROOT/prs.json\`"
+      else
+        record ""
+        record "**Pull requests:** at least one could not be opened — see \`$RUN_ROOT/prs.json\`"
+      fi ;;
+  esac
   write_report
   update_status
   release_lock
