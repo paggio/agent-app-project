@@ -115,9 +115,9 @@ def main() -> int:
         out.append("")
 
     # The assertions this repo owns that failed. smoke-remote.json is the deployed-origin
-    # pass; smoke-infra.json is kept so briefs from older runs still resolve.
+    # pass.
     failures = []
-    for name in ("smoke.json", "smoke-remote.json", "smoke-infra.json"):
+    for name in ("smoke.json", "smoke-remote.json"):
         data = read_json(os.path.join(rd, name))
         if data:
             for f in data.get("failures", []):

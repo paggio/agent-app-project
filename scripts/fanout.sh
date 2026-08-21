@@ -15,7 +15,6 @@
 #   ./scripts/fanout.sh <change> [options]
 #
 #     --repos a,b          dispatch only these repos (the repair pass uses this)
-#     --prompt-extra FILE  append this file's contents to every dispatched prompt
 #     --prompt-extra-dir D per-repo failure context: D/failure-<repo>.md if it exists,
 #                          so a repair pass gives each agent ITS OWN evidence and the
 #                          repos still go out in parallel
@@ -36,13 +35,12 @@ ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 cd "$ROOT"
 CONTROL="$ROOT"
 
-CHANGE=""; ONLY=""; PROMPT_EXTRA=""; PROMPT_EXTRA_DIR=""; RUN_DIR=""; DRY=0; ATTEMPT=1
+CHANGE=""; ONLY=""; PROMPT_EXTRA_DIR=""; RUN_DIR=""; DRY=0; ATTEMPT=1
 REQUIRE_BRIEF=0; TIMEOUT_S="${FANOUT_TIMEOUT_S:-3600}"
 CLAUDE_BIN="${CLAUDE_BIN:-claude}"
 while [ $# -gt 0 ]; do
   case "$1" in
     --repos) ONLY="$(echo "$2" | tr ',' ' ')"; shift ;;
-    --prompt-extra) PROMPT_EXTRA="$2"; shift ;;
     --prompt-extra-dir) PROMPT_EXTRA_DIR="$2"; shift ;;
     --run-dir) RUN_DIR="$2"; shift ;;
     --attempt) ATTEMPT="$2"; shift ;;
@@ -58,7 +56,7 @@ done
 [ -n "$CHANGE" ] || { echo "usage: fanout.sh <change> [options]" >&2; exit 2; }
 
 CHANGE_DIR="changes/$CHANGE"
-[ -d "$CHANGE_DIR" ] || { echo "fanout: no such change: $CHANGE_DIR" >&2; exit 1; }
+[ -d "$CHANGE_DIR" ] || { echo "fanout: no such change: $CHANGE_DIR" >&2; exit 2; }
 
 eval "$(./scripts/manifest.py "$CHANGE_DIR" --shell)"
 [ "${MANIFEST_OK:-0}" = "1" ] || {
@@ -88,12 +86,6 @@ TS="$(date -u +%Y%m%dT%H%M%SZ)"
 [ -n "$RUN_DIR" ] || RUN_DIR="$CHANGE_DIR/runs/$TS"
 mkdir -p "$RUN_DIR"
 
-SHARED_EXTRA=""
-if [ -n "$PROMPT_EXTRA" ]; then
-  [ -f "$PROMPT_EXTRA" ] || { echo "fanout: no such file: $PROMPT_EXTRA" >&2; exit 2; }
-  SHARED_EXTRA="$(cat "$PROMPT_EXTRA")"
-fi
-
 echo "fanout: change=$CHANGE attempt=$ATTEMPT repos=[${TARGETS# }] run=$RUN_DIR"
 
 # The contracts the slices build against, extracted from the freeze commit rather than
@@ -102,12 +94,15 @@ echo "fanout: change=$CHANGE attempt=$ATTEMPT repos=[${TARGETS# }] run=$RUN_DIR"
 # freeze was prose the agent was trusted to honour. Now it is the only tree it can read.
 FROZEN_CONTRACTS="$RUN_DIR/contracts"
 if [ ! -d "$FROZEN_CONTRACTS" ]; then
-  mkdir -p "$FROZEN_CONTRACTS"
-  if ! git archive "$CHANGE_FREEZE_SHA" contracts \
-       | tar -x -C "$RUN_DIR" 2>/dev/null; then
+  _staging="$(mktemp -d "$RUN_DIR/.contracts.XXXXXX")"
+  if ! git archive "$CHANGE_FREEZE_SHA" contracts | tar -x -C "$_staging" 2>/dev/null \
+     || [ ! -d "$_staging/contracts" ]; then
+    rm -rf "$_staging"
     echo "fanout: could not extract contracts/ at $CHANGE_FREEZE_SHA" >&2
     exit 2
   fi
+  mv "$_staging/contracts" "$FROZEN_CONTRACTS"
+  rm -rf "$_staging"
 fi
 # Absolute, resolved once. The dispatched session's cwd is the submodule, so a relative
 # path would not resolve there — and naively prefixing $CONTROL breaks when --run-dir is
@@ -166,7 +161,7 @@ status is exactly one of:
 summary: one line, <= 200 characters.  pr: the URL, or null.
 If you do not print this block, your slice is recorded as failed."
 
-  EXTRA="$SHARED_EXTRA"
+  EXTRA=""
   if [ -n "$PROMPT_EXTRA_DIR" ] && [ -f "$PROMPT_EXTRA_DIR/failure-$r.md" ]; then
     EXTRA="$(cat "$PROMPT_EXTRA_DIR/failure-$r.md")"
   fi

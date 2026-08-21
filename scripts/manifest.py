@@ -48,8 +48,10 @@ HERE = os.path.dirname(os.path.abspath(__file__))
 
 
 def fail(msg: str) -> None:
+    # Exit 2, not 1: this is the harness refusing to judge, not the change failing. Callers
+    # route on the difference — iterate.sh reads 1 as "slices failed" and carries on.
     print(f"manifest: {msg}", file=sys.stderr)
-    raise SystemExit(1)
+    raise SystemExit(2)
 
 
 def load(change_dir: str) -> dict:
@@ -88,7 +90,7 @@ def validate(doc: dict, change_dir: str) -> list[str]:
 
     problems += validate_freeze(doc)
     problems += validate_deploy(doc, slices)
-    problems += validate_brief(change_dir)
+    problems += validate_prose(change_dir)
     problems += validate_smoke(doc, change_dir, slices)
     return problems
 
@@ -126,7 +128,10 @@ def validate_freeze(doc: dict) -> list[str]:
 
     rc, dirty = git("status", "--porcelain", "--", "contracts/")
     if rc == 0 and dirty:
-        names = ", ".join(sorted(line[3:] for line in dirty.splitlines())[:4])
+        # git() strips its output, so the leading space of " M contracts/x" is already
+        # gone and a fixed line[3:] ate the first character of the path.
+        names = ", ".join(sorted(line.split(maxsplit=1)[-1]
+                                 for line in dirty.splitlines())[:4])
         problems.append(
             f"contracts/ has uncommitted changes ({len(dirty.splitlines())} file(s): {names}) "
             f"— the freeze is a commit, so commit or stash them before dispatching")
@@ -183,23 +188,38 @@ def validate_deploy(doc: dict, slices: list) -> list[str]:
     return problems
 
 
-def validate_brief(change_dir: str) -> list[str]:
-    """A brief still full of template placeholders has not been written yet."""
+PLACEHOLDERS = ("<link>", "<slug>", "<placeholder>", "<what", "<why", "<one paragraph>",
+                "EXAMPLE / TEMPLATE")
+
+
+def validate_prose(change_dir: str) -> list[str]:
+    """Prose still full of template placeholders has not been written yet.
+
+    STATUS.md is checked as well as BRIEF.md. It was not, and that is why 0001-auth carried
+    an "EXAMPLE / TEMPLATE" banner and a `<link>` PR column directly above a block saying
+    the change was verified.
+    """
+    problems = []
     path = os.path.join(change_dir, "BRIEF.md")
     if not os.path.exists(path):
-        return [f"BRIEF.md does not exist in {change_dir} — the slices are dispatched with "
-                f"a pointer to it"]
-    hits = []
-    for n, line in enumerate(open(path), 1):
-        for token in ("<link>", "<slug>", "<placeholder>", "<what", "<why", "<one paragraph>"):
-            if token in line:
-                hits.append(f"{token} on line {n}")
-                break
-    if hits:
-        shown = ", ".join(hits[:3]) + (f", and {len(hits) - 3} more" if len(hits) > 3 else "")
-        return [f"BRIEF.md still contains template placeholders ({shown}) — fill in the "
-                f"brief before dispatching"]
-    return []
+        problems.append(f"BRIEF.md does not exist in {change_dir} — the slices are "
+                        f"dispatched with a pointer to it")
+
+    for name in ("BRIEF.md", "STATUS.md"):
+        path = os.path.join(change_dir, name)
+        if not os.path.exists(path):
+            continue
+        hits = []
+        for n, line in enumerate(open(path), 1):
+            for token in PLACEHOLDERS:
+                if token in line:
+                    hits.append(f"{token} on line {n}")
+                    break
+        if hits:
+            shown = ", ".join(hits[:3]) + (f", and {len(hits) - 3} more" if len(hits) > 3 else "")
+            problems.append(f"{name} still contains template placeholders ({shown}) — "
+                            f"fill it in before dispatching")
+    return problems
 
 
 def validate_smoke(doc: dict, change_dir: str, slices: list) -> list[str]:
@@ -328,6 +348,7 @@ def main() -> int:
             "CHANGE_SMOKE_FILE": smoke.get("file") or "smoke.yaml",
             "CHANGE_SMOKE_BASE": smoke.get("base") or "http://localhost:8080",
             "CHANGE_SMOKE_TIMEOUT": str(smoke.get("timeout_s") or 120),
+            "CHANGE_SMOKE_E2E": "1" if smoke.get("e2e", False) is True else "0",
         }
         for k, v in out.items():
             print(f"{k}={shlex.quote(str(v))}")
