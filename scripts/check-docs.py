@@ -3,7 +3,7 @@
 # requires-python = ">=3.11"
 # dependencies = ["pyyaml>=6"]
 # ///
-"""Nine checks that each map to a documentation defect that actually happened.
+"""Ten checks that each map to a documentation defect that actually happened.
 
   ./scripts/check-docs.py [--warnings-are-errors]
 
@@ -328,6 +328,92 @@ def check_scripts_are_not_the_entry_point() -> None:
                              f"call. See docs/adr/0005.")
 
 
+# --- 10. the three env layers are in the order docs/adr/0006 claims -------------------
+# The joined stack ran against a real Bedrock model, and nothing in this repo said why:
+# Compose resolves ${VAR} inside an include:d file against THAT file's directory .env, so
+# chatbot-backend/.env was already the bottom layer by accident. docs/adr/0006 made that a
+# decision and dev-env.sh implements it. These three failures are the ones no reader would
+# find, and the first two silently change what the stack runs rather than breaking it.
+# TOKEN is anchored at the end so AWS_SESSION_TOKEN matches and BEDROCK_MAX_TOKENS does
+# not — a token count is not a token. This check caught that itself on the first run.
+CREDENTIAL_SHAPED = re.compile(r"SECRET|PASSWORD|CREDENTIAL|TOKEN$|_KEY$|^AWS_ACCESS", re.I)
+
+
+def _env_keys(path: str) -> set[str]:
+    """Variable NAMES only. This function must never return or log a value: one of the
+    files it reads holds live credentials."""
+    keys: set[str] = set()
+    try:
+        with open(path) as fh:
+            for line in fh:
+                line = line.strip()
+                if not line or line.startswith("#"):
+                    continue
+                if line.startswith("export "):
+                    line = line[len("export "):].lstrip()
+                if "=" not in line:
+                    continue
+                key = line.split("=", 1)[0].strip()
+                if key and re.fullmatch(r"[A-Za-z_][A-Za-z0-9_]*", key):
+                    keys.add(key)
+    except OSError:
+        return keys
+    return keys
+
+
+def check_env_layers() -> None:
+    dev_env_sh = os.path.join(ROOT, "scripts", "dev-env.sh")
+    try:
+        src = open(dev_env_sh).read()
+    except OSError:
+        fail("env-layers", "scripts/dev-env.sh is missing; it is what implements the "
+                           "three-layer precedence docs/adr/0006 decided")
+        return
+
+    # (a) the wiring exists at all. An ADR describing a layer no script loads is exactly
+    # the drift check 6 exists for, in the direction that reads as working.
+    if "SUBMODULE_ENV_FILE" not in src or "chatbot-backend/.env" not in src:
+        fail("env-layers",
+             "scripts/dev-env.sh no longer reads chatbot-backend/.env. docs/adr/0006 "
+             "decided it is layer 3 of the joined stack's configuration; either restore "
+             "the layer or supersede that ADR.")
+        return
+
+    # (b) the allowlist stays non-secret. dev-env.sh exports into the environment of the
+    # process that writes verify.json, smoke.json, container logs and repair prompts.
+    m = re.search(r'^SUBMODULE_ENV_ALLOW="([^"]*)"', src, re.M)
+    if not m:
+        fail("env-layers",
+             "scripts/dev-env.sh has no SUBMODULE_ENV_ALLOW allowlist. docs/adr/0006 "
+             "requires layer 3 to be an allowlist of non-secret names, not a denylist.")
+        return
+    allow = m.group(1).split()
+    for name in allow:
+        if CREDENTIAL_SHAPED.search(name):
+            fail("env-layers",
+                 f"SUBMODULE_ENV_ALLOW in scripts/dev-env.sh names {name}, which is "
+                 f"credential-shaped. Credentials reach the container over compose's "
+                 f"env_file and must never enter a control-repo process — this repo "
+                 f"writes run artifacts. See docs/adr/0006.")
+
+    # (c) no name in both files. dev-env.sh exports the stack/dev.env value into the
+    # process environment, which IS layer 1, so an overlap does not "override for the
+    # stack" — it makes the submodule's value permanently unreachable. Nothing else
+    # notices: the stack comes up and runs the wrong configuration.
+    sub_path = os.path.join(ROOT, "chatbot-backend", ".env")
+    if not os.path.exists(sub_path):
+        # A fresh clone and CI have no .env, and must still pass. Nothing to compare.
+        return
+    overlap = sorted(_env_keys(os.path.join(ROOT, "stack", "dev.env"))
+                     & _env_keys(sub_path) & set(allow))
+    for name in overlap:
+        fail("env-layers",
+             f"{name} is declared in BOTH stack/dev.env and chatbot-backend/.env, and is "
+             f"allowlisted. stack/dev.env wins by being exported into the environment, so "
+             f"the submodule's value can never be reached. Remove it from stack/dev.env, "
+             f"or drop it from SUBMODULE_ENV_ALLOW in scripts/dev-env.sh.")
+
+
 def main() -> int:
     ap = argparse.ArgumentParser()
     ap.add_argument("--warnings-are-errors", action="store_true")
@@ -336,7 +422,7 @@ def main() -> int:
     for fn in (check_freeze_sha_home, check_suite_vars, check_step_schema_documented,
                check_banned_phrases, check_claude_md_size, check_dead_wiring,
                check_vendored_contracts, check_commands,
-               check_scripts_are_not_the_entry_point):
+               check_scripts_are_not_the_entry_point, check_env_layers):
         try:
             fn()
         except Exception as exc:  # a broken check must not read as a clean repo
@@ -349,7 +435,7 @@ def main() -> int:
 
     if problems or (warnings and args.warnings_are_errors):
         return 1
-    print(f"check-docs: 9 checks passed"
+    print(f"check-docs: 10 checks passed"
           + (f" ({len(warnings)} warning(s))" if warnings else ""))
     return 0
 
