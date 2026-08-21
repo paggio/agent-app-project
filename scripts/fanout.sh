@@ -104,6 +104,17 @@ if [ ! -d "$FROZEN_CONTRACTS" ]; then
   mv "$_staging/contracts" "$FROZEN_CONTRACTS"
   rm -rf "$_staging"
 fi
+# The vendored copy each slice repo's own CI verifies against, published from the frozen
+# tree rather than asked for. The slice cannot do it: its settings deny editing contracts/
+# and its CLAUDE.md says never to, so requiring it made the correct action the one that
+# violated the rule — and the two repos resolved that contradiction in opposite directions.
+# See docs/adr/0008.
+if ! ./scripts/vendor-contracts.sh --from "$FROZEN_CONTRACTS" \
+      --repos "$(echo "${TARGETS# }" | tr ' ' ',')"; then
+  echo "fanout: could not publish the frozen contracts into the slice repos" >&2
+  exit 2
+fi
+
 # Absolute, resolved once. The dispatched session's cwd is the submodule, so a relative
 # path would not resolve there — and naively prefixing $CONTROL breaks when --run-dir is
 # already absolute, which is how iterate.sh may call this.
@@ -135,10 +146,10 @@ available to you; it may have moved on. If your slice appears to require a contr
 change, STOP and report it rather than working around it.
 
 Your repo carries its OWN vendored copy of contracts/, and its CI verifies your
-implementation against that copy rather than against the frozen tree above. So if the
-frozen tree differs from your vendored copy, part of your slice is to update your
-vendored copy to match it byte for byte, in the same branch. Skipping that leaves your
-CI green against the old promise, and the control repo will refuse the run.
+implementation against that copy rather than against the frozen tree above. That copy has
+already been refreshed from the frozen tree for you, so it is correct as you find it: do
+not edit it, and DO commit it with the rest of your slice so the promise travels with your
+pull request.
 
 After every slice lands, the control repo brings up all of these repos together as one
 stack and runs $CONTROL/$CHANGE_DIR/$CHANGE_SMOKE_FILE against a single origin

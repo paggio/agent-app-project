@@ -320,7 +320,7 @@ for _r in $CHANGE_SLICES; do
   for _f in openapi.yaml infra-outputs.yaml; do
     [ -f "$_r/contracts/$_f" ] || continue
     if ! cmp -s "contracts/$_f" "$_r/contracts/$_f"; then
-      fail_stage "preflight: $_r/contracts/$_f differs from contracts/$_f — re-vendor it in the slice, or its own CI is green against the wrong promise" "$_r" slice
+      fail_stage "preflight: $_r/contracts/$_f differs from contracts/$_f — the dispatch publishes it, so this means the slice edited it or the publish did not run: ./scripts/vendor-contracts.sh" "$_r" slice
     fi
   done
 done
@@ -427,7 +427,7 @@ elif [ "$CHANGE_DEPLOY_INFRA" = "1" ]; then
     make -C infra -n "$t" ENV="$ENV_NAME" >/dev/null 2>&1 || {
       note "change.yaml sets deploy.infra: true, but the infra repo does not declare"
       note "\`make $t\`. Required: plan (gate), deploy (apply), outputs (flat JSON of the"
-      note "outputs promised in contracts/infra-outputs.yaml). See the deploy-to-aws skill."
+      note "outputs promised in contracts/infra-outputs.yaml). See docs/infra-interface.md."
       fail_stage "infra: deploy requested but infra declares no '$t' target" "infra"
     }
   done
