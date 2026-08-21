@@ -5,6 +5,9 @@ argument-hint: "[NNNN-slug of the change that just merged, if there was one]"
 
 Realign after a merge.
 
+If a change was named, it is the one whose durable smoke steps get promoted in step 5:
+> $ARGUMENTS
+
 This is the other half of the cross-repo lane, and the lane a single-repo deploy needs on
 its own. Its job is to make the four repos agree again and to prove they still work
 together — because a product repo's own CI can only ever prove that repo is consistent
@@ -100,4 +103,4 @@ Say, in this order: which submodules moved and to what; whether the contract sti
 what is served, and what you did about it if not; the baseline result with its assertion
 count; what was promoted into the baseline; and anything you deliberately left alone.
 
-ARGUMENTS: $1
+ARGUMENTS: $ARGUMENTS

@@ -20,3 +20,7 @@ changes/*/runs/
 
 # A crashed run leaves the environment lock behind; it is never committable.
 .locks/
+
+# A stray import leaves one of these behind; a committed .pyc is one careless add away.
+__pycache__/
+*.pyc

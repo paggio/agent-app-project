@@ -22,10 +22,14 @@ Never run two lanes in one session.
   they never edit it.
 - Smoke assertions are owned here too. A failing assertion means fix the cause, or change
   the criterion here on purpose — never in a product repo.
-- Submodules land in detached HEAD. `git -C <repo> switch -c <branch>` before ANY commit
-  inside one.
+- Never commit inside a submodule while it is on `main`, and never assume which ref it is
+  on: `git -C <repo> switch -c <branch>` first, every time. `git submodule update` leaves
+  a detached HEAD, `/realign` leaves `main`, and a commit on either is a commit in the
+  wrong place.
 - Comments: concise, non-invasive, sparse. If I want deeper understanding I will ask
-  Claude Code directly rather than read comments.
+  Claude Code directly rather than read comments. The one exception is a file whose header
+  IS the reference — the step schema in `changes/0000-example-change/smoke.yaml`, which
+  `check-docs.py` requires to stay complete.
 - The freeze point is the commit that lands `contracts/` alone. Its SHA goes in that
   change's `change.yaml` as `freeze_sha`. Nowhere else — nothing reads anywhere else.
 - "Three PRs exist" is not shipped. Shipped means deployed together with the smoke suite
@@ -33,22 +37,22 @@ Never run two lanes in one session.
 - Every variable a smoke suite interpolates is declared in `stack/dev.env`. Never export
   one by hand.
 - Exit 1 = the thing under test failed. Exit 2 = the harness refused. See `docs/adr/0003`.
+- NEVER run `docker compose config` on `stack/compose.yml`, or paste its output. It inlines
+  `env_file`, so it prints the real AWS credentials in `chatbot-backend/.env`. Use
+  `make config`, which redacts.
 
 ## Layout
 
-- `contracts/`      the interfaces — `openapi.yaml`, `infra-outputs.yaml`, and the
-                    normative prose neither can hold, in `README.md`
-- `changes/NNNN-*/` `change.yaml` is the machine half — slices, `freeze_sha`, deploy flags.
-                    `smoke.yaml` is the acceptance criteria as steps, each `owner`ed.
-- `stack/`          the joined local stack. `dev.env` is one source for the stack and the
-                    suites; the real environment always wins.
+- `contracts/`  the interfaces, plus the normative prose `README.md` neither spec can hold
+- `changes/NNNN-*/`  `change.yaml` is the machine half; `smoke.yaml` is the criteria as
+                     steps, each `owner`ed — that field routes a failure
+- `stack/`  the joined local stack; `dev.env` is one source for it and the suites
 - `smoke/baseline.yaml`  the cross-repo regression suite
-- `docs/adr/`       decisions and their accepted costs — read before proposing a redesign
+- `docs/adr/`  decisions and their accepted costs — read before proposing a redesign
 - `docs/infra-interface.md`  what this repo requires of `infra/`
-- `repos.lock`      the SHA triple known to work together
+- `repos.lock`  the SHA triple known to work together
 
 ## Commands
 
-`make help` lists the hand tools — `up down ps logs health smoke check`, and `verify` /
-`iterate` for driving one phase by hand. They are for looking at the running system.
-`/ship` and `/realign` are how work gets done.
+`make help` lists the hand tools for looking at the running system. `/ship` and `/realign`
+are how work gets done.

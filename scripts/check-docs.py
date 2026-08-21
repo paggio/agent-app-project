@@ -3,7 +3,7 @@
 # requires-python = ">=3.11"
 # dependencies = ["pyyaml>=6"]
 # ///
-"""Ten checks that each map to a documentation defect that actually happened.
+"""Every check here maps to a documentation defect that actually happened.
 
   ./scripts/check-docs.py [--warnings-are-errors]
 
@@ -66,7 +66,12 @@ def rel(p: str) -> str:
 def check_freeze_sha_home() -> None:
     pat = re.compile(r"BRIEF\.md")
     sha_words = re.compile(r"\b(sha|freeze_sha|freeze point|frozen)\b", re.I)
-    for path in prose_files():
+    # changes/**/*.md was NOT scanned, so the BRIEF.md template — which carried
+    # "Frozen as of <commit sha>" and is the file new-change.sh copies — was exempt from
+    # the check written to prevent exactly that line. The template soliciting a defect has
+    # to be in scope, or the check only catches the prose nobody copies.
+    targets = prose_files() + sorted(glob.glob(os.path.join(ROOT, "changes", "*", "*.md")))
+    for path in targets:
         for n, line in enumerate(open(path), 1):
             if pat.search(line) and sha_words.search(line):
                 # A line that explicitly says BRIEF.md is NOT where it goes is the fix,
@@ -76,6 +81,24 @@ def check_freeze_sha_home() -> None:
                 fail("freeze-sha-home",
                      f"{rel(path)}:{n} ties BRIEF.md to the freeze SHA. It goes in "
                      f"change.yaml as freeze_sha — nothing reads BRIEF.md for it.")
+
+    # The other shape of the same defect: a BRIEF.md that carries the SHA itself rather
+    # than prose telling you to. The template did, so every scaffolded change inherited a
+    # field that manifest.py then demanded be filled in — forcing the author to write the
+    # forbidden second copy or rewrite the template line.
+    frozen_as_of = re.compile(r"\b(frozen|freeze[sd]?)\b.{0,40}\b(as of|sha|commit)\b", re.I)
+    negation = r"\b(not|never|nowhere|no longer|rather than|deliberately|nothing else)\b"
+    for path in sorted(glob.glob(os.path.join(ROOT, "changes", "*", "BRIEF.md"))):
+        lines = open(path).read().splitlines()
+        for n, line in enumerate(lines, 1):
+            # A sentence can wrap, and the negation that makes the line correct is often on
+            # the next one. Judge the sentence.
+            window = " ".join(lines[n - 1:n + 1])
+            if frozen_as_of.search(line) and not re.search(negation, window, re.I):
+                fail("freeze-sha-home",
+                     f"{rel(path)}:{n} records the freeze in BRIEF.md. The SHA belongs in "
+                     f"change.yaml as freeze_sha and nowhere else — a second copy is a copy "
+                     f"that goes stale.")
 
 
 # --- 2. every suite variable is declared -------------------------------------------
@@ -212,6 +235,45 @@ def check_dead_wiring() -> None:
                  f"without enforcement — wire it or delete it")
 
 
+def check_gate_messages() -> None:
+    """A gate's failure message is the prose an agent reads under the most pressure.
+
+    `manifest.py` said "see the freeze-contract skill" and `harvest-contract.py` said the
+    same in its breaking-change advice, months after docs/adr/0005 deleted the skills.
+    check_dead_wiring and check_commands both scan prose files only, so `scripts/` — the
+    one surface consulted at the moment of failure — had no coverage at all.
+    """
+    have_cmd = {os.path.basename(p)[:-3]
+                for p in glob.glob(os.path.join(ROOT, ".claude", "commands", "*.md"))}
+    have_skill = {os.path.basename(p)
+                  for p in glob.glob(os.path.join(ROOT, ".claude", "skills", "*"))}
+    named_skill = re.compile(r"\bthe ([a-z][a-z0-9]*(?:-[a-z0-9]+)+) skill\b")
+
+    for script in sorted(glob.glob(os.path.join(ROOT, "scripts", "*"))):
+        if os.path.isdir(script):
+            continue
+        # This file necessarily quotes the dead references it exists to prevent, in the
+        # same way checks 1 and 4 exempt a line that negates the phrase they ban.
+        if os.path.basename(script) == "check-docs.py":
+            continue
+        try:
+            text = open(script, errors="replace").read()
+        except OSError:
+            continue
+        for n, line in enumerate(text.splitlines(), 1):
+            for name in named_skill.findall(line):
+                if name not in have_skill:
+                    fail("gate-messages",
+                         f"{rel(script)}:{n} tells the reader to see the {name!r} skill, "
+                         f"which does not exist. A gate that names a missing route sends "
+                         f"someone looking for a file at the worst possible moment.")
+            for name in re.findall(r"`/([a-z][a-z0-9-]*)`", line):
+                if name not in have_cmd:
+                    fail("gate-messages",
+                         f"{rel(script)}:{n} names /{name}, which does not exist in "
+                         f".claude/commands/.")
+
+
 def _referenced_in_scripts(needle: str) -> bool:
     for p in glob.glob(os.path.join(ROOT, "scripts", "*")):
         try:
@@ -230,6 +292,9 @@ def _referenced_in_scripts(needle: str) -> bool:
 # which the vendored README forbids. This is the right home for the check because the
 # control repo is the only place all four trees are already present, so it needs no
 # network and does not invert the dependency direction docs/adr/0001 protects.
+readme_divergence: list[str] = []
+
+
 def check_vendored_contracts() -> None:
     for sub in SUBMODULES:
         sub_dir = os.path.join(ROOT, sub, "contracts")
@@ -251,12 +316,7 @@ def check_vendored_contracts() -> None:
         ours = os.path.join(ROOT, "contracts", "README.md")
         if os.path.exists(theirs) and \
                 open(ours, "rb").read() != open(theirs, "rb").read():
-            warn("vendored-contracts",
-                 f"{sub}/contracts/README.md is the short vendored notice, not this repo's "
-                 f"103-line normative copy. Eleven places in chatbot-backend cite it as "
-                 f"authority — including a section that does not exist in the vendored "
-                 f"file. Fixing it is sub-repo work (a slice or a session inside the "
-                 f"repo); this repo cannot write there.")
+            readme_divergence.append(sub)
 
 
 
@@ -290,6 +350,32 @@ def check_commands() -> None:
                 fail("commands",
                      f"{rel(path)}:{n} names /{named}, which does not exist in "
                      f".claude/commands/. Either add it or stop pointing at it.")
+
+    # The lane table is the routing surface, and it does not have to spell a lane with a
+    # leading slash: main's table named four skills as bare `freeze-contract` and the
+    # regex above — which requires `/` — could not see them. So the gate that holds the
+    # table to reality was blind on the default branch, which is the branch every fresh
+    # session starts from. Any hyphenated bare name in the table must resolve to a command
+    # or a skill that exists.
+    have_skill = {os.path.basename(p)
+                  for p in glob.glob(os.path.join(ROOT, ".claude", "skills", "*"))}
+    lane = ""
+    try:
+        text = open(os.path.join(ROOT, "CLAUDE.md")).read()
+        if "## Which lane am I in?" in text:
+            lane = text.split("## Which lane am I in?", 1)[1].split("\n## ", 1)[0]
+    except OSError:
+        pass
+    for n, line in enumerate(lane.splitlines(), 1):
+        for named in re.findall(r"`([a-z][a-z0-9]*(?:-[a-z0-9]+)+)`", line):
+            if named in have or named in have_skill:
+                continue
+            if "/" in named or "." in named or os.path.exists(os.path.join(ROOT, named)):
+                continue
+            fail("commands",
+                 f"CLAUDE.md's lane table names {named!r}, which is neither a command in "
+                 f".claude/commands/ nor a skill in .claude/skills/. The lane table is the "
+                 f"routing an agent follows; a lane that does not exist sends it nowhere.")
 
     for name in sorted(have):
         if f"/{name}" not in routing:
@@ -414,15 +500,33 @@ def check_env_layers() -> None:
              f"or drop it from SUBMODULE_ENV_ALLOW in scripts/dev-env.sh.")
 
 
+def report_readme_divergence() -> None:
+    """One line for a known, permanent divergence — not one per submodule.
+
+    Every sub-repo carries the short vendored notice rather than this repo's normative
+    copy, and no session here can change that. Three identical warnings on every
+    invocation is how a reader learns to skim warnings, which then hides the actionable
+    one. Said once, with what would make it actionable.
+    """
+    if readme_divergence:
+        warn("vendored-contracts",
+             f"{', '.join(readme_divergence)} carry the short vendored contracts/README.md "
+             f"rather than this repo's normative copy. Known and permanent: this repo "
+             f"cannot write there, so closing it means a slice in each — which is a change, "
+             f"not a warning to act on today.")
+
+
 def main() -> int:
     ap = argparse.ArgumentParser()
     ap.add_argument("--warnings-are-errors", action="store_true")
     args = ap.parse_args()
 
-    for fn in (check_freeze_sha_home, check_suite_vars, check_step_schema_documented,
-               check_banned_phrases, check_claude_md_size, check_dead_wiring,
-               check_vendored_contracts, check_commands,
-               check_scripts_are_not_the_entry_point, check_env_layers):
+    checks = (check_freeze_sha_home, check_suite_vars, check_step_schema_documented,
+              check_banned_phrases, check_claude_md_size, check_dead_wiring,
+              check_vendored_contracts, check_commands,
+              check_scripts_are_not_the_entry_point, check_env_layers,
+              check_gate_messages, report_readme_divergence)
+    for fn in checks:
         try:
             fn()
         except Exception as exc:  # a broken check must not read as a clean repo
@@ -435,7 +539,7 @@ def main() -> int:
 
     if problems or (warnings and args.warnings_are_errors):
         return 1
-    print(f"check-docs: 10 checks passed"
+    print(f"check-docs: {len(checks)} checks passed"
           + (f" ({len(warnings)} warning(s))" if warnings else ""))
     return 0
 

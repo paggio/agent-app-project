@@ -3,7 +3,9 @@ description: Take a cross-repo change from an idea to open pull requests — pla
 argument-hint: <what you want, in your own words — or an existing NNNN-slug>
 ---
 
-Ship `$1`.
+Ship this:
+
+> $ARGUMENTS
 
 This is the whole cross-repo lane. Five phases, in order, in this one invocation. Nothing
 here is optional and nothing here is done by hand twice: each phase ends at a gate that
@@ -12,7 +14,11 @@ either passes or names what to fix.
 Shipping does not mean pull requests exist. It means the repos were deployed together and
 the acceptance criteria held through the origin a browser would use. See `docs/adr/0002`.
 
-If `$1` is already a directory under `changes/`, start at the phase it has reached.
+If that names a directory that already exists under `changes/`, start at the phase it has
+reached. Otherwise it is a request in prose, and phase 1 turns it into the artifact.
+
+Throughout, `<change>` means the `NNNN-<slug>` directory name — the one you scaffold in
+phase 1, or the one you were given.
 
 ## 1 — Plan
 
@@ -129,4 +135,4 @@ whose change is backward compatible on its own goes first. Record that order in 
 
 Once a human has merged, the next step is `/realign`.
 
-ARGUMENTS: $1
+ARGUMENTS: $ARGUMENTS
