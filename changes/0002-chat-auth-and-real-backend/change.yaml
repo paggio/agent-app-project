@@ -8,7 +8,7 @@ change: 0002-chat-auth-and-real-backend
 #
 # Frozen. This is the commit that took contracts/openapi.yaml to 1.2.0 by putting
 # `security: [{cookieAuth: []}]` and a 401 on `postChat`, with nothing else in its diff.
-freeze_sha: "bbd2256ee690c8f2c60ae3f7583a0b7238b14dee"
+freeze_sha: "e6c20ad644425a61519214321b9bb76d1e655b13"
 
 # Which repos get a slice. Each needs a matching <name>.md here. Use the SUBMODULE PATH:
 # chatbot-backend, not backend.

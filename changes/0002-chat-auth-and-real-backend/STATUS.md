@@ -7,6 +7,17 @@
 - What moved: `contracts/openapi.yaml` 1.1.0 → 1.2.0 — `postChat` gains
   `security: [{cookieAuth: []}]` and a `401` `ErrorResponse`. Non-additive, on purpose;
   the reasons are in `BRIEF.md` § "Contract changes".
+- **Re-frozen once.** The first freeze was `bbd2256`. The harvest gate then blocked the
+  run on `RegisterRequest.display_name`, which the implementation has served as
+  `anyOf: [string, null]` since change 0001 while the contract promised a bare
+  `type: string`. Neither slice touched it; the drift predates this change and was never
+  gated, because the harvest stage was wired after 0001 was verified. The second freeze
+  declares the nullable union, and `harvest-contract.py --diff` then reports agreement.
+- **Known divergence to settle in `/realign`:** `frontend/contracts/openapi.yaml` was
+  re-vendored by its slice at the FIRST freeze, and `chatbot-backend/contracts/openapi.yaml`
+  is still at `1.1.0` because writes into `contracts/` are blocked in that session. So the
+  two vendored copies disagree with each other and with the second freeze. Nothing in the
+  harness syncs them; `/realign` is the lane that must.
 
 ## Pull requests
 
@@ -29,7 +40,8 @@ the backend half is the security fix and it is self-contained.
      thing that says they work together. -->
 
 <!-- iterate:begin -->
-_Never run._
+- **unattributable** — 20260821T163053Z, 2 attempt(s)
+- report: `changes/0002-chat-auth-and-real-backend/runs/20260821T163053Z/report.md`
 <!-- iterate:end -->
 
 ## Blockers
