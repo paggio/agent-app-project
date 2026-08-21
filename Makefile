@@ -1,10 +1,12 @@
-# Every command needed to run or inspect the WHOLE system lives here — the same reason
-# each product repo has a Makefile, one level up. Nothing here reimplements the scripts;
-# it is a memorable surface over them, so that "bring the whole thing up and poke at it"
-# does not require remembering which script takes which flag.
+# Running and inspecting the WHOLE system by hand. Nothing here reimplements the scripts;
+# it is a memorable surface over them.
+#
+# This is NOT the way work gets done. Cross-repo work is `/ship`, and coming back into line
+# after a merge is `/realign`. Everything below is for looking at the running system, and
+# for the gates those two commands call.
 #
 # The product repos each have their own `make up`, which brings up THAT repo in isolation.
-# This one brings them up together, on one network, behind one origin — which is the only
+# This one brings them up together, on one network, behind one origin — the only
 # arrangement where the seams between them are real. See docs/adr/0002.
 
 PROXY_PORT   ?= 8080
@@ -22,6 +24,9 @@ REPOS := chatbot-backend frontend infra
 
 help: ## Show this list
 	@echo "The full local stack — backend, datastores, frontend, proxy — on one origin."
+	@echo
+	@echo "  Cross-repo work is /ship. After a merge it is /realign. These are the"
+	@echo "  hand tools underneath them."
 	@echo
 	@grep -hE '^[a-zA-Z0-9_-]+:.*?## ' $(MAKEFILE_LIST) \
 		| awk -F':.*?## ' '{printf "  \033[1m%-12s\033[0m %s\n", $$1, $$2}'
@@ -92,11 +97,11 @@ smoke: ## Run the baseline suite against the running stack
 check-docs: ## The prose-versus-mechanism checks (see scripts/check-docs.py)
 	@./scripts/check-docs.py
 
-verify: ## Deploy a change and assert it: make verify CHANGE=0001-auth
+verify: ## Assert what is checked out, without dispatching: make verify CHANGE=0001-auth
 	@test -n "$(CHANGE)" || { echo "usage: make verify CHANGE=<change-dir>"; exit 2; }
 	@./scripts/verify.sh $(CHANGE) --keep-up
 
-iterate: ## The full loop — dispatch, deploy, smoke, repair: make iterate CHANGE=0001-auth
+iterate: ## What /ship phase 4 runs, by hand: make iterate CHANGE=0001-auth
 	@test -n "$(CHANGE)" || { echo "usage: make iterate CHANGE=<change-dir>"; exit 2; }
 	@./scripts/iterate.sh $(CHANGE)
 
@@ -105,7 +110,7 @@ e2e: ## Run the frontend's Playwright suite against the joined origin
 
 # ── across the repos ─────────────────────────────────────────────────────────────────
 # Read-only, and they stay that way: implementation happens in a session started inside
-# the repo, or through ./scripts/fanout.sh. Nothing here writes into a submodule.
+# the repo, or through the dispatch /ship runs. Nothing here writes into a submodule.
 
 repos: ## Branch and SHA per submodule, against what repos.lock pins
 	@printf '  %-16s %-40s %-9s %s\n' REPO BRANCH SHA "vs repos.lock"
@@ -122,23 +127,23 @@ repos: ## Branch and SHA per submodule, against what repos.lock pins
 lock: ## Refresh repos.lock from the current submodule SHAs
 	@./scripts/lock.sh
 
-prs: ## Open pull requests in each product repo
-	@for r in $(REPOS); do \
-		echo "── $$r"; \
-		(cd $$r && gh pr list --limit 10 2>/dev/null) || echo "  (gh unavailable here)"; \
-	done
+prs: ## List the open pull requests in each product repo
+	@./scripts/prs.sh --list
 
 check: ## This repo's gates, then each product repo's read-only ones
 	@echo "── control"
 	@./scripts/check-docs.py || exit 1
+	@./scripts/test-hooks.py >/dev/null || { ./scripts/test-hooks.py; exit 1; }
+	@echo "  the submodule-write guard blocks what it claims, and nothing else"
 	@for d in changes/*/; do \
 		case "$$d" in changes/0000-example-change/) continue ;; esac; \
 		./scripts/manifest.py "$$d" --validate >/dev/null || exit 1; \
 	done
 	@echo "  every change validates"
-	@for r in chatbot-backend frontend; do \
+	@for r in $(REPOS); do \
 		echo "── $$r"; \
-		$(MAKE) -C $$r lint typecheck || exit 1; \
+		if [ -f $$r/Makefile ]; then $(MAKE) -C $$r lint typecheck || exit 1; \
+		else echo "  (no Makefile yet — nothing to gate)"; fi; \
 	done
 
 # `git submodule update --init` would yank an already-checked-out submodule back to the

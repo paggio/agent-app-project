@@ -1,15 +1,11 @@
-# The joined local stack: backend, its datastores, the frontend, and the Caddy proxy
-# that fronts both — one compose project, therefore one network.
+# The joined local stack: backend, its datastores, the frontend, and the Caddy proxy that
+# fronts both — one compose project, therefore one network.
 #
-# This file exists HERE and nowhere else. Each product repo's compose file describes only
-# its own repo, correctly: the frontend cannot name a service it does not ship, and the
-# backend has no business knowing a proxy exists. The control repo is the only place that
-# can see both, and CLAUDE.md forbids writing the join into a submodule.
+# Lives here because neither product repo may own it: the frontend cannot name a service it
+# does not ship, and the backend has no business knowing a proxy exists.
 #
-# `include:` rather than `docker compose -f a -f b`: with -f, every relative path in every
-# file resolves against the FIRST file's directory, which breaks `build: { context: . }`
-# in both of them. `include:` resolves each file's paths against its own directory.
-# Requires Compose >= 2.20; this repo is verified against v5.1.1.
+# `include:` rather than `-f a -f b`: with -f every relative path resolves against the FIRST
+# file's directory, which breaks `build: { context: . }` in both. Needs Compose >= 2.20.
 
 name: agentapp-stack
 
@@ -18,24 +14,34 @@ include:
   - path: ../frontend/docker-compose.yml
 
 services:
-  # Auth configuration, which the backend repo cannot supply for itself: a product repo may
-  # not name the arrangement it is joined into, and its own compose file describes only its
-  # own repo. Values come from the environment via scripts/dev-env.sh, so the stack and the
-  # smoke suite cannot disagree about the signup code — they read the same variable.
   backend:
+    # Read back by scripts/service-owner.sh to attribute a stack that did not come up. This
+    # is the only file that can see both repos, so it is where ownership is declared.
+    labels:
+      agentapp.owner: chatbot-backend
     environment:
-      # Empty is meaningful: the backend fails closed and refuses registration. Better than
-      # a default baked in here, which would silently open signup in any environment that
-      # forgot to set it.
+      # Auth configuration the backend repo cannot supply for itself. Empty is meaningful:
+      # the backend fails closed and refuses registration.
       SIGNUP_CODE: ${SIGNUP_CODE:-}
-      # Must stay false for this origin — it is http, and a Secure cookie is never returned
-      # over http by smoke.py's cookie jar. See contracts/README.md.
+      # Must stay false for this origin — it is http, and smoke.py's cookie jar never
+      # returns a Secure cookie over http. See contracts/README.md.
       SESSION_COOKIE_SECURE: ${SESSION_COOKIE_SECURE:-false}
 
-  # Both included files land in this project, so the proxy's default upstream
-  # (backend:8000) now resolves. Stated explicitly because it is the whole point of the
-  # file — the 502 that frontend/docker-compose.yml documents is what this fixes.
+  postgres:
+    labels:
+      agentapp.owner: chatbot-backend
+
+  redis:
+    labels:
+      agentapp.owner: chatbot-backend
+
+  frontend:
+    labels:
+      agentapp.owner: frontend
+
   proxy:
+    labels:
+      agentapp.owner: frontend
     environment:
       BACKEND_UPSTREAM: backend:8000
     # The included file gives proxy no healthcheck, so `up --wait` would call it ready the

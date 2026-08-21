@@ -14,6 +14,9 @@
 #      `SIGNUP_CODE=x ./scripts/iterate.sh ...` and a genuinely deployed environment both
 #      override the file.
 #   2. Exported, so `docker compose` interpolation and smoke.py both see them as children.
+#   3. Every name it filled in is recorded in DEV_ENV_DEFAULTED, because "this value is a
+#      committed local placeholder" is what lets verify.sh refuse a remote pass rather than
+#      register a smoke account against a real environment with a public signup code.
 #
 # DEV_ENV_FILE points it somewhere else; a missing file is not an error, because a change
 # that needs no variables should not have to invent one.
@@ -34,8 +37,11 @@ if [ -f "$_dev_env_file" ]; then
     # empty, which is how a deployment asks for registration to be closed.
     if [ -z "${!_dev_env_key+x}" ]; then
       export "$_dev_env_key=$_dev_env_val"
+      DEV_ENV_DEFAULTED="${DEV_ENV_DEFAULTED:+$DEV_ENV_DEFAULTED }$_dev_env_key"
     fi
   done < "$_dev_env_file"
 fi
+
+export DEV_ENV_DEFAULTED="${DEV_ENV_DEFAULTED:-}"
 
 unset _dev_env_file _dev_env_line _dev_env_key _dev_env_val
