@@ -13,18 +13,23 @@
   `type: string`. Neither slice touched it; the drift predates this change and was never
   gated, because the harvest stage was wired after 0001 was verified. The second freeze
   declares the nullable union, and `harvest-contract.py --diff` then reports agreement.
-- **Known divergence to settle in `/realign`:** `frontend/contracts/openapi.yaml` was
-  re-vendored by its slice at the FIRST freeze, and `chatbot-backend/contracts/openapi.yaml`
-  is still at `1.1.0` because writes into `contracts/` are blocked in that session. So the
-  two vendored copies disagree with each other and with the second freeze. Nothing in the
-  harness syncs them; `/realign` is the lane that must.
+- **Vendored copies: settled, and the harness changed because of it.** Both were briefly
+  out of step — the frontend re-vendored at the first freeze, the backend could not vendor
+  at all because writes into `contracts/` are denied in that session. Asking a slice to
+  copy a file it is forbidden to touch was the harness's mistake, not the slice's:
+  `docs/adr/0008` makes the control repo publish the vendored specs from the freeze SHA
+  before dispatch, and `verify.sh` compares them in preflight. Both copies now match the
+  second freeze byte for byte.
 
 ## Pull requests
 
 | Repo | Branch | PR | CI | Merged |
 | --- | --- | --- | --- | --- |
-| chatbot-backend | `feat/0002-chat-auth-and-real-backend` | opened by `prs.sh` on a green outcome | ☐ | ☐ |
-| frontend | `feat/0002-chat-auth-and-real-backend` | opened by `prs.sh` on a green outcome | ☐ | ☐ |
+| chatbot-backend | `feat/0002-chat-auth-and-real-backend` | [#5](https://github.com/Paggio/chatbot-backend/pull/5) | ☐ | ☐ |
+| frontend | `feat/0002-chat-auth-and-real-backend` | [#4](https://github.com/Paggio/frontend/pull/4) | ☐ | ☐ |
+
+Recorded mechanically in `runs/20260821T173105Z/prs.json` — `prs.sh` reported both as
+already open rather than creating duplicates.
 
 No infra slice in this change.
 
@@ -40,8 +45,8 @@ the backend half is the security fix and it is self-contained.
      thing that says they work together. -->
 
 <!-- iterate:begin -->
-- **unattributable** — 20260821T163053Z, 2 attempt(s)
-- report: `changes/0002-chat-auth-and-real-backend/runs/20260821T163053Z/report.md`
+- **verified** — 20260821T173105Z, 1 attempt(s)
+- report: `changes/0002-chat-auth-and-real-backend/runs/20260821T173105Z/report.md`
 <!-- iterate:end -->
 
 ## Blockers
