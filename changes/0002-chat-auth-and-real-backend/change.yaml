@@ -1,0 +1,42 @@
+# The machine half of a change. BRIEF.md is for humans and for the implementing agent;
+# this is what the scripts parse.
+
+change: 0002-chat-auth-and-real-backend
+
+# The commit that landed contracts/ alone. The dispatch extracts contracts/ at exactly this
+# SHA and gives the slices nothing else, so it refuses to run without one.
+#
+# Frozen. This is the commit that took contracts/openapi.yaml to 1.2.0 by putting
+# `security: [{cookieAuth: []}]` and a 401 on `postChat`, with nothing else in its diff.
+freeze_sha: "bbd2256ee690c8f2c60ae3f7583a0b7238b14dee"
+
+# Which repos get a slice. Each needs a matching <name>.md here. Use the SUBMODULE PATH:
+# chatbot-backend, not backend.
+#
+# No infra slice: nothing is provisioned. Postgres, the session table and the Bedrock code
+# path all exist already. (The deployed task role is still missing bedrock:InvokeModel —
+# see BRIEF.md — but that is a separate change, not a silent dependency of this one.)
+slices:
+  - chatbot-backend
+  - frontend
+
+deploy:
+  # Bring up the joined stack and smoke it. Effectively always true.
+  local: true
+  # A real deploy. Requires an infra slice.
+  infra: false
+
+smoke:
+  file: smoke.yaml
+  # The single origin a browser uses: app at /, API at /api/. Not the backend's own port —
+  # that cannot catch a broken proxy.
+  base: http://localhost:8080
+  # Raised from the template's 120s. Two of these steps talk to a real model over the
+  # network, one of them with three retries at three seconds, and register/login are
+  # argon2id.
+  timeout_s: 240
+  # REQUIRED here, not an optimisation. "The UI consumes the real endpoint" is a browser
+  # fact and no HTTP step can see it — every HTTP-visible property of the frontend was
+  # already true while its chat client was a mock. This flag is the only thing that
+  # asserts the headline criterion. See BRIEF.md § "A gap in the oracle".
+  e2e: true
