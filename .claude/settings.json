@@ -1,17 +1,22 @@
 {
-  "$comment": "The deny rules cover the agent's file-editing tools. The PreToolUse hook covers the gap: shell commands that write into a submodule (sed -i, tee, redirects) are not caught by Edit rules.",
+  "$comment": "Root-session guards. Implementation happens in a session started inside the product repo, or via the dispatch in scripts/fanout.sh — never from here. The deny rules cover the editing tools; the PreToolUse hook covers shell commands that write into a submodule, which no Edit rule can see.",
   "permissions": {
     "deny": [
       "Edit(./chatbot-backend/**)",
       "Edit(./frontend/**)",
-      "Edit(./infra/**)"
+      "Edit(./infra/**)",
+      "Write(./chatbot-backend/**)",
+      "Write(./frontend/**)",
+      "Write(./infra/**)"
     ]
   },
   "hooks": {
     "PreToolUse": [
       {
         "matcher": "Bash",
-        "hooks": [{ "type": "command", "command": ".claude/hooks/no-subrepo-edits.sh" }]
+        "hooks": [
+          { "type": "command", "command": ".claude/hooks/no-subrepo-edits.sh" }
+        ]
       }
     ]
   }
