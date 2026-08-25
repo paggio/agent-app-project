@@ -36,7 +36,7 @@ cannot live inside any single product repo.
 **The accepted costs**, stated because an argument that lists only benefits is a sales
 pitch: a feature spanning all three repos produces three pull requests and three CI runs
 and cannot merge atomically; version skew is a permanent tax, paid via expand-contract
-migrations and feature flags; and submodules are a sharp edge (§5). The fallback, if the
+migrations and feature flags; and submodules are a sharp edge (§6). The fallback, if the
 three-PR overhead ever becomes the dominant friction, is to merge backend + frontend +
 contracts into one repo and keep infra separate. `docs/adr/0001`.
 
@@ -137,7 +137,122 @@ The suite decides.
 
 ---
 
-## 5. Submodules, the sharpest edge
+## 5. Two worked examples
+
+The lane table above is the decision. These are the two lanes actually run, end to end.
+
+### 5.1 In one module — the common case, and it costs nothing
+
+*"The login throttle's window and threshold are hardcoded. Make them configurable."*
+
+Nothing crosses a repo boundary: no path, status, field or infra output moves, so
+`contracts/openapi.yaml` is untouched and `429` on `/v1/auth/login` is already declared.
+That makes it a solo change, and solo changes do not come here at all.
+
+```bash
+cd chatbot-backend
+claude
+```
+
+The session loads `chatbot-backend/CLAUDE.md`, its `.claude/settings.json`, its skills and
+its hooks — and nothing from `frontend/` or `infra/` enters context. From inside:
+
+```bash
+git switch -c feat/configurable-login-throttle   # never commit on main
+make test typecheck lint                          # the Stop hook runs these anyway
+make contract                                     # implementation vs the vendored spec
+```
+
+The Stop hook refuses to end the turn until those pass, which is what converts "looks
+done" into "provably done". Then a normal PR in that repo, reviewed and merged on its own
+cadence. **The control repo never hears about it.**
+
+**The tripwire.** If the work turns out to touch contract surface — a new field a consumer
+would read, a status a caller must handle — that repo's own `make contract` fails against
+its vendored copy. That failure is the signal to stop and come back here for `/ship`. You
+do not have to judge the boundary correctly up front; the gate judges it for you.
+
+**After it merges**, this repo is one commit behind the submodule it pins:
+
+```bash
+claude
+> /realign
+```
+
+which brings the submodule to its merged `main`, re-checks the contract against what the
+service now actually serves, re-runs the baseline suite through the joined origin, and pins
+the triple in `repos.lock` — one commit containing the pointers and the lock and nothing
+else. A single-repo deploy still needs this lane, because a product repo's own CI can only
+ever prove that repo is consistent with itself.
+
+### 5.2 Across repos — one command, five phases
+
+*"Let people rename and delete their conversations."*
+
+Two endpoints the frontend must call, so the interface moves and three repos disagree
+about it the moment they are allowed to guess.
+
+```bash
+cd agent-app-project
+claude
+> /ship "let people rename and delete their conversations"
+```
+
+That is the whole invocation. What it does, and what you should read as it goes:
+
+| Phase | Produces | Worth reading |
+| --- | --- | --- |
+| 1 plan | `changes/0003-rename-delete-threads/` — brief, `smoke.yaml`, one slice file per repo, `change.yaml` | **the acceptance criteria.** The gate cannot judge whether they are any good. |
+| 2 freeze | one commit containing `contracts/` and nothing else; its SHA in `change.yaml` | whether the change is additive — the repos deploy independently, so production runs mismatched versions |
+| 3 gate | `./scripts/manifest.py changes/0003-rename-delete-threads --validate` | it exits 0, or exits 2 naming exactly what to fix |
+| 4 loop | a session per slice, all repos up as one stack, the suite through one origin, repair on failure | the outcome word, and the assertion count beside it |
+| 5 PRs | `runs/<ts>/prs.json` | the URLs, which are checked facts rather than an agent's claim |
+
+Phase 4 takes tens of minutes and runs a real agent per slice, so start it where it will
+outlive the turn. A run killed halfway reports `unattributable` with no assertion evidence
+— honest about a run that did not finish, and not a result about the change.
+
+**What "done" looks like:**
+
+```
+verify: PASS — 0003-rename-delete-threads verified against http://localhost:8080
+verify: 19 assertion(s) passed, 11 of them from changes/0003-rename-delete-threads/smoke.yaml
+```
+
+Read the count, not just the word. A report cannot say `verified` above an empty one, and a
+thin count means the criteria were thin.
+
+**Then a human merges**, in the dependency order `STATUS.md` records — the repo whose half
+is backward compatible on its own goes first. Nothing here merges for you. Afterwards:
+
+```bash
+> /realign
+```
+
+which promotes the assertions worth keeping forever out of the change's `smoke.yaml` and
+into `smoke/baseline.yaml`, so the next change cannot silently break this one.
+
+### 5.3 When it does not go cleanly
+
+Three outcomes you will actually meet, and what each means:
+
+- **`contract-gap`** — a slice reported it cannot be built against the frozen contract, and
+  named the gap. Do not patch around it: go back to phase 2, re-freeze, re-run. This is the
+  mechanism working, not failing.
+- **`failed`** — read `runs/<ts>/attempt-*/failure-*.md`; that is exactly what the agents
+  were given. Then decide the question the harness cannot: is the implementation wrong, or
+  is the assertion wrong? An assertion is fixed **here**, on purpose, never in a product
+  repo.
+- **`unattributable`** — check `verify.json`'s `fault`. `harness` means it is this repo's
+  bug and there is nothing for a product-repo agent to do.
+
+The stack is left running after a verify, so the fast loop is `make ps`,
+`make logs SVC=backend` and `./scripts/stack.sh rebuild backend` — one service, not a full
+cycle.
+
+---
+
+## 6. Submodules, the sharpest edge
 
 Two failure modes recur, and one example covers both.
 
@@ -178,7 +293,7 @@ performs the sequence.
 
 ---
 
-## 6. Where instructions live
+## 7. Where instructions live
 
 The most common configuration mistake is putting everything in one place. The right question
 for each document is **when should this enter the context window?**
@@ -210,7 +325,7 @@ therefore needs a complete, self-contained file.
 
 ---
 
-## 7. Enforcement
+## 8. Enforcement
 
 Instructions are advisory. Hooks and gates are deterministic. Anything that genuinely must
 not happen belongs in a mechanism, not in prose.
@@ -233,7 +348,7 @@ nothing — and each read as protection while providing none.
 
 ---
 
-## 8. Managing version skew
+## 9. Managing version skew
 
 Production will always briefly run mismatched versions.
 
@@ -245,7 +360,7 @@ Production will always briefly run mismatched versions.
 
 ---
 
-## 9. Maintenance
+## 10. Maintenance
 
 **Review the harness every three to six months, and after every major model release.**
 Rules written to work around a weaker model become pure friction on a stronger one. Prune
