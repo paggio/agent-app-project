@@ -106,6 +106,24 @@ banner() {
 
 TARGETS="$CHANGE_SLICES"
 ATTEMPT=1
+# One run per change per working tree. docs/adr/0004 gave infra an atomic lock because two
+# runs cannot share one environment; a LOCAL run shares just as much — the change dir, the
+# runs/ tree, the stack, the published ports and the postgres volume. Two overlapping runs
+# produced a commit landing under one of them and a .pyc swept into the other, and telling
+# that apart from a harness bug cost a trip through the reflog.
+RUN_LOCK="$ROOT/.locks/run-$CHANGE.lock"
+mkdir -p "$ROOT/.locks"
+if mkdir "$RUN_LOCK" 2>/dev/null; then
+  printf 'pid=%s\nchange=%s\n' "$$" "$CHANGE" > "$RUN_LOCK/owner"
+  RUN_LOCK_OWNED=1
+else
+  RUN_LOCK_OWNED=0
+  echo "iterate: another run holds $RUN_LOCK" >&2
+  sed 's/^/iterate:   /' "$RUN_LOCK/owner" 2>/dev/null >&2 || true
+  echo "iterate: two runs in one working tree share the change dir, the stack, the ports" >&2
+  echo "iterate: and the postgres volume. Wait for it, or remove the directory if it is stale." >&2
+  exit 2
+fi
 OUTCOME="unknown"
 SUMMARY=""
 
@@ -226,11 +244,27 @@ STATUSPY
 
 release_lock() {
   [ "${LOCK_OWNED:-0}" = "1" ] && rm -rf "${LOCK_DIR:?}" 2>/dev/null || true
+  [ "${RUN_LOCK_OWNED:-0}" = "1" ] && rm -rf "${RUN_LOCK:?}" 2>/dev/null || true
+  return 0
 }
 
 REPORTED=0
 finish() {
   REPORTED=1
+  # The pull requests, on a green outcome only — a PR for a change that did not verify is
+  # an invitation to merge something nothing asserted. Idempotent, so a slice that opened
+  # its own keeps it, and prs.json is the checked fact next to fanout.json's claim.
+  case "$OUTCOME" in
+    verified|verified-local)
+      banner "$CHANGE — pull requests"
+      if ./scripts/prs.sh --create "$CHANGE" --run-dir "$RUN_ROOT"; then
+        record ""
+        record "**Pull requests:** opened or already open — see \`$RUN_ROOT/prs.json\`"
+      else
+        record ""
+        record "**Pull requests:** at least one could not be opened — see \`$RUN_ROOT/prs.json\`"
+      fi ;;
+  esac
   write_report
   update_status
   release_lock
