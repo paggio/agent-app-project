@@ -25,8 +25,9 @@
 
 | Repo | Branch | PR | CI | Merged |
 | --- | --- | --- | --- | --- |
-| chatbot-backend | `feat/0002-chat-auth-and-real-backend` | [#5](https://github.com/Paggio/chatbot-backend/pull/5) | ☐ | ☐ |
-| frontend | `feat/0002-chat-auth-and-real-backend` | [#4](https://github.com/Paggio/frontend/pull/4) | ☐ | ☐ |
+| chatbot-backend | `feat/0002-chat-auth-and-real-backend` | [#5](https://github.com/Paggio/chatbot-backend/pull/5) | ☑ | ☑ `ceb0365` |
+| frontend | `feat/0002-chat-auth-and-real-backend` | [#4](https://github.com/Paggio/frontend/pull/4) | ☑ | ☑ `9ce42ea` |
+| agent-app-project | `feat/0002-chat-auth-and-real-backend` | [#6](https://github.com/Paggio/agent-app-project/pull/6) | ☑ | ☑ **into the wrong base** |
 
 Recorded mechanically in `runs/20260821T173105Z/prs.json` — `prs.sh` reported both as
 already open rather than creating duplicates.
@@ -59,9 +60,36 @@ the backend half is the security fix and it is self-contained.
 
 ## After merge
 
-- [ ] `./scripts/lock.sh` and commit `repos.lock`
-- [ ] `/realign` — bump the submodules, re-harvest the contract against what is served,
-      re-run the baseline, and promote the durable steps from `smoke.yaml` into
-      `smoke/baseline.yaml`. The two worth promoting are
-      `chat-without-a-session-is-refused` and `revoked-session-cannot-chat`: an open
-      billable endpoint is exactly the kind of regression a baseline exists to catch.
+- [x] `./scripts/lock.sh` and commit `repos.lock` — `d589855`
+- [x] `/realign` — 2026-08-25. Submodules bumped to merged main, contract agrees with what
+      is served, baseline green at 14 assertions, `make e2e` green at 30.
+
+### What realign found first
+
+This change's control-repo half was **not on `main`**. PR #6 was opened against
+`chore/two-command-harness` instead of `main`, and that base had already merged to `main`
+via PR #5 seventeen hours earlier — so the merge succeeded onto a branch nothing merges
+onward. The contract freeze, this directory, `docs/adr/0006-0008` and five harness fixes
+were stranded there while both product PRs were merged and deployed.
+
+The two findings `harvest-contract.py --diff` reported against `main` — an undeclared `401`
+on `postChat`, and `display_name` as a BREAKING request change — were both symptoms of
+that, not drift to fix. Recovering the branch (`6c296b6`) brought the freeze *and* the
+`anyOf` fix that resolves the second finding, after which the harvest reports agreement.
+Nothing was re-authored on top of `main`.
+
+### Promotion: seven steps, not the two named above
+
+The note here named `chat-without-a-session-is-refused` and `revoked-session-cannot-chat`.
+Promoting only those two would not have worked:
+
+- `revoked-session-cannot-chat` replays a captured cookie, so it needs
+  `register-a-chat-account` and `login-establishes-the-session` ahead of it or it sends
+  nothing and silently becomes a copy of the anonymous case.
+- Both named steps assert a `401`. A backend whose gate is stuck closed passes both. So
+  `chat-with-a-session-answers` and `chat-still-validates-the-body` came too, and they are
+  what keeps the block from being a tautology.
+
+Only `chat-route-deep-links-to-the-app` stayed behind: it is SPA fallback already covered
+by `origin-serves-app`, provable inside the frontend, and says nothing about the UI calling
+the backend.
