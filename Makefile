@@ -19,7 +19,7 @@ CHANGE       ?=
 REPOS := chatbot-backend frontend infra
 
 .DEFAULT_GOAL := help
-.PHONY: help up down restart ps logs rebuild urls open health chat smoke verify iterate \
+.PHONY: help up down restart ps logs rebuild config urls open health chat smoke verify iterate \
         e2e repos lock prs check check-docs init clean
 
 help: ## Show this list
@@ -55,6 +55,9 @@ logs: ## Follow logs; one service with SVC=backend
 rebuild: ## Rebuild one service without cycling the rest: make rebuild SVC=backend
 	@test -n "$(SVC)" || { echo "usage: make rebuild SVC=backend|frontend|proxy"; exit 2; }
 	@./scripts/stack.sh rebuild $(SVC)
+
+config: ## Print the rendered compose config, with secrets redacted
+	@./scripts/stack.sh config
 
 urls: ## Print the endpoints worth knowing
 	@echo
@@ -105,8 +108,11 @@ iterate: ## What /ship phase 4 runs, by hand: make iterate CHANGE=0001-auth
 	@test -n "$(CHANGE)" || { echo "usage: make iterate CHANGE=<change-dir>"; exit 2; }
 	@./scripts/iterate.sh $(CHANGE)
 
+# Sourced for the same reason `smoke` sources it: tests/e2e/real-backend.spec.ts skips
+# itself when SIGNUP_CODE or SMOKE_PASSWORD is unset, and that skip is silent. Without this
+# the only oracle for "the UI calls the real endpoint" reports green by not running.
 e2e: ## Run the frontend's Playwright suite against the joined origin
-	@cd frontend && PLAYWRIGHT_BASE_URL=$(BASE) npx playwright test
+	@. ./scripts/dev-env.sh && cd frontend && PLAYWRIGHT_BASE_URL=$(BASE) npx playwright test
 
 # ── across the repos ─────────────────────────────────────────────────────────────────
 # Read-only, and they stay that way: implementation happens in a session started inside

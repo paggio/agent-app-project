@@ -1,0 +1,156 @@
+# 0002 — a session gates chat, as executable criteria.
+#
+# Run against the joined stack at one origin, which is the only place the session cookie
+# actually crosses the proxy. A failure routes back to the repo named in `owner`.
+#
+# VARIABLES — supplied by the ship process, not by you. verify.sh sources
+# scripts/dev-env.sh before smoking, which fills anything unset from stack/dev.env and
+# then from chatbot-backend/.env:
+#   SIGNUP_CODE     the SAME variable stack/compose.yml passes to the backend, so the
+#                   suite and the service cannot disagree about the code.
+#   SMOKE_PASSWORD  12+ characters, not on the common-password list.
+#
+# ORDER IS LOAD-BEARING HERE, more than in 0001. Cookies persist across steps within a
+# run, so:
+#   * the anonymous refusal must come FIRST, before any login puts a cookie in the jar;
+#   * the logout revocation step must come LAST, because it empties the jar.
+# A reordering does not fail loudly — it turns a real assertion into a tautology. That is
+# why each of the three has a comment saying what its position is for.
+#
+# WHAT THIS SUITE CANNOT SEE. "The UI consumes the real endpoint" is a browser fact, and
+# every HTTP-visible property of the frontend was already true while its chat client was a
+# mock. So there is exactly one frontend-owned step here, it is honest about being a
+# deep-link check, and the real oracle is the Playwright stage that `smoke.e2e: true` in
+# change.yaml turns on. Read BRIEF.md § "A gap in the oracle" before concluding from a
+# green smoke.json that criterion 6 holds. It does not.
+#
+# NO `Secure` ASSERTION, and no model-identity assertion. The first would fail on a
+# correct implementation over this http origin (contracts/README.md); the second would
+# need CHAT_MODEL=bedrock and live credentials, which CI has neither of — so this suite
+# asserts a NON-EMPTY reply, which both `echo` and Bedrock satisfy, and leaves "which
+# model" to the backend repo's own `eval`-marked tests.
+
+steps:
+  # ------------------------------------------------------- the hole this change closes
+  # FIRST, deliberately. The cookie jar is empty only until the login step below, so this
+  # step proves anonymous refusal only while it stays at the top of the file.
+
+  - name: chat-without-a-session-is-refused
+    owner: chatbot-backend
+    POST: /api/v1/chat
+    body:
+      message: This request has no session cookie and must not reach a model.
+    expect:
+      status: 401
+      json:
+        error:
+          code: AUTH_REQUIRED
+      # A refusal must not carry a reply. If the handler authenticates AFTER invoking the
+      # graph, the money is already spent and only this line notices.
+      body_excludes: '"reply"'
+
+  # ------------------------------------------------------------------- get a session
+
+  - name: register-a-chat-account
+    owner: chatbot-backend
+    POST: /api/v1/auth/register
+    body:
+      email: smoke-0002-${SMOKE_RUN_ID}@auth.test
+      password: "${SMOKE_PASSWORD}"
+      signup_code: "${SIGNUP_CODE}"
+      display_name: Smoke Chat
+    expect:
+      # 201 cold, 409 when --keep-up left the volume behind. Both prove the endpoint
+      # works; the session comes from the login step below, never from this one.
+      status: [201, 409]
+
+  - name: login-establishes-the-session
+    owner: chatbot-backend
+    POST: /api/v1/auth/login
+    body:
+      email: smoke-0002-${SMOKE_RUN_ID}@auth.test
+      password: "${SMOKE_PASSWORD}"
+    expect:
+      status: 200
+      cookie: session
+    capture:
+      # Kept because the jar CLEARS this cookie at logout, and a revocation step that
+      # sends nothing is only re-testing the anonymous path under a different name. The
+      # last step replays this exact value by hand. http.cookiejar leaves an explicit
+      # Cookie header alone, so the replay is what reaches the backend.
+      session_value: cookie:session
+
+  # ------------------------------------------------------------- chat, authenticated
+
+  - name: chat-with-a-session-answers
+    owner: chatbot-backend
+    POST: /api/v1/chat
+    body:
+      message: Reply with a single short sentence.
+    expect:
+      status: 200
+      # A non-empty reply, asserted as a body property rather than a bare status: the
+      # frontend answers any unmatched path with the app shell and a 200, so a status-only
+      # assertion here would pass against an edge that never routed /api/* at all.
+      # `[^"]` is the whole point — it rules out `{"reply":""}`.
+      body_matches: '"reply"\s*:\s*"[^"]'
+    retry:
+      # A real model over the network, cold-started. Two extra tries at three seconds
+      # rather than a slice chasing a timeout that was never its bug.
+      attempts: 3
+      delay: 3.0
+
+  - name: chat-still-validates-the-body
+    owner: chatbot-backend
+    POST: /api/v1/chat
+    # Same session as above. Auth is a new gate in front of validation, not a replacement
+    # for it: an empty message stays 422 in the framework's `detail` shape, so a client
+    # that already distinguishes the two error shapes keeps working.
+    body:
+      message: ""
+    expect:
+      status: 422
+      body_matches: '"detail"'
+
+  # ------------------------------------------------------------------ the frontend seam
+
+  - name: chat-route-deep-links-to-the-app
+    owner: frontend
+    GET: /chat
+    # Not API surface — the SPA shell, so it opts out of the contract check rather than
+    # failing it. Narrow on purpose: this proves the deep link survives, NOT that the UI
+    # calls the backend. That criterion is the Playwright stage's, and BRIEF.md says so.
+    contract: false
+    expect:
+      status: 200
+      body_matches: '<div id="root"'
+
+  # ------------------------------------------------- the gate reads the session record
+  # LAST, deliberately: it empties the cookie jar, so any chat step placed after it would
+  # be asserting the anonymous path while appearing to assert the authenticated one.
+
+  - name: logout-then-chat-is-refused
+    owner: chatbot-backend
+    POST: /api/v1/auth/logout
+    expect:
+      status: 204
+
+  - name: revoked-session-cannot-chat
+    owner: chatbot-backend
+    POST: /api/v1/chat
+    # The captured cookie, replayed by hand. The jar was emptied by the step above, so
+    # without this header the request would carry nothing and this step would be a second
+    # copy of `chat-without-a-session-is-refused` wearing a more impressive name.
+    headers:
+      Cookie: session=${session_value}
+    body:
+      message: The session behind this cookie was just deleted server-side.
+    # The step that makes the gate mean something. A handler that merely checks "is there
+    # a cookie" passes every step above this one and fails here, because logout deletes
+    # the server-side record rather than waiting for it to expire.
+    expect:
+      status: 401
+      json:
+        error:
+          code: AUTH_REQUIRED
+      body_excludes: '"reply"'

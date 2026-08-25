@@ -87,3 +87,117 @@ steps:
     expect:
       status: 200
       body_matches: '<div id="root"'
+
+  # ── promoted from 0002-chat-auth-and-real-backend ──────────────────────────────────
+  # The seam this change closed: a session established at the origin, its cookie crossing
+  # the proxy, and chat refusing without it. No single repo can prove any of that — the
+  # cookie only crosses a proxy when there is one.
+  #
+  # ORDER IS LOAD-BEARING, and it survived promotion for the same reason it mattered in
+  # the change: the cookie jar persists across steps, so the anonymous refusal must stay
+  # ABOVE the login and the revocation pair must stay BELOW every authenticated step. A
+  # reordering does not fail loudly — it turns each of them into a tautology.
+  #
+  # NOT promoted: chat-route-deep-links-to-the-app. `/chat` returning the app shell is the
+  # SPA fallback that origin-serves-app and prefix-boundary-is-respected already cover, it
+  # is provable inside the frontend repo, and its own comment admits it says nothing about
+  # the UI calling the backend. That criterion belongs to tests/e2e/real-backend.spec.ts.
+
+  - name: chat-without-a-session-is-refused
+    owner: chatbot-backend
+    # ABOVE the login, deliberately — see the ordering note above.
+    POST: /api/v1/chat
+    body:
+      message: This request has no session cookie and must not reach a model.
+    expect:
+      status: 401
+      json:
+        error:
+          code: AUTH_REQUIRED
+      # A refusal must not carry a reply. If the handler authenticates AFTER invoking the
+      # graph, the money is already spent and only this line notices.
+      body_excludes: '"reply"'
+
+  - name: register-a-chat-account
+    owner: chatbot-backend
+    POST: /api/v1/auth/register
+    body:
+      email: smoke-baseline-${SMOKE_RUN_ID}@auth.test
+      password: "${SMOKE_PASSWORD}"
+      signup_code: "${SIGNUP_CODE}"
+      display_name: Smoke Baseline
+    expect:
+      # 201 cold, 409 when a previous run left the volume behind. Both prove the endpoint
+      # works; the session comes from the login step below, never from this one.
+      status: [201, 409]
+
+  - name: login-establishes-the-session
+    owner: chatbot-backend
+    POST: /api/v1/auth/login
+    body:
+      email: smoke-baseline-${SMOKE_RUN_ID}@auth.test
+      password: "${SMOKE_PASSWORD}"
+    expect:
+      status: 200
+      cookie: session
+    capture:
+      # The jar CLEARS this cookie at logout, so the revocation step below replays this
+      # exact value by hand. Without it that step would send nothing and be a second copy
+      # of chat-without-a-session-is-refused wearing a more impressive name.
+      session_value: cookie:session
+
+  - name: chat-with-a-session-answers
+    owner: chatbot-backend
+    # The positive half, and it is here to stop the rest becoming a tautology: a backend
+    # whose gate is stuck closed passes every 401 assertion in this block and fails only
+    # this one. CHAT_MODEL is undeclared in stack/dev.env on purpose (docs/adr/0006), so
+    # CI answers with `echo` and a developer holding credentials answers with Bedrock —
+    # the assertion is a NON-EMPTY reply, which both satisfy.
+    POST: /api/v1/chat
+    body:
+      message: Reply with a single short sentence.
+    expect:
+      status: 200
+      # Asserted as a body property rather than a bare status: the frontend answers any
+      # unmatched path with the app shell and a 200, so a status-only assertion would pass
+      # against an edge that never routed /api/* at all. `[^"]` rules out `{"reply":""}`.
+      body_matches: '"reply"\s*:\s*"[^"]'
+    retry:
+      # A real model over the network, possibly cold-started.
+      attempts: 3
+      delay: 3.0
+
+  - name: chat-still-validates-the-body
+    owner: chatbot-backend
+    # Auth is a gate in FRONT of validation, not a replacement for it. A client that
+    # distinguishes the two error shapes keeps working only while this stays true.
+    POST: /api/v1/chat
+    body:
+      message: ""
+    expect:
+      status: 422
+      body_matches: '"detail"'
+
+  - name: logout-then-chat-is-refused
+    owner: chatbot-backend
+    # BELOW every authenticated step — this empties the cookie jar.
+    POST: /api/v1/auth/logout
+    expect:
+      status: 204
+
+  - name: revoked-session-cannot-chat
+    owner: chatbot-backend
+    # The step that makes the gate mean something: a handler that merely checks "is there
+    # a cookie" passes everything above and fails here, because logout deletes the
+    # server-side record rather than waiting for it to expire.
+    POST: /api/v1/chat
+    headers:
+      Cookie: session=${session_value}
+    body:
+      message: The session behind this cookie was just deleted server-side.
+    expect:
+      status: 401
+      json:
+        error:
+          code: AUTH_REQUIRED
+      body_excludes: '"reply"'

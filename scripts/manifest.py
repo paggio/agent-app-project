@@ -126,6 +126,29 @@ def validate_freeze(doc: dict) -> list[str]:
             f"freeze_sha: {sha[:8]} is not an ancestor of HEAD — the slices would build "
             f"against a contract this branch does not have; merge or rebase, then re-record")
 
+    # The gate presented as "it exits 0 or names what to fix" never PARSED the artifact it
+    # gates. A real YAML error in openapi.yaml — an unquoted `: ` inside a description is
+    # enough — passed validation and detonated later, inside a dispatched session or at
+    # smoke.py --contract, after the dispatch had been paid for.
+    for name in ("openapi.yaml", "infra-outputs.yaml"):
+        path = os.path.join(HERE, os.pardir, "contracts", name)
+        if not os.path.exists(path):
+            continue
+        try:
+            doc = yaml.safe_load(open(path))
+        except yaml.YAMLError as exc:
+            where = ""
+            mark = getattr(exc, "problem_mark", None)
+            if mark is not None:
+                where = f" at line {mark.line + 1}, column {mark.column + 1}"
+            problems.append(f"contracts/{name} is not valid YAML{where} — a malformed "
+                            f"freeze passes every other check here and fails inside a "
+                            f"dispatched session instead: {getattr(exc, 'problem', exc)}")
+            continue
+        if not isinstance(doc, dict) or not doc:
+            problems.append(f"contracts/{name} parsed to {type(doc).__name__}, not a "
+                            f"mapping — it is not a usable spec")
+
     rc, dirty = git("status", "--porcelain", "--", "contracts/")
     if rc == 0 and dirty:
         # git() strips its output, so the leading space of " M contracts/x" is already

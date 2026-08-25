@@ -112,6 +112,47 @@ def response_schema(op: dict, status: str, spec: dict) -> dict:
     return deref((content.get("application/json") or {}).get("schema") or {}, spec)
 
 
+
+def type_set(schema: dict) -> frozenset[str]:
+    """The JSON types a property schema accepts, as a set.
+
+    `type: string` and `anyOf: [{type: string}, {type: null}]` describe overlapping
+    surfaces, and a bare `.get("type")` reads the second as None — so every OPTIONAL field
+    in a FastAPI-served spec looked like a breaking type change to the comparison below.
+    Nothing called this script, so nobody found out until it became a stage in the loop.
+
+    OpenAPI 3.1 also permits `type: [string, "null"]`, which is the same thing again.
+    """
+    if not isinstance(schema, dict):
+        return frozenset()
+    t = schema.get("type")
+    if isinstance(t, list):
+        return frozenset(str(x) for x in t)
+    if t is not None:
+        return frozenset({str(t)})
+    for key in ("anyOf", "oneOf"):
+        branches = schema.get(key)
+        if isinstance(branches, list):
+            out: set[str] = set()
+            for b in branches:
+                out |= type_set(b)
+            if out:
+                return frozenset(out)
+    # allOf narrows rather than widens; the union of its branches is the closest honest
+    # answer, and an empty set means "unconstrained", which never compares as a change.
+    branches = schema.get("allOf")
+    if isinstance(branches, list):
+        out = set()
+        for b in branches:
+            out |= type_set(b)
+        return frozenset(out)
+    return frozenset()
+
+
+def describe_types(types: frozenset[str]) -> str:
+    return " | ".join(sorted(types)) if types else "unconstrained"
+
+
 def compare_fields(where: str, old: dict, new: dict, direction: str) -> list[Finding]:
     """direction is 'request' or 'response' — it decides what counts as breaking."""
     out: list[Finding] = []
@@ -138,9 +179,19 @@ def compare_fields(where: str, old: dict, new: dict, direction: str) -> list[Fin
 
     for name in sorted(set(old_props) & set(new_props)):
         o, n = old_props[name], new_props[name]
-        if o.get("type") != n.get("type"):
+        old_types, new_types = type_set(o), type_set(n)
+        # A widening is not a break in either direction, and "null was added because the
+        # field is optional" is the commonest widening there is. Only a type the other side
+        # no longer accepts can break a caller.
+        if old_types and new_types and not old_types <= new_types:
+            lost = old_types - new_types
             out.append(Finding(BREAKING, where,
-                               f"'{name}' changes type {o.get('type')} -> {n.get('type')}"))
+                               f"'{name}' no longer accepts {describe_types(lost)} "
+                               f"({describe_types(old_types)} -> "
+                               f"{describe_types(new_types)})"))
+        elif old_types != new_types:
+            out.append(Finding(ADDITIVE, where,
+                               f"'{name}' widens to {describe_types(new_types)}"))
         if o.get("const") != n.get("const") and (o.get("const") or n.get("const")):
             out.append(Finding(BREAKING, where,
                                f"'{name}' changes fixed value {o.get('const')!r} -> "
@@ -288,7 +339,7 @@ def main() -> int:
         print()
         print("  These are decisions, not diffs. Expand-and-contract instead: add the new")
         print("  shape alongside the old, migrate every consumer, remove the old in a later")
-        print("  change. See the freeze-contract skill.")
+        print("  change. See contracts/README.md.")
         print()
 
     if args.json_out:
