@@ -19,9 +19,10 @@ concurrency:
 
 jobs:
   docs:
-    # Six greps and a byte-comparison, each mapping to a documentation defect that actually
+    # Greps and byte-comparisons, each mapping to a documentation defect that actually
     # happened — see the docstring in scripts/check-docs.py. This is the job that would have
-    # caught `freeze-contract` telling agents to record the freeze SHA in BRIEF.md.
+    # caught prose telling agents to record the freeze SHA in BRIEF.md long after the
+    # mechanism that read it was removed.
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
@@ -32,6 +33,10 @@ jobs:
       - uses: astral-sh/setup-uv@v5
       - name: Documentation is consistent with the mechanisms
         run: ./scripts/check-docs.py
+      # The only guard the control session cannot bypass by accident, probed in both
+      # directions: a guard that fires on ordinary work is one the agent routes around.
+      - name: The submodule-write guard blocks what it claims, and nothing else
+        run: ./scripts/test-hooks.py
 
   manifests:
     # Every change directory must be shippable-or-explicitly-not. A change that cannot be

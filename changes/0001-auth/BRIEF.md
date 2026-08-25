@@ -150,10 +150,9 @@ no-mutating-`GET` invariant, and the rule that decides which of the two error sh
 applies. It is there rather than in the spec because `harvest-contract.py --write`
 rewrites the spec's structure from the running service and would drop them.
 
-Frozen as of `3710209` — *contract: freeze the auth surface — register, login, logout, me*.
-Recorded as `freeze_sha` in `change.yaml`, which is where `fanout.sh` reads it.
-
-<!-- If this line has no SHA, the change is not ready to fan out. fanout.sh enforces it. -->
+The freeze commit is *contract: freeze the auth surface — register, login, logout, me*. Its
+SHA is recorded as `freeze_sha` in `change.yaml` and deliberately not repeated here, because
+that is the only place anything reads it.
 
 ## Deployment
 

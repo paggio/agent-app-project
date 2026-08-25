@@ -19,7 +19,7 @@ CHANGE       ?=
 REPOS := chatbot-backend frontend infra
 
 .DEFAULT_GOAL := help
-.PHONY: help up down restart ps logs rebuild urls open health chat smoke verify iterate \
+.PHONY: help up down restart ps logs rebuild config urls open health chat smoke verify iterate \
         e2e repos lock prs check check-docs init clean
 
 help: ## Show this list
@@ -55,6 +55,9 @@ logs: ## Follow logs; one service with SVC=backend
 rebuild: ## Rebuild one service without cycling the rest: make rebuild SVC=backend
 	@test -n "$(SVC)" || { echo "usage: make rebuild SVC=backend|frontend|proxy"; exit 2; }
 	@./scripts/stack.sh rebuild $(SVC)
+
+config: ## Print the rendered compose config, with secrets redacted
+	@./scripts/stack.sh config
 
 urls: ## Print the endpoints worth knowing
 	@echo

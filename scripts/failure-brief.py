@@ -156,6 +156,24 @@ def main() -> int:
                 out.append(f"Transport error: `{actual['error']}`")
             out.append("")
 
+    # The contract stage's evidence is a diff, and it lives in one file nothing read. A
+    # brief for a harvest failure arrived naming the stage and attaching container logs
+    # showing a single successful GET /openapi.json — so its most prominent content was a
+    # log with nothing in it, and the agent had to go find harvest.log to learn which field
+    # was even involved.
+    harvest = os.path.join(rd, "harvest.log")
+    if os.path.exists(harvest):
+        body = open(harvest, errors="replace").read().strip()
+        if body and "the contract and the implementation agree" not in body:
+            out.append("## The contract versus what is served")
+            out.append("")
+            out.append("_This ran BEFORE the smoke suite, so no assertion was evaluated._")
+            out.append("")
+            out.append("```")
+            out.append(body[:4000])
+            out.append("```")
+            out.append("")
+
     # Container logs, which is where a 500 actually explains itself.
     spec = SERVICES.get(repo, {"primary": [], "supporting": []})
     logs_added = False

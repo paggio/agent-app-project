@@ -93,7 +93,7 @@ def main() -> int:
             problems.append(
                 f"{name}: a remote pass cannot run without it, but {args.contract} does not "
                 f"promise it. Add it to the contract (one commit, contracts/ alone) and "
-                f"record the freeze — see the freeze-contract skill.")
+                f"record the freeze — see contracts/README.md.")
 
     # Two output names must not collapse to one variable; last-writer-wins would be silent.
     seen: dict[str, str] = {}

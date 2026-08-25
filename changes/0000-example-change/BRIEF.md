@@ -24,9 +24,10 @@
 
 ## Contract changes
 
-`contracts/<file>`: <what changes>. Frozen as of <commit sha>.
+`contracts/<file>`: <what changes, and whether it is additive>.
 
-<!-- If this line has no SHA, the change is not ready to fan out. -->
+The freeze SHA does NOT go here. It goes in `change.yaml` as `freeze_sha`, which is the
+only place anything reads it — two copies of a SHA is one copy that can go stale.
 
 ## Deployment
 

@@ -56,7 +56,22 @@ case "$cmd" in
     "${COMPOSE[@]}" ps
     ;;
   config)
-    "${COMPOSE[@]}" config "$@"
+    # `docker compose config` INLINES env_file, so on this stack it prints the real AWS
+    # credentials from chatbot-backend/.env — and it is the obvious first debugging
+    # command. Redacted here so the safe spelling is the convenient one. Nothing else in
+    # this repo may print raw compose config; service-owner.sh reads it in-process and
+    # emits only labels.
+    "${COMPOSE[@]}" config "$@" | python3 -c '
+import re, sys
+SECRET = re.compile(r"(SECRET|TOKEN|PASSWORD|CREDENTIAL|_KEY|KEY_ID|SIGNUP_CODE)", re.I)
+for line in sys.stdin:
+    m = re.match(r"^(\s*)([A-Za-z_][A-Za-z0-9_]*)(:\s*)(.+?)(\s*)$", line)
+    if m and SECRET.search(m.group(2)) and m.group(4) not in ("null", "{}", "[]"):
+        print(f"{m.group(1)}{m.group(2)}{m.group(3)}<redacted {len(m.group(4))} chars>")
+    else:
+        sys.stdout.write(line)
+'
+
     ;;
   *)
     sed -n '2,12p' "${BASH_SOURCE[0]}" >&2
