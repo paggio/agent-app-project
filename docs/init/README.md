@@ -79,16 +79,18 @@ changes/NNNN-*/     one directory per cross-repo feature; change.yaml is its mac
 stack/compose.yml   every repo joined into ONE compose project, so the seams are real
 stack/dev.env       the one source of values for the stack AND the suites
 smoke/baseline.yaml the cross-repo regression suite, every step with an owner
-scripts/            new-change.sh scaffolds; manifest.py --validate is the ship gate;
-                    fanout.sh dispatches; verify.sh is the oracle; iterate.sh is the
-                    loop; smoke.py asserts; lock.sh pins. `--help` on any of them.
+scripts/            manifest.py --validate is the ship gate; iterate.sh is the loop;
+                    verify.sh is the oracle; smoke.py asserts; prs.sh opens the PRs;
+                    lock.sh pins. `--help` on any of them. None is an entry point —
+                    the commands below are.
 repos.lock          the SHA triple known to work together
+docs/adr/           decisions and their accepted costs
+docs/infra-interface.md   what this repo requires of infra/
 docs/init/          this playbook
 .github/workflows/  check-docs.py and manifest.py --validate over every change
-.claude/commands/   ship.md — the one orchestration step that takes an argument
-.claude/skills/     the four lanes' depth: freeze-contract, align-contract,
-                    plan-cross-repo-change, deploy-to-aws
-.claude/hooks/no-subrepo-edits.sh   PreToolUse guard on Bash
+.claude/commands/   ship.md and realign.md — one per thing this repo does, and the
+                    whole agent-facing surface. No skills: see docs/adr/0005.
+.claude/hooks/no-subrepo-edits.sh   PreToolUse guard on Bash, probed by test-hooks.py
 ```
 
 Steps 1-4 of this playbook produce a documents-and-scripts repo. `stack/`, `smoke/` and the
@@ -118,8 +120,9 @@ it afterwards.
 
 Submodules land in **detached HEAD** on update. Any commit made there is on no branch
 and is easy to lose. `git -C <repo> switch -c <branch>` before any work inside one —
-`fanout.sh` does this; interactive sessions must do it by hand. This is why it is a
-hard rule in the control `CLAUDE.md` rather than a note in a doc.
+The dispatch does this; interactive sessions must do it by hand. This is why it is a
+hard rule in the control `CLAUDE.md` rather than a note in a doc. The dispatch `/ship`
+runs does it for the slices; `/realign` does it when bringing them back to `main`.
 
 ### Step 5 — Make the gates real
 
@@ -133,7 +136,7 @@ Everything up to here is documentation, and documentation degrades silently.
 4. Fill in `.github/workflows/ci.yml` and mark each job a required status check.
    Secret scanning is non-negotiable and never delegated to agent judgement.
 
-### Step 6 — Verify (see `checklist.md`)
+### Step 6 — Verify
 
 Most importantly, the self-sufficiency test: clone one product repo alone into a fresh
 directory outside the submodule tree, start a session, ask for a small change. If the
@@ -180,7 +183,20 @@ be written after the first few tests exist, not before.
 
 ## 5. Verification
 
-See `checklist.md` — copy it per initialization and tick through.
+Nothing here is done until each of these has actually been observed, not assumed:
+
+- [ ] Each product repo's Stop hook **blocks** when a test is deliberately broken.
+- [ ] Each product repo's CI jobs are **required** status checks, secret scanning included.
+- [ ] A product repo cloned alone into a fresh directory can be worked in without the
+      control repo — the self-sufficiency test above.
+- [ ] `make up` brings every repo up on one origin, and `make health` answers on `/api/`.
+- [ ] `make check` is green: `check-docs.py`, the hook probe, every change validating, and
+      each product repo's own lint and typecheck.
+- [ ] One deliberately small cross-repo change has been driven end to end through `/ship`,
+      reaching `verified` with assertions from its own suite, and `/realign` afterwards.
+- [ ] `contracts/` cannot be edited from a product repo, and the control session cannot
+      write into a submodule — `./scripts/test-hooks.py` proves the second in both
+      directions.
 
 ---
 
@@ -191,10 +207,11 @@ See `checklist.md` — copy it per initialization and tick through.
 | Language, framework, test runner, formatter, IaC tool | the first real feature forces the choice |
 | Real contract entries | a real interface exists; an invented contract is worse than none |
 | Spec-driven frameworks (OpenSpec, Spec Kit, BMAD) | `changes/` has ~10 entries and hand-written briefs visibly drift from the code |
-| Agent teams | `fanout.sh` proves insufficient because slices genuinely need to negotiate mid-flight |
+| Agent teams | the dispatch proves insufficient because slices genuinely need to negotiate mid-flight |
 | Dynamic workflows / high-effort orchestration | a task needs dozens of agents — a repo-wide migration or audit |
 | Deep multi-agent review | change size makes local review unreliable |
 | Shared-convention plugin in an internal marketplace | per-repo skill duplication becomes a maintenance burden |
+| Skills in the control repo | a procedure here genuinely has a natural trigger phrase — `docs/adr/0005` explains why the first four did not |
 | Instruction-drift detection from session transcripts | the base gates are stable — not on day one |
 
 ---

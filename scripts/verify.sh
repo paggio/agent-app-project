@@ -21,8 +21,11 @@
 #     --allow-destroy  proceed when `make -C infra plan` reports a destroy or replace
 #     --run-dir DIR    where to write logs and json (default: changes/<change>/runs/<ts>)
 #
-# Exit 1 = the thing under test failed. Exit 2 = this script refused to judge it
-# (bad arguments, unparseable manifest, malformed suite). See docs/adr/0003.
+# Exit 1 = the thing under test failed. Exit 2 = this script refused to judge it, which
+# here means only what is detected BEFORE the EXIT trap is installed: bad arguments and an
+# unparseable manifest. A refusal detected later — a malformed suite, a corrupt outputs
+# document — exits 1 with `fault: "harness"` in verify.json, and that field is the signal to
+# read, not the exit code. See docs/adr/0003.
 set -euo pipefail
 
 ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
@@ -46,7 +49,6 @@ while [ $# -gt 0 ]; do
     --no-build) BUILD_FLAG="--no-build" ;;
     --e2e) E2E=1 ;;
     --any-branch) STRICT_BRANCH=0 ;;
-    --strict-branch) ;;  # now the default; accepted so old invocations keep working
     --no-infra) NO_INFRA=1 ;;
     --plan-only) PLAN_ONLY=1 ;;
     --allow-destroy) ALLOW_DESTROY=1 ;;
@@ -182,11 +184,12 @@ PY
   fi
   exit $code
 }
+STAGE_LOG=""
 trap finish EXIT
 
 # Newline-separated `stage=outcome`, so a reader can see what ran and what was skipped
-# rather than inferring it from the absence of a failure.
-STAGE_LOG=""
+# rather than inferring it from the absence of a failure. Assigned above, before the trap
+# that reads it is installed.
 record_stage() { STAGE_LOG="$STAGE_LOG
 $1=$2"; }
 
@@ -336,6 +339,25 @@ if [ "$CHANGE_DEPLOY_LOCAL" = "1" ]; then
 else
   record_stage deploy_local "skipped: deploy.local=false"
   note "deploy.local is false in change.yaml — skipping the local stack"
+fi
+
+# ------------------------------------------------------------- contract vs served
+# Structural drift, caught BEFORE smoke: smoke.py --contract only checks that a path,
+# method and status are declared, never a body, so a suite can pass against something that
+# is not the promise. A drift here means the suite is about to assert the wrong thing, and
+# that is the right first failure. docs/adr/0003 records the residual gap this closes.
+if [ "$CHANGE_DEPLOY_LOCAL" = "1" ]; then
+  stage "contract: served vs contracts/openapi.yaml"
+  set +e
+  ./scripts/harvest-contract.py --diff --from "$DIRECT_BASE/openapi.json" \
+    2>&1 | tee "$RUN_DIR/harvest.log"
+  HARVEST_RC="${PIPESTATUS[0]}"
+  set -e
+  case "$HARVEST_RC" in
+    0) record_stage contract_harvest pass ;;
+    1) fail_stage "contract: the implementation has drifted from the frozen contract in a way that breaks a consumer — see $RUN_DIR/harvest.log" "$CHANGE_SLICES" slice ;;
+    *) fail_stage "contract: could not read the served spec at $DIRECT_BASE/openapi.json" "" harness ;;
+  esac
 fi
 
 # ----------------------------------------------------------------------- smoke

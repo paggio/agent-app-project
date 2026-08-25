@@ -17,3 +17,6 @@ TODO.md
 # transcripts. Regenerated on every run and often large; report.md is the durable part
 # and is meant to be read in place, not committed.
 changes/*/runs/
+
+# A crashed run leaves the environment lock behind; it is never committable.
+.locks/

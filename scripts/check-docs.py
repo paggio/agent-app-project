@@ -3,7 +3,7 @@
 # requires-python = ">=3.11"
 # dependencies = ["pyyaml>=6"]
 # ///
-"""Seven checks that each map to a documentation defect that actually happened.
+"""Nine checks that each map to a documentation defect that actually happened.
 
   ./scripts/check-docs.py [--warnings-are-errors]
 
@@ -47,8 +47,10 @@ def warn(check: str, msg: str) -> None:
 
 def prose_files() -> list[str]:
     out = []
+    # concept.md belongs here and was missing, which is the whole reason it drifted to 838
+    # lines still teaching a superseded fanout.sh: no check ever looked at it.
     for pat in (".claude/**/*.md", "docs/**/*.md", "CLAUDE.md", "README.md",
-                "contracts/README.md"):
+                "concept.md", "contracts/README.md"):
         out += glob.glob(os.path.join(ROOT, pat), recursive=True)
     return sorted(set(out))
 
@@ -257,6 +259,75 @@ def check_vendored_contracts() -> None:
                  f"repo); this repo cannot write there.")
 
 
+
+# --- 8. every command named in prose exists, and every command is routed to -----------
+# The mirror of check 6, for the surface that replaced the skills. A lane table naming
+# `/deploy` would send a reader to nothing; a command nothing routes to is never invoked,
+# and commands do not self-activate the way a skill's description does. docs/adr/0005 makes
+# CLAUDE.md's lane table the load-bearing routing, so this is what holds it to that.
+def check_commands() -> None:
+    cmd_dir = os.path.join(ROOT, ".claude", "commands")
+    have = {os.path.basename(p)[:-3]
+            for p in glob.glob(os.path.join(cmd_dir, "*.md"))}
+
+    routing = ""
+    for name in ("CLAUDE.md", "README.md"):
+        try:
+            routing += open(os.path.join(ROOT, name)).read()
+        except OSError:
+            pass
+
+    for path in prose_files():
+        text = open(path).read()
+        for n, line in enumerate(text.splitlines(), 1):
+            for named in re.findall(r"`/([a-z][a-z0-9-]*)`", line):
+                if named in have:
+                    continue
+                # `/api` is a URL prefix, not a command. A token this file also uses as a
+                # path segment is a path; a slash command never appears as `/ship/`.
+                if f"/{named}/" in text:
+                    continue
+                fail("commands",
+                     f"{rel(path)}:{n} names /{named}, which does not exist in "
+                     f".claude/commands/. Either add it or stop pointing at it.")
+
+    for name in sorted(have):
+        if f"/{name}" not in routing:
+            fail("commands",
+                 f"command {name!r} is not routed to from CLAUDE.md or README.md. A command "
+                 f"does not activate on its own the way a skill description does, so one "
+                 f"nobody is told about is one nobody runs — route it or delete it.")
+
+
+# --- 9. the scripts are not the entry point ------------------------------------------
+# concept.md spent 838 lines teaching readers to run fanout.sh, in a form docs/adr/0002 had
+# already replaced, because nothing held prose to the actual surface. The scripts are called
+# BY the commands; a document that presents one as the way to do the work is the drift that
+# produced docs/adr/0005.
+INTERNAL = ("fanout.sh", "iterate.sh", "verify.sh")
+ENTRY_SHAPES = (
+    r"(?:^|\s)(?:just |simply |then )?run\s+`?\.?/?scripts/{s}",
+    r"^\s*[-*\d.]*\s*`?\.?/scripts/{s}`?\s+<",
+)
+
+
+def check_scripts_are_not_the_entry_point() -> None:
+    for path in prose_files():
+        # The command files themselves legitimately say "run ./scripts/iterate.sh" — that is
+        # what a command is for. docs/adr/ records history and may quote what was true then.
+        r = rel(path)
+        if r.startswith(".claude/commands/") or r.startswith("docs/adr/"):
+            continue
+        for n, line in enumerate(open(path), 1):
+            for script in INTERNAL:
+                for shape in ENTRY_SHAPES:
+                    if re.search(shape.format(s=re.escape(script)), line, re.I | re.M):
+                        fail("script-entry-point",
+                             f"{r}:{n} presents scripts/{script} as the way to do the work. "
+                             f"The lanes are /ship and /realign; the scripts are what they "
+                             f"call. See docs/adr/0005.")
+
+
 def main() -> int:
     ap = argparse.ArgumentParser()
     ap.add_argument("--warnings-are-errors", action="store_true")
@@ -264,7 +335,8 @@ def main() -> int:
 
     for fn in (check_freeze_sha_home, check_suite_vars, check_step_schema_documented,
                check_banned_phrases, check_claude_md_size, check_dead_wiring,
-               check_vendored_contracts):
+               check_vendored_contracts, check_commands,
+               check_scripts_are_not_the_entry_point):
         try:
             fn()
         except Exception as exc:  # a broken check must not read as a clean repo
@@ -277,7 +349,7 @@ def main() -> int:
 
     if problems or (warnings and args.warnings_are_errors):
         return 1
-    print(f"check-docs: 7 checks passed"
+    print(f"check-docs: 9 checks passed"
           + (f" ({len(warnings)} warning(s))" if warnings else ""))
     return 0
 

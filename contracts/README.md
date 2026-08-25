@@ -85,25 +85,24 @@ switching on them will break.
    ones, removals in a later change once every consumer is updated.
 2. One commit, nothing else in the diff. That commit is the freeze point.
 3. Record its SHA as `freeze_sha` in the change's `change.yaml`.
-4. Only then fan out.
+4. Only then dispatch. `fanout.sh` extracts `contracts/` at exactly that SHA and gives the
+   slices nothing else, so the freeze is a tree rather than a promise.
 
-## Which way round
+Two directions arrive at the same place — a reviewed contract, committed alone. They differ
+only in where the first draft comes from. **Deciding an interface that does not exist yet**
+is hand-written, during `/ship` phase 2. **Promoting something already built** starts from
+`./scripts/harvest-contract.py --diff` against the running service, which is the `/realign`
+path; an exact spec published at `/openapi.json` beats one inferred from source.
 
-Two skills, one destination — a reviewed contract, committed alone. They differ only in
-where the first draft comes from.
+Neither lets the implementation decide. The harvest drafts and classifies — additive versus
+breaking, judged by what it would do to a consumer — and refuses to write a breaking change
+until you pass `--accept-breaking`, which means you looked. A contract that automatically
+matched the implementation could never fail a build, which is the whole thing
+`docs/adr/0001` was written to prevent. And review the draft: `operationId` becomes a client
+method name, generated prose describes internals, and everything served gets harvested
+whether or not you meant to promise it.
 
-| | Skill |
-| --- | --- |
-| The interface does not exist yet; you are deciding it | `freeze-contract` |
-| It exists and works; you are promoting it to a promise | `align-contract` |
-
-Neither lets the implementation decide. `harvest-contract.py` drafts and classifies —
-additive versus breaking, judged by what it would do to a consumer — and refuses to
-write a breaking change until you pass `--accept-breaking`. A contract that
-automatically matched the implementation could never fail a build, which is the whole
-thing `docs/adr/0001` was written to prevent.
-
-## The `/api` prefix is an asserted invariant, not a convention
+## The `/api/` prefix is an asserted invariant, not a convention
 
 `servers[0].url` is `/api`, and every path below it is written as the backend serves it —
 so something at the edge must STRIP the prefix. Locally that is Caddy's
@@ -116,13 +115,12 @@ The frontend answers any unmatched path with the SPA shell and a `200`
 method and status are declared — never a body. So a rule that never matches `/api/*`
 returns `200 text/html` for API calls and any step asserting only a status passes.
 
-Four steps hold it, and most are untagged because these are invariants of *any* origin:
+Three steps hold it, untagged because these are invariants of *any* origin:
 
 | Step | Asserts |
 | --- | --- |
 | `api-prefix-reaches-the-api` | `GET /api/healthz` returns JSON, and NOT the app shell |
 | `api-prefix-is-not-doubled` | `GET /api/api/healthz` is a 404 |
-| `api-prefix-rewrite-strips-exactly-one` | the same, against the deployed origin, owned by infra |
 | `prefix-boundary-is-respected` | `GET /apiary` reaches the app, not the API |
 
 The second is the one that earns its place. Locally the proxy strips one `/api`, the

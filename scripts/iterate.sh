@@ -154,18 +154,22 @@ ASSERTPY
     echo "## Next"
     echo
     if [ "$OUTCOME" = "verified" ]; then
-      echo "The change is deployed and asserted, locally and against"
-      echo "\`$CHANGE_DEPLOY_ENVIRONMENT\`. Review the PRs and merge in dependency order —"
-      echo "merging is a human decision. Then run \`./scripts/lock.sh\` and commit"
-      echo "\`repos.lock\`, and promote the durable smoke steps into \`smoke/baseline.yaml\`."
+      if [ "$REMOTE_RUN" = "1" ]; then
+        echo "The change is deployed and asserted, locally and against"
+        echo "\`$CHANGE_DEPLOY_ENVIRONMENT\`. Review the PRs and merge in dependency order —"
+      else
+        echo "The change is deployed and asserted against the joined local stack, which is"
+        echo "all this change declares. Review the PRs and merge in dependency order —"
+      fi
+      echo "merging is a human decision. Once they are merged, run \`/realign\`."
     elif [ "$OUTCOME" = "verified-local" ]; then
       echo "The change is deployed and asserted **locally only** — no remote environment"
       echo "was touched, so nothing here says it works deployed. Re-run without"
       echo "\`--no-infra\`/\`--plan-only\` before treating this as shippable."
     elif [ "$OUTCOME" = "contract-gap" ]; then
       echo "A slice reported that it cannot be implemented against the frozen contract."
-      echo "Do not patch around it. Open a contract-freeze pass (see the freeze-contract"
-      echo "skill), re-freeze, update \`freeze_sha\` in \`change.yaml\`, and re-run."
+      echo "Do not patch around it. Go back to \`/ship\` phase 2 — re-freeze \`contracts/\`"
+      echo "in a commit of its own, update \`freeze_sha\` in \`change.yaml\`, and re-run."
     elif [ "$OUTCOME" = "blocked" ]; then
       echo "A precondition was unmet, so nothing was dispatched and nothing was deployed."
       echo "There is no deploy evidence to read — fix what the dispatcher named above, in"
@@ -350,7 +354,9 @@ for r in (d.get('contract_gaps') or []):
   banner "attempt $ATTEMPT/$MAX_ATTEMPTS — deploy and smoke"
   VERIFY_ARGS=("$CHANGE" --run-dir "$ATT_DIR")
   [ -n "$NO_BUILD" ] && VERIFY_ARGS+=("$NO_BUILD")
-  [ "$E2E" = "1" ] && VERIFY_ARGS+=(--e2e)
+  # A change whose criteria can only be proved in a browser says so in change.yaml, rather
+  # than depending on whoever ran the loop remembering the flag.
+  if [ "$E2E" = "1" ] || [ "${CHANGE_SMOKE_E2E:-0}" = "1" ]; then VERIFY_ARGS+=(--e2e); fi
   [ "$NO_INFRA" = "1" ] && VERIFY_ARGS+=(--no-infra)
   [ "$PLAN_ONLY" = "1" ] && VERIFY_ARGS+=(--plan-only)
   [ "$ALLOW_DESTROY" = "1" ] && VERIFY_ARGS+=(--allow-destroy)

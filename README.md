@@ -1,8 +1,7 @@
 # agent-app-project
 
-Control repo for a three-tier system developed primarily through AI coding agents.
-It holds the one thing that cannot live inside any single product repo: the interface
-between them.
+Control repo for a three-tier system developed primarily through AI coding agents. It holds
+the one thing that cannot live inside any single product repo: the interface between them.
 
 | Repo | Submodule path | Contents | Deploy cadence |
 | --- | --- | --- | --- |
@@ -19,46 +18,50 @@ git clone --recurse-submodules git@github.com:Paggio/agent-app-project.git
 git submodule update --init --recursive
 ```
 
-## Four lanes
+## Three ways to work, and only two of them are here
 
-**Solo (~80% of work).** Work inside the product repo. Nothing from the sibling repos
-enters context. That repo's CI fails if the work turns out to touch contract surface, which
-is your signal to come back here for a contract pass.
+**One repo.** Around 80% of the work, and it costs nothing: no orchestration, no fan-out,
+no contract pass. That repo's CI fails if the work turns out to touch contract surface,
+which is the signal to come back here.
 
 ```bash
 cd chatbot-backend   # or frontend, infra
 claude
 ```
 
-**Contract pass.** An interface between repos changes, and nothing else does. Sequential,
-single session, one commit containing only `contracts/`. That commit is the freeze point.
-Use the `freeze-contract` skill to decide a new interface, `align-contract` to promote one
-that already works.
-
-**Cross-repo change.** Plan and freeze here, then ship.
+**Anything spanning repos** — including any change to `contracts/` on its own.
 
 ```bash
 claude
-# 1. plan   → ./scripts/new-change.sh <slug>, then the plan-cross-repo-change skill
-# 2. freeze → contracts/ alone; record that commit as freeze_sha in change.yaml
-# 3. ship   → /ship NNNN-<slug>   (./scripts/iterate.sh does the whole loop)
-# 4. merge  → dependency order, then ./scripts/lock.sh && commit repos.lock
+> /ship "authenticate the chat endpoint and point the UI at it"
 ```
 
-Never overlap steps 2 and 3. **Step 3 is what "shipped" means** — the repos deployed
-together with the smoke suite passing. Three independently green PRs is not shipped; see
-`docs/adr/0002`.
+One command, five phases: it writes the change artifact (`changes/NNNN-<slug>/` — brief,
+acceptance criteria as executable smoke steps, one slice file per repo), freezes the
+contract in a commit of its own, gates on `manifest.py --validate`, dispatches a session
+into each product repo and loops deploy-assert-repair until the criteria hold through one
+origin, then opens the pull requests. **That last loop is what "shipped" means** — the repos
+deployed together with the suite passing, not three PRs existing. See `docs/adr/0002`.
 
-**Cross-repo change that must reach AWS.** As above, plus `deploy.infra: true`, an `infra`
-slice, and a target environment. The same suite is then asserted twice: against the local
-stack and against the deployed origin. Load the `deploy-to-aws` skill — and note that each
-repair attempt is a real `terraform apply`, which is why the attempt budget is 1 by
-default. See `docs/adr/0004`.
+Nothing is merged for you. Merging is a human decision, in dependency order.
+
+**After the merge.**
+
+```bash
+> /realign
+```
+
+Bumps the submodules to their merged `main`, pins the triple in `repos.lock`, re-checks
+`contracts/` against what the services actually serve, re-runs the baseline suite, and
+promotes the assertions worth keeping forever into `smoke/baseline.yaml`. This is also the
+lane a single-repo deploy needs on its own — it is the only check that can fail on the seam.
 
 ## Where things live
 
-- `concept.md` — the reasoning behind this layout.
-- `docs/init/` — the executable playbook: how to re-create all four repos from zero.
-- `docs/adr/` — decisions and their accepted costs.
+- `concept.md` — the reasoning behind this layout, and the parts of it that are load-bearing.
+- `docs/adr/` — decisions and their accepted costs. Read before proposing a redesign.
+- `docs/infra-interface.md` — what this repo requires of `infra/`.
+- `docs/init/` — how all four repos were created from zero.
 - `CLAUDE.md` — additive agent context. Never load-bearing; every product repo is
   self-describing in isolation.
+- `make help` — the hand tools for running and inspecting the joined system.

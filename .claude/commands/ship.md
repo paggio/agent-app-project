@@ -1,86 +1,128 @@
 ---
-description: Fan out a planned change to the product repos, deploy it, smoke it, and report.
-argument-hint: <change-dir-name, e.g. 0042-csv-export>
+description: Take a cross-repo change from an idea to open pull requests — plan, freeze the contract, dispatch the slices, iterate to green, smoke, open the PRs.
+argument-hint: <what you want, in your own words — or an existing NNNN-slug>
 ---
 
-Ship the change `$1`.
+Ship `$1`.
 
-Shipping means the slices are implemented, deployed together, and asserted against — not
-that three PRs exist. `./scripts/iterate.sh` does the whole loop and is the only thing you
-need to run; everything below is about checking it is safe to start and reading what comes
-back.
+This is the whole cross-repo lane. Five phases, in order, in this one invocation. Nothing
+here is optional and nothing here is done by hand twice: each phase ends at a gate that
+either passes or names what to fix.
 
-## Preconditions
+Shipping does not mean pull requests exist. It means the repos were deployed together and
+the acceptance criteria held through the origin a browser would use. See `docs/adr/0002`.
 
-Run `./scripts/manifest.py changes/$1 --validate`. It exits 0, or it exits 2 and names what
-to fix. It checks `change.yaml`, the freeze SHA and its reachability, that `contracts/` is
-clean, that `BRIEF.md` has been filled in, and `smoke.yaml` — including that every step has
-an `owner` and that **every slice has at least one step it is answerable for**. Fix what it
-names; do not proceed, and do not work around it.
+If `$1` is already a directory under `changes/`, start at the phase it has reached.
 
-Nothing else is checked by hand. Docker is checked by `verify.sh` preflight. One thing the
-validator cannot judge: whether the acceptance criteria in `BRIEF.md` are *good*. Read them.
+## 1 — Plan
 
-**If this change deploys to AWS** (`deploy.infra: true`), also confirm:
+`./scripts/new-change.sh <slug>` scaffolds `changes/NNNN-<slug>/`. Then, before writing:
+read `docs/adr/` and the sibling repos' `docs/architecture.md`. Do not fill a gap with an
+assumption — an unstated assumption becomes three divergent implementations.
 
-- `deploy.environment` names an environment, and it is one you meant.
-- Deploy credentials are present in this session. The control repo is normally the least
-  privileged session in the system; this is the one lane where it is not — see
-  `docs/adr/0004`.
-- `make -C infra -n plan deploy outputs` all succeed. The loop refuses to dispatch
-  otherwise, loudly, rather than skipping the deploy.
-- The attempt budget is **1** by default here, because each attempt is a real
-  `terraform apply`. Raise it only deliberately.
+Produce four things:
 
-## Steps
+- **`BRIEF.md`** — why, the acceptance criteria, what is explicitly out of scope. The
+  criteria are the oracle: write them as statements that can fail. A criterion that cannot
+  fail is not one. State the out-of-scope items with their reason, so the next reader knows
+  it was a decision.
+- **`smoke.yaml`** — those same criteria, executable. Write them **now**, while planning,
+  for two reasons: they are dispatched to the implementing agents, so each one knows what
+  it will be judged on before it starts; and a criterion nobody can express as a step was
+  usually never checkable. Every step needs an `owner` — the repo answerable for it. That
+  field is what routes a failure back to one agent with the request, the response and the
+  container log attached. Guess it and a failing backend sends a frontend agent chasing
+  something it cannot fix.
+- **one slice file per repo touched** — `<submodule-path>.md`. Each is read by an agent
+  working alone inside that repo, which cannot see this one. State what changes, which
+  contract entries it depends on, and how it is verified. Say nothing about another repo's
+  internals. Delete the slices that do not apply and prune `slices:` to match.
+- **`change.yaml`** — slices, deploy flags, the smoke file and base. Set `smoke.e2e: true`
+  when a criterion can only be proved in a browser.
 
-1. Run `./scripts/iterate.sh $1`.
+## 2 — Freeze the contract
 
-   It dispatches every slice in parallel, brings all the repos up as one stack, runs the
-   smoke suite through the single origin, and — when the change deploys — publishes the
-   images, plans, applies, and re-runs the same suite against the deployed origin. On
-   failure it sends the failing assertion plus that service's container logs back to the
-   repo named in the step's `owner`.
+If no interface between repos moves, skip to phase 3.
 
-   `--max-attempts N` for more passes, `--no-repair` for one pass and a report,
-   `--verify-only` to skip dispatch, `--no-infra` to stay local, `--plan-only` to see what
-   an apply would do without doing it.
+Edit `contracts/` — additive wherever possible, because the repos deploy independently and
+production will run mismatched versions. Then **commit `contracts/` alone**, with nothing
+else in the diff, and record that commit as `freeze_sha` in `change.yaml`. That commit is
+the freeze point; `fanout.sh` extracts `contracts/` at exactly that SHA and gives the
+slices nothing else, so the freeze is a tree rather than a promise.
 
-2. Read `changes/$1/runs/<ts>/report.md` and report to the human:
-   - the outcome, and the assertion count beside it. A report cannot say `verified` above
-     an empty count, so if the count looks thin, say so.
-   - per repo: branch, PR link, and the status the session ended with (in
-     `attempt-*/fanout.json` — `pr` and `status` are fields, not prose to be parsed)
-   - the smoke result: which assertions passed, and which failed with what. When the change
-     deployed, say which pass each failure came from — local or remote.
+`contracts/README.md` § "Changing a contract" is the normative version, including the case
+where the shape already exists and you are promoting it with `harvest-contract.py`.
 
-3. Route on the outcome:
+Do not implement anything in this phase. The ordering — freeze, then dispatch — is what
+this whole structure is for, and phase 3 is the gate that enforces it.
 
-   - **`verified`** — deployed and asserted, locally and remotely if it deploys. Nothing to
-     fix.
-   - **`verified-local`** — passed locally, and **no remote environment was touched**
-     (`--no-infra` or `--plan-only`). Do not present this as shippable for a change that is
-     supposed to deploy.
-   - **`contract-gap`** — do NOT patch around it. A slice reported it cannot be built
-     against the frozen contract, and named the gap. Surface it as a new contract-freeze
-     pass (see the `freeze-contract` skill), re-freeze, update `freeze_sha`, re-run.
-   - **`failed`** — read the briefs at `runs/<ts>/attempt-*/failure-*.md`; that is exactly
-     what the agents were given. Decide whether the implementation is wrong (re-run with
-     more attempts) or the assertion is wrong (fix it here, in the control repo — never in a
-     product repo).
-   - **`blocked`** — a precondition was unmet, so nothing was dispatched and nothing was
-     deployed. There is no deploy evidence to read. Fix what the dispatcher named.
-   - **`unattributable`** — the failure could not be pinned on a slice. Check
-     `verify.json`'s `fault` field: `harness` means it is this repo's bug and there is
-     nothing for a product-repo agent to do.
+## 3 — Gate
 
-4. Do not merge anything. Merging is a human decision, in dependency order.
+```
+./scripts/manifest.py changes/<change> --validate
+```
 
-## After a human merges
+Exit 0, or exit 2 naming what to fix. It checks the slices against their files in both
+directions, that `freeze_sha` is a real commit and an ancestor of HEAD, that `contracts/`
+is clean, that `BRIEF.md` and `STATUS.md` carry no template placeholders, and that every
+smoke step has an `owner` **and every slice has at least one step it is answerable for**.
 
-- `./scripts/lock.sh` and commit `repos.lock`.
-- Promote the smoke steps worth keeping forever from `changes/$1/smoke.yaml` into
-  `smoke/baseline.yaml`, so the next change cannot silently break this one. Carry their
-  tags across — a step tagged `local` is tagged that way for a reason.
+Fix what it names. Do not work around it. The one thing it cannot judge is whether the
+acceptance criteria are any good — read them yourself.
+
+## 4 — Iterate to green
+
+```
+./scripts/iterate.sh <change>
+```
+
+One command, and the only one you need. It dispatches a `claude -p` per slice, each with
+its working directory inside the real product repo so that repo's own `CLAUDE.md`, settings,
+skills, hooks and gates apply; brings every repo up as one stack on one network; runs the
+baseline suite and the change's suite through the single origin; and on failure sends the
+failing assertion plus that service's container log back to the repo named in the step's
+`owner`. Bounded, then it stops.
+
+`--max-attempts N` · `--no-repair` for one pass and a report · `--verify-only` to skip
+dispatch and just assert what is checked out · `--keep-up` to leave the stack running.
+
+**If the change deploys** (`deploy.infra: true`): read `docs/infra-interface.md` first.
+The environment must be named in `change.yaml` and must be one you meant; `prod` is not in
+the allowlist and adding it is a reviewed commit here. The same suite is asserted twice,
+local then deployed, from one file — `local` and `remote` are the only tags and untagged
+runs in both. The attempt budget is 1, because an attempt is a real `terraform apply`.
+`--plan-only` shows what an apply would do; `--no-infra` stays local and can only ever
+report `verified-local`.
+
+## 5 — Pull requests, and the report
+
+`iterate.sh` runs `./scripts/prs.sh --create <change>` itself on a green outcome, so the
+PR URLs in `runs/<ts>/prs.json` are checked facts rather than an agent's claim. It is
+idempotent — a slice that already opened its own PR keeps it.
+
+Then read `changes/<change>/runs/<ts>/report.md` and report:
+
+- the outcome **and the assertion count beside it**. A report cannot say `verified` above
+  an empty count; if the count looks thin, say so.
+- per repo: branch, PR link, and the status the session ended with — `pr` and `status` are
+  fields in `attempt-*/fanout.json`, not prose to be parsed.
+- which assertions failed, with what. When the change deployed, say which pass each
+  failure came from.
+
+Route on the outcome:
+
+| Outcome | What it means, and what to do |
+| --- | --- |
+| `verified` | Deployed and asserted, locally and remotely. Nothing to fix. |
+| `verified-local` | Passed locally; **no remote environment was touched**. Not shippable for a change that is supposed to deploy. |
+| `contract-gap` | A slice reported it cannot be built against the frozen contract, and named the gap. Do NOT patch around it: go back to phase 2, re-freeze, update `freeze_sha`, re-run. |
+| `failed` | Read `runs/<ts>/attempt-*/failure-*.md` — that is exactly what the agents were given. Decide whether the implementation is wrong (re-run with more attempts) or the assertion is wrong (fix it here, never in a product repo). |
+| `blocked` | A precondition was unmet, so nothing was dispatched and nothing deployed. There is no deploy evidence to read. Fix what the dispatcher named. |
+| `unattributable` | The failure could not be pinned on a slice. Check `verify.json`'s `fault`: `harness` means it is this repo's bug. |
+
+**Do not merge anything.** Merging is a human decision, in dependency order — the repo
+whose change is backward compatible on its own goes first. Record that order in `STATUS.md`.
+
+Once a human has merged, the next step is `/realign`.
 
 ARGUMENTS: $1

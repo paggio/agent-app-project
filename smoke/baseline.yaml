@@ -1,11 +1,9 @@
 # Cross-repo regression suite. Runs before every change's own smoke file.
 #
-# Steps land here by promotion: when a change merges, the assertions from its
-# changes/NNNN-*/smoke.yaml that are worth keeping forever move into this file. That is
-# how the loop stops re-breaking what an earlier change fixed.
-#
-# Keep it fast and keep it about the SEAM. Anything provable inside one repo belongs in
-# that repo's own test suite, not here.
+# Steps land here by promotion, during /realign: the assertions from a merged change that
+# are worth keeping forever move here, so the loop stops re-breaking what an earlier change
+# fixed. Keep it fast and keep it about the SEAM — anything provable inside one repo belongs
+# in that repo's own suite.
 
 steps:
   # Not API surface: contracts/openapi.yaml promises the API, not the app shell, so
@@ -25,9 +23,9 @@ steps:
     expect:
       status: 200
 
-  # The assertion this whole harness exists for. Before stack/compose.yml joined the two
-  # compose projects onto one network, this returned 502 — the proxy could not resolve
-  # `backend`. It is the single check that proves the two repos are actually wired.
+  # The assertion this harness exists for: before stack/compose.yml joined the two compose
+  # projects onto one network this returned 502, because the proxy could not resolve
+  # `backend`. The single check that proves the two repos are actually wired.
   - name: origin-reaches-backend
     owner: chatbot-backend
     GET: /api/healthz
@@ -39,13 +37,10 @@ steps:
   - name: backend-direct-health
     owner: chatbot-backend
     GET: /healthz
-    # Answered by the backend container directly, bypassing the proxy. When
-    # origin-reaches-backend fails but this passes, the fault is the proxy wiring, not
-    # the backend — which is the difference between a frontend slice and a backend slice.
+    # Bypasses the proxy. When origin-reaches-backend fails but this passes, the fault is
+    # the proxy wiring rather than the backend. Local-only: a container port has no remote
+    # analogue, and a directly reachable backend in a deployed environment is a finding.
     base: ${BACKEND_DIRECT_BASE}
-    # The only local-only step in the baseline. A container port has no remote analogue,
-    # and a directly reachable backend in a deployed environment is a finding, not a
-    # fixture. That the rest of this file is origin-portable is a good sign.
     tags: [local]
     expect:
       status: 200
