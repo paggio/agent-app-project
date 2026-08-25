@@ -39,9 +39,18 @@ done
 command -v gh >/dev/null 2>&1 || { echo "prs: gh is not installed" >&2; exit 2; }
 
 if [ "$MODE" = "list" ]; then
-  for r in $REPOS; do
-    echo "── $r"
-    (cd "$r" && gh pr list --limit 10 2>/dev/null) || echo "  (no remote access)"
+  # The control repo is listed alongside the products because a change has a half here too
+  # — the freeze, the plan, the smoke criteria — and omitting it is how change 0002's half
+  # sat merged into a dead-end branch for four days while this command reported nothing to
+  # do. BASE is printed for the same reason: the failure was not a missing merge but a
+  # merge into the wrong base, which is invisible in a list of titles.
+  for r in . $REPOS; do
+    [ "$r" = "." ] && echo "── agent-app-project (this repo)" || echo "── $r"
+    out="$(cd "$r" && gh pr list --limit 10 \
+             --json number,title,headRefName,baseRefName \
+             --template '{{range .}}  #{{.number}}  {{.headRefName}} -> {{.baseRefName}}{{if ne .baseRefName "main"}}  <- NOT main{{end}}  {{.title}}{{"\n"}}{{end}}' \
+           2>/dev/null)" || { echo "  (no remote access)"; continue; }
+    [ -n "$out" ] && printf '%s\n' "$out" || echo "  (none open)"
   done
   exit 0
 fi
