@@ -108,8 +108,11 @@ iterate: ## What /ship phase 4 runs, by hand: make iterate CHANGE=0001-auth
 	@test -n "$(CHANGE)" || { echo "usage: make iterate CHANGE=<change-dir>"; exit 2; }
 	@./scripts/iterate.sh $(CHANGE)
 
+# Sourced for the same reason `smoke` sources it: tests/e2e/real-backend.spec.ts skips
+# itself when SIGNUP_CODE or SMOKE_PASSWORD is unset, and that skip is silent. Without this
+# the only oracle for "the UI calls the real endpoint" reports green by not running.
 e2e: ## Run the frontend's Playwright suite against the joined origin
-	@cd frontend && PLAYWRIGHT_BASE_URL=$(BASE) npx playwright test
+	@. ./scripts/dev-env.sh && cd frontend && PLAYWRIGHT_BASE_URL=$(BASE) npx playwright test
 
 # ── across the repos ─────────────────────────────────────────────────────────────────
 # Read-only, and they stay that way: implementation happens in a session started inside
