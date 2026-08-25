@@ -71,12 +71,92 @@ This leaves one invariant that every repo must uphold and no schema can express:
 
 **Two error shapes, one rule.** `422` keeps the framework's `{"detail": [...]}` shape,
 already frozen for `/v1/chat`; the `{"error": {"code", "message"}}` envelope covers `401`,
-`403`, `409` and `429`. The rule that decides which: **422 means the request was malformed
+`403`, `404`, `409` and `429`. The rule that decides which: **422 means the request was malformed
 or violated a stated policy, the envelope means the request was well-formed and refused.**
 Password-policy failures are therefore `422`, because the policy is stated — they are
 enforced as validation, not as a semantic refusal. Consumers must tolerate an unknown
 `error.code` by falling back to `message`; codes are added additively and exhaustive
 switching on them will break.
+
+## Chats, ownership and titles
+
+Promised here rather than in `openapi.yaml` for the same reason the session is: these are
+rules about *which* answer is correct and *why*, and a re-harvest would drop every word of
+it.
+
+**A chat belongs to exactly one account, and everyone else gets `404`.** Not `403`. The
+status is load-bearing: `403 THREAD_FORBIDDEN` would confirm the chat exists, which turns
+every chat endpoint into an oracle for other people's chat ids — and chat ids appear in URLs
+people paste. So four situations return one indistinguishable answer, `404
+THREAD_NOT_FOUND`:
+
+| The caller asks for | Answer |
+| --- | --- |
+| a chat id that was never issued | `404 THREAD_NOT_FOUND` |
+| a chat that was deleted | `404 THREAD_NOT_FOUND` |
+| a chat owned by another account | `404 THREAD_NOT_FOUND` |
+| a malformed chat id | `404 THREAD_NOT_FOUND` |
+
+This is the same reasoning that already makes an unknown email and a wrong password return
+a byte-identical `401`, and it has the same corollary: a client must not try to tell these
+apart, and must not render "you do not have permission" — it does not know that.
+
+> **The refusal must not be a delete that reports itself missing.** An implementation that
+> deletes the row and *then* answers `404` satisfies every negative assertion — the other
+> account is refused, exactly as promised. The only thing that catches it is the owner
+> reading the chat back afterwards, which is why the smoke suites carry that step
+> immediately after the refusals rather than treating the three `404`s as sufficient.
+
+**Scoped in the query, not filtered after it.** Every statement that reads or mutates a chat
+is scoped by the account in the same clause that finds it. Stated here because it is the
+difference between an endpoint that cannot leak and one that does not happen to today: a
+detail endpoint can guard correctly while the *list* endpoint returns everybody's chats, and
+no assertion about the detail endpoint would notice.
+
+**Titles are derived once, then owned by the caller.** A chat needs a name before anyone has
+chosen one, so the server derives one from the first user message — server-side, so a client
+never invents a title and two clients cannot derive different ones. *How* it derives one is
+not promised and may change. What is promised:
+
+- `title` is always present and never empty, from the first reply onwards.
+- Derivation happens **once**. Once a caller has set a title with `PATCH`, later messages
+  never re-derive it. A rename that a conversation silently undoes is worse than no rename.
+- Clearing a title is not possible. `RenameThreadRequest.title` is required and not nullable,
+  because a chat with no title is not something a client can render.
+
+**Delete is a hard delete.** The chat and its messages are gone: no archive, no trash, no
+undo, and no `deleted_at`. A client must not present an interface that implies otherwise.
+Deleting an already-deleted chat is the same `404` a stranger gets, not a forgiving `204` —
+a `204` for a chat the caller cannot see would leak which ids once existed.
+
+**What history promises, and what it does not.** `POST /v1/threads/{id}/messages` supplies
+the earlier turns of that chat to the model, so a follow-up question works. `POST /v1/chat`
+does not and never will — it stays stateless, and that is why it survives rather than being
+replaced.
+
+The window is **bounded and its size is not promised.** Turns that fall outside it are not
+sent, and they are not summarised or compacted either — they are simply absent from what the
+model sees, while remaining in the transcript a person reads. Two consequences worth stating
+because a client will otherwise imply otherwise to a user:
+
+- The assistant can be asked a follow-up. It cannot be relied on to recall the start of a
+  long chat, and a UI must not claim it can.
+- **The stored transcript is the single source of history.** There is no second record — no
+  checkpointer holding a parallel view of the same conversation. Two records of one
+  conversation is a divergence with no tie-breaker, and the transcript is the one a person
+  reads back.
+
+**Sending is rate limited per account**, `429 AUTH_RATE_LIMITED` with `Retry-After`. It is
+declared on the message endpoint and not on `/v1/chat` for a specific reason: a turn that
+carries history costs more than one message's worth of tokens, so the endpoint that made
+replies affordable to an authenticated caller is the one that needs a bound. The buckets are
+per-process, so above one replica the effective limit multiplies — the same caveat the
+credential endpoints already carry, and the same trigger to revisit: a shared store.
+
+**No `GET` mutates a chat.** Reading one, or listing them, does not touch `updated_at` and
+does not extend anything. This is not a new rule — it is the invariant the whole CSRF posture
+above rests on, restated here because `updated_at` is exactly the field somebody will be
+tempted to bump on read.
 
 ## Changing a contract
 
