@@ -9,7 +9,7 @@ change: 0004-rag-knowledge-base
 # Filled in phase 2, by the commit that adds the five /v1/documents paths, the Document and
 # Citation schemas, the two additive fields on Message, and the knowledge-base section of
 # contracts/README.md — with nothing else in its diff.
-freeze_sha: ""
+freeze_sha: "44e38bc6c2f773e081c7131c4b8adaf1964bde9c"
 
 # Which repos get a slice. Each needs a matching <name>.md here. Use the SUBMODULE PATH:
 # chatbot-backend, not backend.

@@ -3,8 +3,8 @@
 
 ## Contract freeze
 
-- SHA: `<filled by phase 2>`
-- Frozen: <YYYY-MM-DD>
+- SHA: `44e38bc6c2f773e081c7131c4b8adaf1964bde9c`
+- Frozen: 2026-08-26
 
 ## Pull requests
 
