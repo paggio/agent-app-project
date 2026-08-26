@@ -466,6 +466,13 @@ def check_commands() -> None:
                 # path segment is a path; a slash command never appears as `/ship/`.
                 if f"/{named}/" in text:
                     continue
+                # The same argument for a segment at the END of a path, which has no
+                # trailing slash: `/content` in prose about
+                # `GET /v1/documents/{document_id}/content` was reported as a missing
+                # command, and correct prose was reworded to satisfy the check. A slash
+                # command is never preceded by another path segment.
+                if re.search(r"[\w}\]\-]/" + re.escape(named) + r"\b", text):
+                    continue
                 fail("commands",
                      f"{rel(path)}:{n} names /{named}, which does not exist in "
                      f".claude/commands/. Either add it or stop pointing at it.")

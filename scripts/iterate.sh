@@ -23,6 +23,10 @@
 #     --no-build        reuse existing images
 #     --no-infra        ignore deploy.infra; local deploy and local assertions only.
 #                       The outcome is then `verified-local`, never `verified`.
+#
+# `verified` requires an ASSERTED REMOTE ENVIRONMENT (docs/adr/0004). A change with
+# `deploy.infra: false` has none, so its best outcome is `verified-local` — a full pass, and
+# the honest name for one that proves nothing about a deployment.
 #     --plan-only       plan the infra change, never apply it
 #     --allow-destroy   let the infra plan destroy or replace a resource
 #
@@ -172,18 +176,20 @@ ASSERTPY
     echo "## Next"
     echo
     if [ "$OUTCOME" = "verified" ]; then
-      if [ "$REMOTE_RUN" = "1" ]; then
-        echo "The change is deployed and asserted, locally and against"
-        echo "\`$CHANGE_DEPLOY_ENVIRONMENT\`. Review the PRs and merge in dependency order —"
-      else
-        echo "The change is deployed and asserted against the joined local stack, which is"
-        echo "all this change declares. Review the PRs and merge in dependency order —"
-      fi
+      echo "The change is deployed and asserted, locally and against"
+      echo "\`$CHANGE_DEPLOY_ENVIRONMENT\`. Review the PRs and merge in dependency order —"
       echo "merging is a human decision. Once they are merged, run \`/realign\`."
     elif [ "$OUTCOME" = "verified-local" ]; then
       echo "The change is deployed and asserted **locally only** — no remote environment"
-      echo "was touched, so nothing here says it works deployed. Re-run without"
-      echo "\`--no-infra\`/\`--plan-only\` before treating this as shippable."
+      echo "was touched, so nothing here says it works deployed."
+      if [ "$CHANGE_DEPLOY_INFRA" = "1" ]; then
+        echo "Re-run without \`--no-infra\`/\`--plan-only\` before treating this as shippable."
+      else
+        echo "That is all this change declares (\`deploy.infra: false\`), so it is the best"
+        echo "outcome available to it rather than a step that was skipped. Review the PRs and"
+        echo "merge in dependency order — merging is a human decision. Once they are merged,"
+        echo "run \`/realign\`."
+      fi
     elif [ "$OUTCOME" = "contract-gap" ]; then
       echo "A slice reported that it cannot be implemented against the frozen contract."
       echo "Do not patch around it. Go back to \`/ship\` phase 2 — re-freeze \`contracts/\`"
@@ -418,7 +424,13 @@ try:
 except Exception:
     print('0')
 " 2>/dev/null || echo 0)"
-      if [ "$CHANGE_DEPLOY_INFRA" = "1" ] && [ "$REMOTE_ASSERTED" != "1" ]; then
+      # `verified` is the strongest word this harness owns, and docs/adr/0004 defines it as
+      # "deployed together to a real environment and the acceptance criteria held". The
+      # condition used to also require CHANGE_DEPLOY_INFRA=1, so a change that declares no
+      # deploy target could never reach `verified-local` and was handed `verified` for a run
+      # with `remote_asserted: false` — the label claiming what its own evidence denied.
+      # One fact decides it: was a remote environment asserted.
+      if [ "$REMOTE_ASSERTED" != "1" ]; then
         OUTCOME="verified-local"
         record "**Attempt $ATTEMPT — verify:** PASS locally. No remote environment was"
         record "touched, so this does not say the change works deployed."
@@ -426,7 +438,7 @@ except Exception:
         OUTCOME="verified"
         record "**Attempt $ATTEMPT — verify:** PASS. The joined stack came up and every"
         record "assertion held through \`$CHANGE_SMOKE_BASE\`."
-        [ "$REMOTE_ASSERTED" = "1" ] && record "The same suite also held against \`$CHANGE_DEPLOY_ENVIRONMENT\`."
+        record "The same suite also held against \`$CHANGE_DEPLOY_ENVIRONMENT\`."
       fi
       finish
     fi
@@ -531,6 +543,24 @@ except Exception:
     if [ "$BRIEF_RC" = "3" ]; then
       record "no evidence was captured for $r; not re-dispatching it blind"
       say "warning — no evidence for $r; dropping it from this repair pass"
+      # A killed session writes its log at exit, so the artifact meant to explain the
+      # failure is empty and this branch reads as "the slice produced nothing". Once it did
+      # not: the agent had committed four commits and a clean tree before the watchdog fired.
+      # fanout.sh records what is on the branch; this is the one place a reader looks.
+      LEFT="$(python3 -c "
+import json
+try:
+    d = json.load(open('$ATT_DIR/fanout.json'))['repos']['$r']
+    lb = d.get('left_on_branch') or {}
+    if lb.get('commits'):
+        print('but its branch \`' + (d.get('branch') or '?') + '\` carries '
+              + str(lb['commits']) + ' commit(s) and ' + str(lb.get('uncommitted'))
+              + ' uncommitted file(s) — read \`git -C $r log --oneline\` before'
+              ' concluding it did nothing')
+except Exception:
+    pass
+" 2>/dev/null || true)"
+      [ -n "$LEFT" ] && record "$LEFT"
       continue
     elif [ "$BRIEF_RC" != "0" ]; then
       OUTCOME="unattributable"
