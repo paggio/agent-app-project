@@ -1,0 +1,448 @@
+# 0004 — a knowledge base the assistant consults, and answers that say what they used:
+# the criteria as steps.
+#
+# Run against the joined stack at one origin, which is the only place the session cookie
+# crosses the proxy. A failure routes back to the repo named in `owner`.
+#
+# VARIABLES — supplied by the ship process, not by you. verify.sh sources scripts/dev-env.sh
+# before smoking, which fills anything unset from stack/dev.env and then from
+# chatbot-backend/.env:
+#   SIGNUP_CODE     the SAME variable stack/compose.yml passes to the backend.
+#   SMOKE_PASSWORD  12+ characters, not on the common-password list.
+#   SMOKE_RUN_ID    the run nonce, in every identity these steps create.
+#
+# ONE COUPLING WORTH KNOWING ABOUT. `an-oversize-document-is-refused` depends on
+# DOCUMENT_MAX_BYTES being 2000 in stack/dev.env — a production-shaped cap would need a
+# megabyte of prose in this file, which nobody would read, and an unreadable suite stops
+# being usable as acceptance criteria. The cap is configuration, not behaviour, so
+# configuring the stack for the suite is the same move SIGNUP_CODE already makes. Every
+# document below is therefore deliberately under 2000 bytes.
+#
+# ORDER IS LOAD-BEARING, in four ways. Cookies persist across steps within a run, so:
+#
+#   1. the two anonymous refusals come FIRST, before any login puts a cookie in the jar.
+#      After a login they would assert nothing.
+#   2. the two POLICY refusals come before the good upload, so a backend that accepts
+#      anything is caught before the index has anything in it to hide behind.
+#   3. the OWNER's steps come before the stranger signs in; from that point the jar holds
+#      the stranger and the owner has to be re-addressed by hand.
+#   4. `logout-the-stranger` sits between the stranger's failed attempts and the owner's
+#      replayed cookie. Without it the jar would still hold the stranger and every "it
+#      survived" step would send TWO identities at one request — and whichever answered
+#      would decide whether a correct backend passed.
+#
+# THE STEP THAT CARRIES CRITERION 2 is `the-document-survived-the-strangers-attempts`. The
+# four 404s above it are all satisfied by a backend that deletes the document and THEN
+# reports it missing. Only a subsequent successful read by the owner tells a real ownership
+# check apart from a destructive one. Same trap 0003 documented for chats.
+#
+# THE STEP THAT CARRIES CRITERION 7 is `the-citation-survived-the-delete`, and it is the
+# only one that can. Every other citation assertion runs while the document still exists,
+# so a citation that joins to a live row would pass all of them and produce a hole in the
+# transcript the moment anybody tidied up their knowledge base.
+
+steps:
+  # --------------------------------------------------- the gate, before any session
+  # FIRST, deliberately. The jar is empty only until `register-kb-owner` below.
+
+  - name: creating-a-document-requires-a-session
+    owner: chatbot-backend
+    POST: /api/v1/documents
+    body:
+      filename: anonymous.md
+      content_type: text/markdown
+      content: "Nobody should be able to put this anywhere."
+    expect:
+      status: 401
+      json:
+        error:
+          code: AUTH_REQUIRED
+      # A refusal must not have stored anything. If the handler authenticates after the
+      # insert, the row and the object are already there and only this line notices.
+      body_excludes: '"id"'
+
+  - name: listing-documents-requires-a-session
+    owner: chatbot-backend
+    GET: /api/v1/documents
+    # The read path, gated separately. A GET carries no body to validate and fires no
+    # cross-origin guard, so nothing else would catch a list endpoint that answers 200 with
+    # an empty array to a stranger — which looks like a working empty state, not a hole.
+    expect:
+      status: 401
+      json:
+        error:
+          code: AUTH_REQUIRED
+      body_excludes: '"documents"'
+
+  # ------------------------------------------------------------- the owner's session
+
+  - name: register-kb-owner
+    owner: chatbot-backend
+    POST: /api/v1/auth/register
+    body:
+      email: smoke-0004-owner-${SMOKE_RUN_ID}@kb.test
+      password: ${SMOKE_PASSWORD}
+      signup_code: ${SIGNUP_CODE}
+      display_name: KB Owner
+    expect:
+      status: 201
+      cookie: session
+    capture:
+      # Kept because the jar is handed to the STRANGER further down and then emptied. The
+      # owner's later steps replay this value by hand; http.cookiejar leaves an explicit
+      # Cookie header alone, so the replay is what reaches the backend.
+      owner_session: cookie:session
+
+  # ------------------------------------------------- policy, before anything is indexed
+
+  - name: an-unsupported-content-type-is-refused
+    owner: chatbot-backend
+    POST: /api/v1/documents
+    body:
+      filename: balance.csv
+      content_type: text/csv
+      content: "quarter,revenue\nQ3,41\n"
+    # 422, not the error envelope: the accepted set is stated policy, and stated policy is
+    # validation. Same rule that puts the password policy in 422. See contracts/README.md.
+    expect:
+      status: 422
+      body_excludes: '"document"'
+
+  - name: an-oversize-document-is-refused
+    owner: chatbot-backend
+    POST: /api/v1/documents
+    body:
+      filename: too-long.md
+      content_type: text/markdown
+      content: |
+        The refusal has to happen before any work does, which is the whole point of this
+        step. Chunking, embedding and indexing all cost something, and a backend that
+        does them first and checks the size afterwards has already spent the money by the
+        time it answers. Nothing downstream can tell the two apart from the status alone,
+        so the assertion below also insists that no document came back.
+        This passage exists only to exceed DOCUMENT_MAX_BYTES, which stack/dev.env pins at
+        2000 for the joined stack. It is prose rather than repeated filler because a
+        reviewer should be able to read every line of a suite that is meant to be read as
+        acceptance criteria, and a wall of the same character defeats that. It is also why
+        the cap is small: a production-shaped cap would need a megabyte here.
+        The size is checked against the decoded UTF-8 content, not against the JSON
+        envelope, because the envelope carries a filename and a content type whose length
+        the caller does not control in any meaningful way and which would make the
+        effective limit depend on how long somebody named their file.
+        A caller that sends this gets a 422 with a message naming the limit, and the
+        knowledge base is exactly as it was before the request arrived. That last part is
+        what the body_excludes line below is for: a 422 that nonetheless indexed the
+        content would satisfy the status assertion perfectly well.
+    expect:
+      status: 422
+      body_excludes: '"document"'
+
+  # --------------------------------------------------------------- ingest, and the record
+
+  - name: upload-the-charter
+    owner: chatbot-backend
+    POST: /api/v1/documents
+    body:
+      filename: quillhaven-charter.md
+      content_type: text/markdown
+      content: |
+        # The Quillhaven Charter
+
+        Quillhaven is a research settlement on the northern shelf. Its charter fixes three
+        things and deliberately leaves everything else to the standing council.
+
+        ## Quorum
+
+        The council reaches quorum at seven members. Below seven it may adjourn and it may
+        record minutes, and it may do nothing else. A vote taken below quorum is void even
+        if every member present agrees, which has happened twice.
+
+        ## The winter recess
+
+        Between the first frost and the thaw the council does not sit. Urgent matters go to
+        the harbourmaster, whose decisions stand until the council next reaches quorum and
+        either affirms or reverses them.
+
+        ## Amendment
+
+        The charter is amended by two consecutive votes at quorum, taken in different
+        sittings, with the text unchanged between them. A single vote amends nothing.
+    expect:
+      status: 201
+      json:
+        document:
+          filename: quillhaven-charter.md
+          content_type: text/markdown
+          status: ready
+      # Two properties containment cannot express. A document that indexed nothing is a
+      # document the retriever can never return, and it would satisfy `status: ready`
+      # perfectly happily; a summary is what the router is given, so an empty one is a
+      # router deciding on a filename.
+      body_matches: '"chunk_count":\s*[1-9]'
+    capture:
+      document_id: document.id
+    retry:
+      # Ingest embeds every chunk. The first upload after a cold start also loads the
+      # embedding model into the process.
+      attempts: 3
+      delay: 3
+
+  - name: the-document-has-a-summary-for-the-router
+    owner: chatbot-backend
+    GET: /api/v1/documents/${document_id}
+    # Separated from the upload rather than folded into it: this is the field the routing
+    # node reads, and reading it back proves it was persisted rather than computed once and
+    # dropped. A summary that only exists in the 201 body routes nothing on the next turn.
+    expect:
+      status: 200
+      json:
+        document:
+          id: ${document_id}
+          status: ready
+      body_matches: '"summary":\s*"[^"]+"'
+
+  - name: the-document-is-listed
+    owner: chatbot-backend
+    GET: /api/v1/documents
+    expect:
+      status: 200
+      body_matches: quillhaven-charter\.md
+
+  - name: the-original-is-served-back
+    owner: chatbot-backend
+    GET: /api/v1/documents/${document_id}/content
+    # The index is DERIVED data and object storage is the record. Nothing else in this
+    # suite reads the stored object, so without this step a write-only storage path — or
+    # one that stores the chunks and calls that the original — passes everything.
+    expect:
+      status: 200
+      headers:
+        content-type: text/markdown
+      body_matches: The council reaches quorum at seven members\.
+
+  # ----------------------------------------------------------------- the graph, both ways
+
+  - name: start-a-chat
+    owner: chatbot-backend
+    POST: /api/v1/threads
+    body: {}
+    expect:
+      status: 201
+    capture:
+      thread_id: thread.id
+
+  - name: asking-about-the-charter-consults-the-knowledge-base
+    owner: chatbot-backend
+    POST: /api/v1/threads/${thread_id}/messages
+    body:
+      message: "What does the Quillhaven charter say about quorum?"
+    # Criterion 4. Three separate claims in one response, and each is a different failure:
+    # the router chose to consult (retrieval_consulted), the retriever returned something
+    # from the right document (citations[0].filename), and the citation carries the marker
+    # the answer text refers to. messages[1] is the assistant turn — [0] is the user's.
+    expect:
+      status: 200
+      json:
+        messages:
+          - role: user
+          - role: assistant
+            retrieval_consulted: true
+            citations:
+              - marker: 1
+                document_id: ${document_id}
+                filename: quillhaven-charter.md
+    retry:
+      attempts: 3
+      delay: 3
+
+  - name: an-unrelated-question-consults-nothing
+    owner: chatbot-backend
+    POST: /api/v1/threads/${thread_id}/messages
+    body:
+      message: "Convert 40 degrees Fahrenheit to Celsius."
+    # Criterion 5, and the only thing standing between a routing node and a decoration. A
+    # router that always says yes passes every other retrieval step in this file. The
+    # body_excludes is the second half: retrieval_consulted could be reported false while
+    # chunks were injected anyway, and the filename appearing in a citation is what catches
+    # that.
+    expect:
+      status: 200
+      json:
+        messages:
+          - role: user
+          - role: assistant
+            retrieval_consulted: false
+      body_excludes: quillhaven-charter\.md
+    retry:
+      attempts: 3
+      delay: 3
+
+  # --------------------------------------------------------------------- the stranger
+  # From here the jar holds the STRANGER, not the owner.
+
+  - name: register-a-stranger
+    owner: chatbot-backend
+    POST: /api/v1/auth/register
+    body:
+      email: smoke-0004-stranger-${SMOKE_RUN_ID}@kb.test
+      password: ${SMOKE_PASSWORD}
+      signup_code: ${SIGNUP_CODE}
+      display_name: Stranger
+    expect:
+      status: 201
+      cookie: session
+
+  - name: the-strangers-list-omits-the-document
+    owner: chatbot-backend
+    GET: /api/v1/documents
+    # The list endpoint, asserted separately from the detail endpoint on purpose. A detail
+    # endpoint can be scoped correctly while the list returns everybody's documents, and no
+    # assertion about the detail endpoint would ever notice. An empty array is a normal
+    # answer here, not a 404.
+    expect:
+      status: 200
+      body_excludes: quillhaven-charter\.md
+
+  - name: the-stranger-cannot-read-the-document
+    owner: chatbot-backend
+    GET: /api/v1/documents/${document_id}
+    expect:
+      status: 404
+      json:
+        error:
+          code: DOCUMENT_NOT_FOUND
+      body_excludes: quillhaven-charter\.md
+
+  - name: the-stranger-cannot-read-the-original
+    owner: chatbot-backend
+    GET: /api/v1/documents/${document_id}/content
+    # Ownership on the bytes as well as on the metadata. This is the endpoint that reaches
+    # object storage by a key the metadata row holds, so it is the one place a handler can
+    # plausibly fetch first and check ownership afterwards.
+    expect:
+      status: 404
+      body_excludes: The council reaches quorum at seven members\.
+
+  - name: the-stranger-cannot-delete-the-document
+    owner: chatbot-backend
+    DELETE: /api/v1/documents/${document_id}
+    expect:
+      status: 404
+      json:
+        error:
+          code: DOCUMENT_NOT_FOUND
+
+  - name: logout-the-stranger
+    owner: chatbot-backend
+    POST: /api/v1/auth/logout
+    # Empties the jar. Without it the owner's replayed cookie below arrives alongside the
+    # stranger's and the backend chooses which identity answered.
+    expect:
+      status: 204
+
+  - name: the-document-survived-the-strangers-attempts
+    owner: chatbot-backend
+    GET: /api/v1/documents/${document_id}
+    headers:
+      Cookie: session=${owner_session}
+    # CRITERION 2. The four 404s above are every one of them satisfied by a backend that
+    # deletes the document and then reports it missing. This is the step that tells a real
+    # ownership check apart from a destructive one, and it has to be the owner reading it
+    # back — nothing the stranger can observe distinguishes the two.
+    expect:
+      status: 200
+      json:
+        document:
+          id: ${document_id}
+          filename: quillhaven-charter.md
+          status: ready
+
+  # ----------------------------------------------------------- deletion, and what outlives it
+
+  - name: delete-the-document
+    owner: chatbot-backend
+    DELETE: /api/v1/documents/${document_id}
+    headers:
+      Cookie: session=${owner_session}
+    expect:
+      status: 204
+
+  - name: the-deleted-document-is-gone
+    owner: chatbot-backend
+    GET: /api/v1/documents/${document_id}
+    headers:
+      Cookie: session=${owner_session}
+    # The same 404 a stranger gets, and the same one an id that was never issued gets. A
+    # forgiving 204 or a distinguishable status would tell a caller which ids once existed.
+    expect:
+      status: 404
+      json:
+        error:
+          code: DOCUMENT_NOT_FOUND
+
+  - name: the-original-is-gone-from-storage
+    owner: chatbot-backend
+    GET: /api/v1/documents/${document_id}/content
+    headers:
+      Cookie: session=${owner_session}
+    # Deleting the row while leaving the object is the easy half-delete to write and the
+    # hard one to notice: every metadata assertion passes, and the bytes sit in a bucket
+    # nobody is accounting for.
+    expect:
+      status: 404
+      body_excludes: The council reaches quorum at seven members\.
+
+  - name: the-index-forgot-the-deleted-document
+    owner: chatbot-backend
+    POST: /api/v1/threads/${thread_id}/messages
+    headers:
+      Cookie: session=${owner_session}
+    body:
+      message: "What does the Quillhaven charter say about quorum?"
+    # The same question as before, now that the document is gone. Two things are asserted
+    # and they fail differently: the manifest no longer mentions the document, so the router
+    # declines (retrieval_consulted false) — a stale manifest keeps saying yes forever — and
+    # no citation names it, which is what proves the CHUNKS were removed from the index and
+    # not merely the row from postgres.
+    expect:
+      status: 200
+      json:
+        messages:
+          - role: user
+          - role: assistant
+            retrieval_consulted: false
+      body_excludes: quillhaven-charter\.md
+    retry:
+      attempts: 3
+      delay: 3
+
+  - name: the-citation-survived-the-delete
+    owner: chatbot-backend
+    GET: /api/v1/threads/${thread_id}
+    headers:
+      Cookie: session=${owner_session}
+    # CRITERION 7, and the only step that can carry it. Every other citation assertion ran
+    # while the document still existed, so a citation stored as a foreign key and rendered
+    # by a join passes all of them — and then the transcript develops a hole the first time
+    # somebody tidies up their knowledge base. The filename is a SNAPSHOT taken when the
+    # answer was written, which is why it is still here after the row is not.
+    expect:
+      status: 200
+      body_matches: quillhaven-charter\.md
+
+  # -------------------------------------------------------------------------- the surface
+
+  - name: spa-serves-knowledge-deep-link
+    owner: frontend
+    GET: /knowledge
+    # Not API surface, so it is not checked against the spec. A missing SPA fallback 404s on
+    # a deep link while in-app navigation to the same route works perfectly — a bug that
+    # only ever shows up through the proxy, which is why it is asserted here and not in the
+    # frontend repo. It says nothing about whether the page does anything: smoke.e2e is the
+    # oracle for that.
+    contract: false
+    expect:
+      status: 200
+      headers:
+        content-type: text/html
+      body_matches: <div id="root"
