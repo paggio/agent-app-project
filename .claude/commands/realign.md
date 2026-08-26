@@ -103,4 +103,23 @@ Say, in this order: which submodules moved and to what; whether the contract sti
 what is served, and what you did about it if not; the baseline result with its assertion
 count; what was promoted into the baseline; and anything you deliberately left alone.
 
+## 7 — The retrospective
+
+Dispatch the `harness-retro` agent. This lane is where drift becomes visible — a contract
+that had to be harvested, a promotion that was awkward to write, a submodule that was not
+where the instructions assumed — and none of it is recorded anywhere unless something looks.
+
+Give it, in the prompt:
+
+- the lane (`realign`), the change if one was named, and what step 6 concluded;
+- **the friction log** — the part only you have. What the harvest diff actually said and
+  what you did about it, anything you had to work out rather than read, a step whose
+  preconditions did not hold, anything you did by hand. "It went fine" is a claim it will
+  check against the artifacts.
+
+It audits the state this lane left behind, grades the harness against a fixed set of
+questions, and opens at most one pull request here if something clears its bar. Print its
+report under yours, unedited. Do not act on it yourself: a harness fix is reviewed and
+merged like any other change, not applied on the way past.
+
 ARGUMENTS: $ARGUMENTS

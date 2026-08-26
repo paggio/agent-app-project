@@ -7,7 +7,7 @@ Ship this:
 
 > $ARGUMENTS
 
-This is the whole cross-repo lane. Five phases, in order, in this one invocation. Nothing
+This is the whole cross-repo lane. Six phases, in order, in this one invocation. Nothing
 here is optional and nothing here is done by hand twice: each phase ends at a gate that
 either passes or names what to fix.
 
@@ -134,5 +134,26 @@ Route on the outcome:
 whose change is backward compatible on its own goes first. Record that order in `STATUS.md`.
 
 Once a human has merged, the next step is `/realign`.
+
+## 6 — The retrospective
+
+Dispatch the `harness-retro` agent. It is the only phase that looks at the harness rather
+than at the change, and it runs whatever phase 5 concluded — a `failed` run says more about
+the machine than a green one does.
+
+Give it, in the prompt:
+
+- the lane (`ship`), the change, the run directory, and the outcome;
+- **the friction log** — the part only you have. Everything that did not go smoothly: a
+  gate that fired and why, anything you worked around, prose you found ambiguous or
+  contradictory, a step you skipped and the reason, retries, anything you did by hand that
+  the harness should have done for you. Write it as it happened. "It went fine" is a claim
+  it will check, and an absence of friction stated explicitly is worth more than an absence
+  of mention.
+
+It audits the state this lane left behind, grades the harness against a fixed set of
+questions, and opens at most one pull request here if something clears its bar. Print its
+report under yours, unedited, and act on nothing in it yourself — a harness fix arrives as
+a pull request a human merges, never as an edit slipped into this change.
 
 ARGUMENTS: $ARGUMENTS

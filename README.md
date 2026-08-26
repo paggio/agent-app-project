@@ -56,12 +56,23 @@ Bumps the submodules to their merged `main`, pins the triple in `repos.lock`, re
 promotes the assertions worth keeping forever into `smoke/baseline.yaml`. This is also the
 lane a single-repo deploy needs on its own — it is the only check that can fail on the seam.
 
+**Both lanes end by grading themselves.** The last phase of `/ship` and of `/realign`
+dispatches the `harness-retro` agent: a separate session that audits the state the lane left
+behind — submodule pointers, the contract against what is served, the assertions and their
+count, whether anything actually reached a remote environment — and then grades the harness
+itself. Where the instructions misled, where a gate protected nothing, where the effort was
+out of proportion to the risk. If something clears its bar it opens one pull request here,
+on a `harness/` branch, for a human to merge. If nothing does, it says so and opens nothing.
+See `docs/adr/0009`.
+
 ## Where things live
 
 - `concept.md` — the reasoning behind this layout, and the parts of it that are load-bearing.
 - `docs/adr/` — decisions and their accepted costs. Read before proposing a redesign.
 - `docs/infra-interface.md` — what this repo requires of `infra/`.
 - `docs/init/` — how all four repos were created from zero.
+- `retros/` — what each lane's retrospective found, and the reason the next one does not
+  raise the same thing twice.
 - `CLAUDE.md` — additive agent context. Never load-bearing; every product repo is
   self-describing in isolation.
 - `make help` — the hand tools for running and inspecting the joined system.

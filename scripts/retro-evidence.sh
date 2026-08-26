@@ -1,0 +1,282 @@
+#!/usr/bin/env bash
+# Everything the harness-retro agent must not have to take on trust, collected in one pass.
+#
+#   ./scripts/retro-evidence.sh --lane ship|realign [--change NNNN-slug] [--run-dir DIR]
+#
+# Why this exists: the retrospective's first job is to say whether the system is coherent
+# right now — locally and in whatever environment the lane claimed to touch. An agent asked
+# that question with no fixed evidence answers it from the session it just read, which is
+# the one source guaranteed to share the session's blind spots. So the state is gathered
+# mechanically, in the same order every time, and the agent's judgement starts after the
+# facts rather than instead of them.
+#
+# Read-only by construction: it reads git, reads the run artifacts, and re-runs the two
+# gates that need neither Docker nor the network. It never writes, never fetches, never
+# brings the stack up or down.
+#
+# Exit 0 = a bundle was produced. Exit 2 = refused (bad arguments, not a checkout).
+# A gate failing is CONTENT, not an exit code — the bundle reports it and the agent judges
+# it. See docs/adr/0003.
+set -uo pipefail
+
+ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
+cd "$ROOT" || exit 2
+
+LANE=""; CHANGE=""; RUN_DIR=""
+while [ $# -gt 0 ]; do
+  case "$1" in
+    --lane)    LANE="${2:-}"; shift ;;
+    --change)  CHANGE="${2:-}"; shift ;;
+    --run-dir) RUN_DIR="${2:-}"; shift ;;
+    -h|--help) sed -n '2,20p' "${BASH_SOURCE[0]}"; exit 0 ;;
+    *) echo "retro-evidence: unknown argument $1" >&2; exit 2 ;;
+  esac
+  shift
+done
+
+case "$LANE" in
+  ship|realign) ;;
+  *) echo "retro-evidence: --lane must be ship or realign" >&2; exit 2 ;;
+esac
+
+CHANGE="${CHANGE#changes/}"; CHANGE="${CHANGE%/}"
+if [ -n "$CHANGE" ] && [ ! -d "changes/$CHANGE" ]; then
+  echo "retro-evidence: changes/$CHANGE does not exist" >&2; exit 2
+fi
+
+TS="$(date -u +%Y%m%dT%H%M%SZ)"
+REPOS="chatbot-backend frontend infra"
+
+say() { printf '%s\n' "$*"; }
+# Bounded on purpose: this bundle is read whole by one agent, and an unbounded log tail
+# would push the parts it has to reason about out of reach.
+cap() { head -c "${1:-4000}"; }
+
+say "# retro evidence — $LANE${CHANGE:+ / $CHANGE} @ $TS"
+say ""
+say "Collected by scripts/retro-evidence.sh. Every line below is observed, not claimed."
+
+# ── 1. this repo ─────────────────────────────────────────────────────────────────────
+say ""
+say "## 1. Control repo, right now"
+say ""
+say '```'
+say "branch:   $(git rev-parse --abbrev-ref HEAD 2>/dev/null)"
+say "head:     $(git log -1 --format='%h %s' 2>/dev/null)"
+say "upstream: $(git rev-parse --abbrev-ref '@{upstream}' 2>/dev/null || echo 'none')"
+say ""
+say "working tree (submodule pointers included):"
+git status --porcelain | sed 's/^/  /' | head -40
+[ -z "$(git status --porcelain)" ] && say "  clean"
+say ""
+say "contracts/ against HEAD: $(git status --porcelain -- contracts/ | grep -c . ) changed file(s)"
+say "last commit touching contracts/: $(git log -1 --format='%h %ad %s' --date=short -- contracts/ 2>/dev/null)"
+say '```'
+
+# ── 2. the submodules ────────────────────────────────────────────────────────────────
+say ""
+say "## 2. Submodules, against repos.lock"
+say ""
+say '```'
+printf '  %-16s %-24s %-9s %-14s %s\n' REPO BRANCH SHA "vs repos.lock" "uncommitted"
+for r in $REPOS; do
+  br="$(git -C "$r" rev-parse --abbrev-ref HEAD 2>/dev/null || echo '-')"
+  sha="$(git -C "$r" rev-parse --short HEAD 2>/dev/null || echo '-')"
+  pinned="$(awk -v r="$r" '$1==r{print substr($2,1,7)}' repos.lock 2>/dev/null)"
+  if [ "$sha" = "$pinned" ]; then state="matches"
+  elif [ -z "$pinned" ]; then state="not pinned"
+  else state="differs ($pinned)"; fi
+  dirty="$(git -C "$r" status --porcelain 2>/dev/null | grep -c .)"
+  printf '  %-16s %-24s %-9s %-14s %s\n' "$r" "$br" "$sha" "$state" "$dirty file(s)"
+done
+say ""
+say "A detached HEAD or a feature branch here is not automatically wrong — /ship leaves"
+say "branches behind and /realign leaves main. Judge it against the lane that just ran."
+say '```'
+
+# ── 3. the run ───────────────────────────────────────────────────────────────────────
+say ""
+say "## 3. The run"
+if [ -z "$RUN_DIR" ] && [ -n "$CHANGE" ]; then
+  RUN_DIR="$(ls -d "changes/$CHANGE/runs/"*/ 2>/dev/null | sort | tail -1)"
+  RUN_DIR="${RUN_DIR%/}"
+fi
+
+if [ -z "$RUN_DIR" ] || [ ! -d "$RUN_DIR" ]; then
+  say ""
+  say "No run directory. For /realign that is expected — the evidence is sections 2, 4 and 5."
+  say "For /ship it is a finding: phase 4 produces one, and its absence means the loop did"
+  say "not finish, or the change was shipped by hand."
+else
+  say ""
+  say "\`$RUN_DIR\`"
+  say ""
+  say "### report.md"
+  say '```'
+  if [ -f "$RUN_DIR/report.md" ]; then sed -n '1,40p' "$RUN_DIR/report.md"; else say "(missing — the loop did not reach the reporting step)"; fi
+  say '```'
+
+  say ""
+  say "### attempts"
+  say '```'
+  for a in "$RUN_DIR"/attempt-*; do
+    [ -d "$a" ] || continue
+    say "$(basename "$a"): $(ls "$a" 2>/dev/null | tr '\n' ' ')"
+  done
+  say '```'
+
+  say ""
+  say "### verify.json (last attempt)"
+  say '```'
+  last_verify="$(ls "$RUN_DIR"/attempt-*/verify.json 2>/dev/null | sort | tail -1)"
+  if [ -n "$last_verify" ]; then
+    python3 - "$last_verify" <<'PY'
+import json, sys
+d = json.load(open(sys.argv[1]))
+d.pop("steps", None)
+print(json.dumps(d, indent=1))
+PY
+  else
+    say "(no verify.json — nothing was asserted, whatever the report says)"
+  fi
+  say '```'
+
+  say ""
+  say "### assertions, by name and result (last attempt)"
+  say '```'
+  last_smoke="$(ls "$RUN_DIR"/attempt-*/smoke.json 2>/dev/null | sort | tail -1)"
+  if [ -n "$last_smoke" ]; then
+    python3 - "$last_smoke" <<'PY'
+import json, sys
+d = json.load(open(sys.argv[1]))
+steps = d.get("steps") or d.get("results") or []
+if not steps:
+    print(json.dumps(d, indent=1)[:2000]); raise SystemExit
+for s in steps:
+    name = s.get("name", "?")
+    ok = s.get("ok", s.get("status", "?"))
+    suite = s.get("suite", "")
+    print(f"  {str(ok):6} {name}  {('['+suite+']') if suite else ''}")
+print(f"\n  {len(steps)} step(s)")
+PY
+  else
+    say "(no smoke.json)"
+  fi
+  say '```'
+
+  say ""
+  say "### failure briefs — exactly what the repair agents were given"
+  say '```'
+  briefs="$(ls "$RUN_DIR"/attempt-*/failure-*.md 2>/dev/null)"
+  if [ -n "$briefs" ]; then
+    for f in $briefs; do say "── $f"; cap 1500 < "$f"; say ""; done
+  else
+    say "(none — either nothing failed, or nothing was routed)"
+  fi
+  say '```'
+
+  say ""
+  say "### what each dispatched slice claimed, and what prs.json records"
+  say '```'
+  for f in "$RUN_DIR"/attempt-*/fanout.json; do
+    [ -f "$f" ] || continue
+    say "── $f"
+    python3 - "$f" <<'PY'
+import json, sys
+d = json.load(open(sys.argv[1]))
+slices = d.get("slices") or d
+if isinstance(slices, dict):
+    slices = [dict(repo=k, **v) if isinstance(v, dict) else {"repo": k, "value": v}
+              for k, v in slices.items()]
+for s in slices if isinstance(slices, list) else []:
+    print("  " + json.dumps({k: s.get(k) for k in ("repo", "slice", "status", "branch", "pr", "result") if k in s}))
+PY
+  done
+  [ -f "$RUN_DIR/prs.json" ] && { say "── $RUN_DIR/prs.json"; cap 1200 < "$RUN_DIR/prs.json"; } || say "(no prs.json — no pull request is a checked fact)"
+  say '```'
+fi
+
+# ── 4. deploy reality ────────────────────────────────────────────────────────────────
+say ""
+say "## 4. What was actually deployed, and where"
+say ""
+say '```'
+if [ -n "$CHANGE" ] && [ -f "changes/$CHANGE/change.yaml" ]; then
+  say "change.yaml deploy block:"
+  awk '/^deploy:/{f=1} f && /^[a-z_]/ && !/^deploy:/{exit} f{print "  " $0}' "changes/$CHANGE/change.yaml"
+fi
+if [ -n "${last_verify:-}" ]; then
+  python3 - "$last_verify" <<'PY'
+import json, sys
+d = json.load(open(sys.argv[1]))
+infra = d.get("infra") or {}
+print(f"  environment:     {infra.get('environment')}")
+print(f"  remote_asserted: {infra.get('remote_asserted')}")
+print(f"  stages:          {json.dumps(d.get('stages') or {})}")
+if not infra.get("remote_asserted"):
+    print("  → nothing was proved about a remote environment in this run.")
+PY
+else
+  say "  no verify.json in scope — nothing here is evidence about a deployed environment."
+fi
+say ""
+say "This section is the only claim about the cloud that is grounded. There is no live"
+say "AWS read here on purpose: it would need credentials, and an unasserted environment"
+say "is a finding whether or not something is running in it."
+say '```'
+
+# ── 5. gates, re-run now ─────────────────────────────────────────────────────────────
+say ""
+say "## 5. Gates, re-run against the tree as it stands"
+say ""
+say '```'
+out="$(./scripts/check-docs.py 2>&1)"; rc=$?
+say "check-docs.py → exit $rc"
+printf '%s\n' "$out" | sed 's/^/  /' | head -30
+if [ -n "$CHANGE" ]; then
+  out="$(./scripts/manifest.py "changes/$CHANGE" --validate 2>&1)"; rc=$?
+  say ""
+  say "manifest.py changes/$CHANGE --validate → exit $rc"
+  printf '%s\n' "$out" | sed 's/^/  /' | head -30
+fi
+out="$(./scripts/test-hooks.py 2>&1)"; rc=$?
+say ""
+say "test-hooks.py → exit $rc"
+printf '%s\n' "$out" | sed 's/^/  /' | head -20
+say '```'
+
+# ── 6. the stack ─────────────────────────────────────────────────────────────────────
+say ""
+say "## 6. The joined stack, right now"
+say ""
+say '```'
+out="$(./scripts/stack.sh ps 2>&1)"; rc=$?
+if [ $rc -eq 0 ]; then printf '%s\n' "$out" | head -20; else say "not reachable (exit $rc) — Docker is down, or nothing is up"; fi
+say ""
+say "Down is normal after a finished lane. Up with a change's stack still running is worth"
+say "a line in the report, not a fix."
+say '```'
+
+# ── 7. what has been said before ─────────────────────────────────────────────────────
+say ""
+say "## 7. What the harness has already been told"
+say ""
+say '```'
+say "previous retros:"
+ls -1 retros/*.md 2>/dev/null | sed 's/^/  /' | tail -20
+[ -z "$(ls -1 retros/*.md 2>/dev/null)" ] && say "  (none)"
+say ""
+say "open pull requests in this repo:"
+open_prs="$(gh pr list --state open --json number,title,headRefName --jq '.[] | "  #\(.number) \(.headRefName)  \(.title)"' 2>/dev/null)"
+printf '%s\n' "${open_prs:-  (none, or gh unavailable)}"
+say ""
+say "retro proposals already decided — do not re-propose a closed one without new evidence:"
+gh pr list --state closed --limit 20 --json number,title,headRefName,mergedAt \
+  --jq '.[] | select(.headRefName | startswith("harness/")) | "  #\(.number) \(if .mergedAt then "merged" else "CLOSED UNMERGED" end)  \(.title)"' 2>/dev/null || say "  (gh unavailable)"
+say ""
+say "recent harness commits:"
+git log -12 --format='  %h %ad %s' --date=short -- scripts/ .claude/ smoke/ docs/adr/ 2>/dev/null
+say '```'
+
+say ""
+say "_end of evidence_"
