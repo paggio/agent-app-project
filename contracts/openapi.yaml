@@ -354,14 +354,6 @@ paths:
             application/json:
               schema:
                 $ref: '#/components/schemas/ErrorResponse'
-        '422':
-          description: The chat id in the path failed validation. Emitted by the framework for the path
-            parameter itself, so it is reachable without a body — unlike the 422 on the endpoints that
-            take one. A caller that only ever uses ids it received from this API will not see it.
-          content:
-            application/json:
-              schema:
-                $ref: '#/components/schemas/HTTPValidationError'
     patch:
       tags:
       - threads
@@ -456,14 +448,6 @@ paths:
             application/json:
               schema:
                 $ref: '#/components/schemas/ErrorResponse'
-        '422':
-          description: The chat id in the path failed validation. Emitted by the framework for the path
-            parameter itself, so it is reachable without a body — unlike the 422 on the endpoints that
-            take one. A caller that only ever uses ids it received from this API will not see it.
-          content:
-            application/json:
-              schema:
-                $ref: '#/components/schemas/HTTPValidationError'
   /v1/threads/{thread_id}/messages:
     post:
       tags:
