@@ -26,7 +26,10 @@ that answer 404, and the transcript would look for citation fields nothing sends
      thing that says they work together. -->
 
 <!-- iterate:begin -->
-_Never run._
+- **failed** — 20260826T161636Z, 2 attempt(s)
+- failed at: `smoke: assertions failed`
+- answerable: chatbot-backend
+- report: `changes/0004-rag-knowledge-base/runs/20260826T161636Z/report.md`
 <!-- iterate:end -->
 
 ## Blockers
