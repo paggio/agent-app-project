@@ -1,6 +1,6 @@
 # Submodule SHAs known to work together
 # Regenerate with ./scripts/lock.sh
-# Updated: 2026-08-25T10:02:48Z
-chatbot-backend  ceb0365408afa63eea25f0026fb2e5ca5fae226c
-frontend         9ce42ea9ecaa5698be4b61b3c41a1a7dcbee5daa
+# Updated: 2026-08-26T12:33:52Z
+chatbot-backend  643048fbe67bb27e6c8be00b254d5ebf743dc896
+frontend         722feded6d5c6d1ab851df1a2d3e7f695bd3d754
 infra            6eebe0a4049ad6bc8c19b50edc532b0133aaebf3
