@@ -10,9 +10,13 @@
 # mechanically, in the same order every time, and the agent's judgement starts after the
 # facts rather than instead of them.
 #
-# Read-only by construction: it reads git, reads the run artifacts, and re-runs the two
+# Read-only by construction: it reads git, reads the run artifacts, and re-runs the three
 # gates that need neither Docker nor the network. It never writes, never fetches, never
 # brings the stack up or down.
+#
+# An artifact it cannot parse is reported as unreadable, in the bundle, where the agent
+# reads it. Never as an empty section: a half-written verify.json belongs to exactly the
+# run whose evidence matters most, and a silence there reads as a clean bill.
 #
 # Exit 0 = a bundle was produced. Exit 2 = refused (bad arguments, not a checkout).
 # A gate failing is CONTENT, not an exit code — the bundle reports it and the agent judges
@@ -28,7 +32,7 @@ while [ $# -gt 0 ]; do
     --lane)    LANE="${2:-}"; shift ;;
     --change)  CHANGE="${2:-}"; shift ;;
     --run-dir) RUN_DIR="${2:-}"; shift ;;
-    -h|--help) sed -n '2,20p' "${BASH_SOURCE[0]}"; exit 0 ;;
+    -h|--help) sed -n '2,19p' "${BASH_SOURCE[0]}"; exit 0 ;;
     *) echo "retro-evidence: unknown argument $1" >&2; exit 2 ;;
   esac
   shift
@@ -43,14 +47,39 @@ CHANGE="${CHANGE#changes/}"; CHANGE="${CHANGE%/}"
 if [ -n "$CHANGE" ] && [ ! -d "changes/$CHANGE" ]; then
   echo "retro-evidence: changes/$CHANGE does not exist" >&2; exit 2
 fi
+RUN_DIR="${RUN_DIR%/}"
+if [ -n "$RUN_DIR" ] && [ ! -d "$RUN_DIR" ]; then
+  echo "retro-evidence: $RUN_DIR does not exist" >&2; exit 2
+fi
 
 TS="$(date -u +%Y%m%dT%H%M%SZ)"
 REPOS="chatbot-backend frontend infra"
 
 say() { printf '%s\n' "$*"; }
+
 # Bounded on purpose: this bundle is read whole by one agent, and an unbounded log tail
-# would push the parts it has to reason about out of reach.
-cap() { head -c "${1:-4000}"; }
+# would push the parts it has to reason about out of reach. It says when it clipped —
+# a brief that stops mid-token reads as malformed evidence rather than as a long one.
+cap() {
+  local n="${1:-4000}" data
+  data="$(cat)"
+  printf '%s\n' "${data:0:$n}"
+  [ "${#data}" -gt "$n" ] && printf '… (truncated at %s of %s bytes)\n' "$n" "${#data}"
+  return 0
+}
+
+# Every JSON read goes through this. python3 writes a traceback to stderr, and stderr is
+# not part of the bundle, so a corrupt artifact would otherwise render as an empty fenced
+# block — the one shape the agent is told to treat as a pass it cannot infer.
+run_py() {
+  local file="$1" out
+  if out="$(python3 - "$file" 2>&1)"; then
+    printf '%s\n' "$out"
+  else
+    say "  (UNREADABLE — $file did not parse. Anything derived from it is NOT VERIFIED.)"
+    printf '%s\n' "$out" | tail -1 | sed 's/^/  reason: /'
+  fi
+}
 
 say "# retro evidence — $LANE${CHANGE:+ / $CHANGE} @ $TS"
 say ""
@@ -129,8 +158,8 @@ else
   say "### verify.json (last attempt)"
   say '```'
   last_verify="$(ls "$RUN_DIR"/attempt-*/verify.json 2>/dev/null | sort | tail -1)"
-  if [ -n "$last_verify" ]; then
-    python3 - "$last_verify" <<'PY'
+  if [ -s "${last_verify:-}" ]; then
+    run_py "$last_verify" <<'PY'
 import json, sys
 d = json.load(open(sys.argv[1]))
 d.pop("steps", None)
@@ -145,8 +174,8 @@ PY
   say "### assertions, by name and result (last attempt)"
   say '```'
   last_smoke="$(ls "$RUN_DIR"/attempt-*/smoke.json 2>/dev/null | sort | tail -1)"
-  if [ -n "$last_smoke" ]; then
-    python3 - "$last_smoke" <<'PY'
+  if [ -s "${last_smoke:-}" ]; then
+    run_py "$last_smoke" <<'PY'
 import json, sys
 d = json.load(open(sys.argv[1]))
 steps = d.get("steps") or d.get("results") or []
@@ -176,20 +205,39 @@ PY
   say '```'
 
   say ""
+  say "### the contract against what was served, as this run recorded it"
+  say '```'
+  last_harvest="$(ls "$RUN_DIR"/attempt-*/harvest.log 2>/dev/null | sort | tail -1)"
+  if [ -s "${last_harvest:-}" ]; then
+    say "── $last_harvest (tail)"
+    tail -40 "$last_harvest"
+  else
+    say "(no harvest.log — nothing compared the served surface to contracts/ in this run)"
+  fi
+  say '```'
+
+  say ""
   say "### what each dispatched slice claimed, and what prs.json records"
   say '```'
   for f in "$RUN_DIR"/attempt-*/fanout.json; do
     [ -f "$f" ] || continue
     say "── $f"
-    python3 - "$f" <<'PY'
+    run_py "$f" <<'PY'
 import json, sys
 d = json.load(open(sys.argv[1]))
-slices = d.get("slices") or d
-if isinstance(slices, dict):
-    slices = [dict(repo=k, **v) if isinstance(v, dict) else {"repo": k, "value": v}
-              for k, v in slices.items()]
-for s in slices if isinstance(slices, list) else []:
-    print("  " + json.dumps({k: s.get(k) for k in ("repo", "slice", "status", "branch", "pr", "result") if k in s}))
+print(f"  attempt={d.get('attempt')} ok={d.get('ok')} failed={d.get('failed')} "
+      f"contract_gaps={d.get('contract_gaps')}")
+repos = d.get("repos") or {}
+if not isinstance(repos, dict):
+    print("  " + json.dumps(repos)[:500]); raise SystemExit
+for name, s in repos.items():
+    if not isinstance(s, dict):
+        print(f"  {name}: {s}"); continue
+    row = {"repo": name}
+    row.update({k: s.get(k) for k in
+                ("status", "exit", "branch", "pr", "reason", "contract_gap") if k in s})
+    print("  " + json.dumps(row))
+print("  ('pr' here is the slice's own CLAIM. prs.json below is what was checked.)")
 PY
   done
   [ -f "$RUN_DIR/prs.json" ] && { say "── $RUN_DIR/prs.json"; cap 1200 < "$RUN_DIR/prs.json"; } || say "(no prs.json — no pull request is a checked fact)"
@@ -205,8 +253,8 @@ if [ -n "$CHANGE" ] && [ -f "changes/$CHANGE/change.yaml" ]; then
   say "change.yaml deploy block:"
   awk '/^deploy:/{f=1} f && /^[a-z_]/ && !/^deploy:/{exit} f{print "  " $0}' "changes/$CHANGE/change.yaml"
 fi
-if [ -n "${last_verify:-}" ]; then
-  python3 - "$last_verify" <<'PY'
+if [ -s "${last_verify:-}" ]; then
+  run_py "$last_verify" <<'PY'
 import json, sys
 d = json.load(open(sys.argv[1]))
 infra = d.get("infra") or {}
@@ -218,6 +266,15 @@ if not infra.get("remote_asserted"):
 PY
 else
   say "  no verify.json in scope — nothing here is evidence about a deployed environment."
+fi
+say ""
+say "contract against what is served:"
+if [ -s "${last_harvest:-}" ]; then
+  say "  last recorded answer is $last_harvest — read it above, and note it is from that"
+  say "  run, not from now."
+else
+  say "  NOT VERIFIED from here. harvest-contract.py --diff needs the stack up and this"
+  say "  script never brings it up. If the lane did not run it, nobody checked."
 fi
 say ""
 say "This section is the only claim about the cloud that is grounded. There is no live"
@@ -263,16 +320,18 @@ say "## 7. What the harness has already been told"
 say ""
 say '```'
 say "previous retros:"
-ls -1 retros/*.md 2>/dev/null | sed 's/^/  /' | tail -20
-[ -z "$(ls -1 retros/*.md 2>/dev/null)" ] && say "  (none)"
+prev="$(ls -1 retros/*.md 2>/dev/null | grep -v '/README\.md$')"
+printf '%s\n' "${prev:-  (none)}" | sed 's/^\(retros\)/  \1/' | tail -20
 say ""
 say "open pull requests in this repo:"
 open_prs="$(gh pr list --state open --json number,title,headRefName --jq '.[] | "  #\(.number) \(.headRefName)  \(.title)"' 2>/dev/null)"
 printf '%s\n' "${open_prs:-  (none, or gh unavailable)}"
 say ""
 say "retro proposals already decided — do not re-propose a closed one without new evidence:"
-gh pr list --state closed --limit 20 --json number,title,headRefName,mergedAt \
-  --jq '.[] | select(.headRefName | startswith("harness/")) | "  #\(.number) \(if .mergedAt then "merged" else "CLOSED UNMERGED" end)  \(.title)"' 2>/dev/null || say "  (gh unavailable)"
+decided="$(gh pr list --state closed --search "head:harness/" --limit 100 \
+  --json number,title,headRefName,mergedAt \
+  --jq '.[] | select(.headRefName | startswith("harness/")) | "  #\(.number) \(if .mergedAt then "merged" else "CLOSED UNMERGED" end)  \(.title)"' 2>/dev/null)"
+printf '%s\n' "${decided:-  (none, or gh unavailable)}"
 say ""
 say "recent harness commits:"
 git log -12 --format='  %h %ad %s' --date=short -- scripts/ .claude/ smoke/ docs/adr/ 2>/dev/null

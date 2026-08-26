@@ -26,6 +26,9 @@ authoritative. The same argument forbids `git add`ing a submodule path early, an
 So: confirm the PRs are merged before doing anything here. `./scripts/prs.sh --list` shows
 them.
 
+And from here on, keep a running note of anything that does not go smoothly — step 7 consumes
+it, and by then you will have stopped noticing.
+
 ## 1 — Bring each submodule to its merged main
 
 ```

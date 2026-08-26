@@ -83,7 +83,10 @@ Ask all seven, every time. They exist so the retrospective is not a mood.
    mechanism, a route to something that no longer exists.
 3. **Was the effort proportionate?** Attempts spent on a cosmetic assertion, a rule stated
    five times in four files, a phase that cost more than the risk it covers. Over-insistence
-   is drift in the other direction, and it is a finding.
+   is drift in the other direction, and it is a finding. Note where it lands, though: "that
+   assertion was not worth three attempts" is a sentence for your report, never a diff — see
+   the second limit in §5. The friction log is written by the party the assertion cost, and
+   this is the question it will lean on hardest.
 4. **What did nothing check?** A criterion nobody could express as a step. An `owner` field
    guessed rather than known. Evidence produced and never read.
 5. **Did anyone route around the harness?** A step run by hand, an assertion softened, a
@@ -135,26 +138,41 @@ Hard limits, none of them negotiable:
 - **Never weaken an assertion, and never touch `contracts/`.** A failing assertion is a
   cause to route to an owner. A criterion changes here, on purpose, by human decision.
 - **Never commit on `main`, never merge, never push a product repo.**
-- **`make check` passes before you open anything.** If your change adds a gate, show it
-  failing without the fix as well as passing with it — a gate you have only watched pass is
-  not known to be a gate.
+- **`make check` passes before you open anything.** It also runs each product repo's lint
+  and typecheck, and after `/ship` those repos are on feature branches — so it can fail for
+  a cause you did not introduce. That is a §2 system defect: report it, open nothing, and do
+  not attempt a fix. If your change adds a gate, show it failing without the fix as well as
+  passing with it — a gate you have only watched pass is not known to be a gate — and then
+  **restore what you mutated exactly**. `git status` is clean before you commit, or the
+  probe rides along in the pull request.
 - **Small.** Three findings is a lot. Ten is a rewrite nobody will read; pick the two that
   matter and record the rest.
 
-Mechanics:
+Mechanics. Decide the branch from §7 of the bundle **before** you create anything:
 
 ```
-git switch -c harness/retro-<UTC timestamp>
+git fetch origin
+
+# nothing open: branch from origin/main, never from where the lane left you
+git switch -c harness/retro-<UTC timestamp> origin/main
+
+# a harness/ pull request is already open: add to it, do not open a second
+git switch <that branch>
 ```
+
+Branching from `origin/main` is not a detail. At the end of `/ship` this repo is sitting on
+the change's own feature branch, and a retro branched from there carries the whole change
+diff into your pull request alongside one retro file. Your diff is the harness and nothing
+else; if it shows a contract, a brief or a slice, you branched from the wrong place.
+
+**One open pull request at a time.** The cap is what keeps a per-lane retrospective from
+becoming a queue nobody reads: a second retrospective commits onto the open branch and
+comments there.
 
 Write `retros/<ts>-<lane>[-<change>].md` — the frontmatter and sections are specified in
 `retros/README.md` — and commit it together with any fix. That file is the record the next
 retrospective reads, so it carries the findings you did **not** propose as well as the ones
 you did.
-
-**One open pull request at a time.** If the evidence bundle shows a `harness/` pull request
-already open, add your commit to that branch and comment on it instead of opening a second.
-The cap is what keeps a per-lane retrospective from becoming a queue nobody reads.
 
 Title `harness: <the defect, in one line>` — or `harness: retro <lane> <change> —
 observations, no fix proposed` when the record is all there is. Apply the `harness-retro`

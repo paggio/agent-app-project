@@ -22,6 +22,10 @@ phase 1, or the one you were given.
 
 ## 1 — Plan
 
+From here to the end, keep a running note of anything that does not go smoothly — a gate
+that fires, prose you have to re-read, a step you work around. Phase 6 consumes it, and by
+then you will have stopped noticing: the workaround will feel like how it works.
+
 `./scripts/new-change.sh <slug>` scaffolds `changes/NNNN-<slug>/`. Then, before writing:
 read `docs/adr/` and the sibling repos' `docs/architecture.md`. Do not fill a gap with an
 assumption — an unstated assumption becomes three divergent implementations.

@@ -67,6 +67,14 @@ Accepted costs:
   the retrospective and nothing fails. Wiring it into `iterate.sh` instead would cover one
   lane and only the phases inside the loop — and planning friction, the most expensive kind,
   happens before it. So: prose, held to the one thing prose can be held to.
+- **Three of its four hard limits are prose.** "Never write in a product repo" is real:
+  the `deny` rules and the `PreToolUse` hook in `.claude/settings.json` apply to the
+  subagent as they do to any session here. "Never soften an assertion", "never edit
+  `contracts/`" and "never commit on `main`" cannot be deny-ruled, because the control
+  session legitimately does all three — that is what this repo is for. So they are held by
+  instruction, by the diff being reviewed before it merges, and by nothing else.
+  `docs/init/README.md` § "Where each new document goes" is explicit that prose is
+  advisory, and the four limits should not be read as equally enforced.
 - **A retrospective can be confidently wrong.** It reads this repo's doctrine and proposes
   against it; a plausible-but-wrong proposal costs more review than an obviously bad one.
   Mitigated by the four-line bar, the one-pull-request cap, and by a human merging.

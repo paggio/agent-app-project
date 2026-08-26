@@ -49,8 +49,11 @@ def prose_files() -> list[str]:
     out = []
     # concept.md belongs here and was missing, which is the whole reason it drifted to 838
     # lines still teaching a superseded fanout.sh: no check ever looked at it.
+    # retros/ was exempt from every check here, and it is the one directory written by an
+    # agent and read as evidence by the next one — the exact shape of the drift that let
+    # concept.md reach 838 lines teaching a superseded fanout.sh.
     for pat in (".claude/**/*.md", "docs/**/*.md", "CLAUDE.md", "README.md",
-                "concept.md", "contracts/README.md"):
+                "concept.md", "contracts/README.md", "retros/*.md"):
         out += glob.glob(os.path.join(ROOT, pat), recursive=True)
     return sorted(set(out))
 
