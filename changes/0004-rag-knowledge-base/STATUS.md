@@ -10,8 +10,8 @@
 
 | Repo | Branch | PR | CI | Merged |
 | --- | --- | --- | --- | --- |
-| chatbot-backend | `feat/0004-rag-knowledge-base` | <link> | ☐ | ☐ |
-| frontend | `feat/0004-rag-knowledge-base` | <link> | ☐ | ☐ |
+| chatbot-backend | `feat/0004-rag-knowledge-base` | _opened in phase 5_ | ☐ | ☐ |
+| frontend | `feat/0004-rag-knowledge-base` | _opened in phase 5_ | ☐ | ☐ |
 
 Merge order: **chatbot-backend first, then frontend.** The backend's change is additive on
 its own — five new paths and two optional fields on an existing schema, with every existing
