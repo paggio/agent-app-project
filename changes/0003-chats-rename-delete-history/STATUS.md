@@ -15,8 +15,8 @@
 
 | Repo | Branch | PR | CI | Merged |
 | --- | --- | --- | --- | --- |
-| chatbot-backend | `feat/0003-chats-rename-delete-history` | [#6](https://github.com/Paggio/chatbot-backend/pull/6) | ☐ | ☐ |
-| frontend | `feat/0003-chats-rename-delete-history` | [#5](https://github.com/Paggio/frontend/pull/5) | ☐ | ☐ |
+| chatbot-backend | `feat/0003-chats-rename-delete-history` | [#6](https://github.com/Paggio/chatbot-backend/pull/6) | ☑ | ☑ `643048f` |
+| frontend | `feat/0003-chats-rename-delete-history` | [#5](https://github.com/Paggio/frontend/pull/5) | ☑ | ☑ `722fede` |
 
 Recorded mechanically in `runs/20260825T115532Z/prs.json` — `prs.sh` reported both as
 already open rather than creating duplicates, because each slice opened its own.
@@ -108,8 +108,9 @@ being worthless as *evidence*. Its own change, not this one.
 
 ## After merge
 
-- [ ] `./scripts/lock.sh` and commit `repos.lock`
-- [ ] `/realign`
+- [x] `./scripts/lock.sh` and commit `repos.lock` — `7e1f056`
+- [x] `/realign` — 2026-08-26. Submodules bumped to merged main, contract agrees with what
+      is served, baseline green at 36 assertions, 29 steps promoted.
 
 ### Promotion note for `/realign`
 
@@ -119,3 +120,40 @@ all three assert a `404`, which a backend whose chats are simply unreachable als
 block only means something with `create-a-chat`, `first-message-titles-the-chat` and
 `the-chat-survived-the-other-users-attempts` ahead of it, and that last step is the one that
 tells an ownership check apart from a delete. Take the block or take none of it.
+
+### What realign found
+
+**Finding 1 was wrong about its own cost, and got reverted.** The note above said to promote
+the undeclared `422` here rather than re-freeze during ship, because a re-freeze would strand
+both slices' vendored copies. Promoting it at `/realign` does exactly the same thing —
+`make check` refuses the moment `contracts/openapi.yaml` moves, because both submodules carry
+a vendored copy their CI verifies against and `docs/adr/0008` makes this repo the only
+sanctioned publisher. The cost was never freeze *timing*; it is that **any** contract change
+obliges both consumers to re-vendor, which for this status means a branch, a publish and a
+pull request in each product repo. For a `422` the framework emits for the path parameter
+itself, which no consumer can act on. Reverted in `1d90279`; `harvest --diff` keeps reporting
+it additively at exit 0, and it rides along with the next contract change already paying that
+cost.
+
+**A flaky browser test, owned by `frontend`.** `make e2e` is 46/46 on a fresh stack in 4s, and
+fails on a second consecutive run against the same stack in 33s — a different one of the two
+criterion-8 tests each time. Not a product defect, and the page snapshot proves it: the
+heading reads the correctly derived title while the test waits 30s for a
+`Rename New chat` button.
+
+`chatName()` in `tests/e2e/real-backend.spec.ts` reads the `h1` immediately after `startChat`
+waits for the reply to render:
+
+```ts
+return (await page.getByRole('heading', { level: 1 }).first().innerText()).trim()
+```
+
+But the title is derived server-side when the first message lands and reaches the client on a
+separate round trip — the thread query being invalidated by `done`. On a fast stack the two
+land in the same tick; under load `chatName` captures the placeholder `New chat`, and
+`renameChat`/`deleteChat` then wait forever for a control named after a title that no longer
+exists. The fix is theirs and is a wait, not a weakened assertion: settle the heading before
+reading it. Nothing here was changed for it — `/realign` fixes nothing in a product repo.
+
+**Both merges were real merge commits, not squashes**, so the SHAs `lock.sh` recorded are
+reachable. That is the hazard the ordering rule exists for and it did not bite.
