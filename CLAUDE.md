@@ -22,6 +22,7 @@ Never run two lanes in one session.
   they never edit it.
 - Smoke assertions are owned here too. A failing assertion means fix the cause, or change
   the criterion here on purpose — never in a product repo.
+- Harness fixes arrive as a PR from `harness-retro`, which ends each lane. Never slip one into a change.
 - Never commit inside a submodule while it is on `main`, and never assume which ref it is
   on: `git -C <repo> switch -c <branch>` first, every time. `git submodule update` leaves
   a detached HEAD, `/realign` leaves `main`, and a commit on either is a commit in the
@@ -40,6 +41,7 @@ Never run two lanes in one session.
 - NEVER run `docker compose config` on `stack/compose.yml`, or paste its output. It inlines
   `env_file`, so it prints the real AWS credentials in `chatbot-backend/.env`. Use
   `make config`, which redacts.
+- Ignore `TODO.md` — it is a personal ideas dump, not something you must maintain/populate/read into.
 
 ## Layout
 

@@ -49,8 +49,11 @@ def prose_files() -> list[str]:
     out = []
     # concept.md belongs here and was missing, which is the whole reason it drifted to 838
     # lines still teaching a superseded fanout.sh: no check ever looked at it.
+    # retros/ was exempt from every check here, and it is the one directory written by an
+    # agent and read as evidence by the next one — the exact shape of the drift that let
+    # concept.md reach 838 lines teaching a superseded fanout.sh.
     for pat in (".claude/**/*.md", "docs/**/*.md", "CLAUDE.md", "README.md",
-                "concept.md", "contracts/README.md"):
+                "concept.md", "contracts/README.md", "retros/*.md"):
         out += glob.glob(os.path.join(ROOT, pat), recursive=True)
     return sorted(set(out))
 
@@ -280,6 +283,44 @@ def check_loop_calls() -> None:
                  f"scripts/{script} is documented as part of the loop but is called by none "
                  f"of {', '.join(callers)}. A gate that is described and never invoked "
                  f"produces confidence without enforcement — wire it or stop claiming it.")
+
+
+# --- a prose-dispatched gate is named by every lane that claims to run it -------------
+# check_dead_wiring asks whether an agent is referenced ANYWHERE, and one mention in one
+# file satisfies it. The failure that leaves open is the ordinary one: a phase is added to
+# /ship, /realign is left alone, and half the lanes quietly stop being graded while both
+# files still read as though they are. This is the LOOP_CALLS argument applied to a gate
+# whose caller is a prompt rather than a script. What a prompt does cannot be asserted from
+# here; that the instruction is present in every lane that claims it can, and its absence
+# is the whole of the defect. See docs/adr/0009.
+AGENT_DISPATCHERS = {
+    "harness-retro": (".claude/commands/ship.md", ".claude/commands/realign.md"),
+}
+
+
+def check_agent_dispatchers() -> None:
+    for agent, dispatchers in sorted(AGENT_DISPATCHERS.items()):
+        if not os.path.exists(os.path.join(ROOT, ".claude", "agents", f"{agent}.md")):
+            fail("agent-dispatchers",
+                 f"AGENT_DISPATCHERS names the {agent!r} agent and "
+                 f".claude/agents/{agent}.md does not exist. Add it, or drop the entry — "
+                 f"a lane cannot dispatch a file that is not there.")
+            continue
+        for dispatcher in dispatchers:
+            path = os.path.join(ROOT, dispatcher)
+            try:
+                text = open(path).read()
+            except OSError:
+                fail("agent-dispatchers",
+                     f"AGENT_DISPATCHERS names {dispatcher} as a lane that dispatches "
+                     f"{agent!r}, and it does not exist")
+                continue
+            if not re.search(rf"\b{re.escape(agent)}\b", text):
+                fail("agent-dispatchers",
+                     f"{dispatcher} never names the {agent!r} agent, so that lane ends "
+                     f"without it. Either dispatch it in the lane's last phase, or remove "
+                     f"the lane from AGENT_DISPATCHERS on purpose — a retrospective that "
+                     f"runs on one lane of two is a blind spot with a green light on it.")
 
 
 def check_gate_messages() -> None:
@@ -603,7 +644,8 @@ def main() -> int:
               check_banned_phrases, check_claude_md_size, check_dead_wiring,
               check_vendored_contracts, check_commands,
               check_scripts_are_not_the_entry_point, check_env_layers,
-              check_gate_messages, check_loop_calls, report_readme_divergence)
+              check_gate_messages, check_loop_calls, check_agent_dispatchers,
+              report_readme_divergence)
     for fn in checks:
         try:
             fn()
