@@ -118,6 +118,34 @@ steps:
       # graph, the money is already spent and only this line notices.
       body_excludes: '"reply"'
 
+  - name: creating-a-chat-requires-a-session
+    owner: chatbot-backend
+    # Up here with the other anonymous refusal, for the same reason: below the login it
+    # asserts nothing. Promoted from 0003.
+    POST: /api/v1/threads
+    body: {}
+    expect:
+      status: 401
+      json:
+        error:
+          code: AUTH_REQUIRED
+      # A refusal must not have created anything. If the handler authenticates after the
+      # insert, the row is already there and only this line notices.
+      body_excludes: '"id"'
+
+  - name: listing-chats-requires-a-session
+    owner: chatbot-backend
+    # The read path, gated separately. A GET carries no body to validate and trips no
+    # cross-origin guard, so nothing else would catch a list endpoint that answers 200 with
+    # an empty array to a stranger — which reads as a working empty state rather than a hole.
+    GET: /api/v1/threads
+    expect:
+      status: 401
+      json:
+        error:
+          code: AUTH_REQUIRED
+      body_excludes: '"threads"'
+
   - name: register-a-chat-account
     owner: chatbot-backend
     POST: /api/v1/auth/register
@@ -201,3 +229,269 @@ steps:
         error:
           code: AUTH_REQUIRED
       body_excludes: '"reply"'
+
+  # ─────────────────────────────────────────────────── chats belong to one account (0003)
+  #
+  # Promoted as a BLOCK, and it has to be. All three `another-user-cannot-*` steps assert a
+  # 404, which a backend whose chats are simply unreachable also returns — so promoting them
+  # alone would have installed three tautologies. What makes them mean anything is
+  # `the-chat-survived-the-other-users-attempts` below them, and that step needs a real chat
+  # with a real transcript above it. Take the block or take none of it.
+  #
+  # The jar is empty here: `logout-then-chat-is-refused` above emptied it and
+  # `revoked-session-cannot-chat` sends its cookie as an explicit header without
+  # repopulating it. So this block establishes its own two sessions.
+  #
+  # NOT promoted from 0003: `chat-appears-in-its-owners-list` and
+  # `a-chat-gets-a-title-without-being-asked`, both subsumed — the first by
+  # `the-list-shows-the-new-name`, the second by `rename-survives-a-reread` reading the same
+  # record. And `chat-deep-link-serves-the-app`, for the reason its 0002 analogue was left
+  # behind: `/chat/<id>` returning the app shell is SPA fallback that `origin-serves-app` and
+  # `prefix-boundary-is-respected` already cover, and it says nothing about the UI consuming
+  # any of this. That criterion belongs to tests/e2e/real-backend.spec.ts.
+  #
+  # COST, stated because it is the reason to think before adding more: this block makes two
+  # model calls. The baseline made one before it. That is deliberate — chats are now the
+  # product, and `transcript-persists-in-order` asserting four alternating messages is the
+  # step that catches a broken seam. Weakening it to one turn to save a few seconds would
+  # trade away the assertion this block exists for.
+
+  - name: register-chat-owner
+    owner: chatbot-backend
+    POST: /api/v1/auth/register
+    body:
+      email: smoke-baseline-owner-${SMOKE_RUN_ID}@auth.test
+      password: "${SMOKE_PASSWORD}"
+      signup_code: "${SIGNUP_CODE}"
+      display_name: Baseline Owner
+    expect:
+      # 201 cold, 409 once this account exists. The session comes from the login below.
+      status: [201, 409]
+
+  - name: login-chat-owner
+    owner: chatbot-backend
+    POST: /api/v1/auth/login
+    body:
+      email: smoke-baseline-owner-${SMOKE_RUN_ID}@auth.test
+      password: "${SMOKE_PASSWORD}"
+    expect:
+      status: 200
+      cookie: session
+    capture:
+      # The jar is handed to the second account below and then emptied, so the owner is
+      # re-addressed by hand afterwards. http.cookiejar leaves an explicit Cookie header
+      # alone, so the replay is what reaches the backend.
+      owner_session: cookie:session
+
+  - name: create-a-chat
+    owner: chatbot-backend
+    POST: /api/v1/threads
+    body: {}
+    expect:
+      status: 201
+      body_matches: '"id"\s*:\s*"[^"]'
+    capture:
+      thread_id: thread.id
+
+  - name: first-message-titles-the-chat
+    owner: chatbot-backend
+    POST: /api/v1/threads/${thread_id}/messages
+    body:
+      message: Name three colours, one per line.
+    expect:
+      status: 200
+      # Non-empty. `[^"]` is the point — it rules out `{"reply":""}`.
+      body_matches: '"reply"\s*:\s*"[^"]'
+    retry:
+      attempts: 3
+      delay: 3.0
+
+  - name: a-second-message-is-accepted
+    owner: chatbot-backend
+    # Sending into an EXISTING chat is a different path from the first message — it is the
+    # one that assembles history. This suite can only assert that it succeeds: under
+    # CHAT_MODEL=echo nothing could demonstrate recall, and an assertion that worked under
+    # echo would depend on how the backend formats history into the prompt. Whether the
+    # model actually receives the earlier turns is a chatbot-backend test against a
+    # recording fake.
+    POST: /api/v1/threads/${thread_id}/messages
+    body:
+      message: And now three more, different from those.
+    expect:
+      status: 200
+      body_matches: '"reply"\s*:\s*"[^"]'
+    retry:
+      attempts: 3
+      delay: 3.0
+
+  - name: transcript-persists-in-order
+    owner: chatbot-backend
+    GET: /api/v1/threads/${thread_id}
+    # Four messages, alternating, user first — read back from storage rather than echoed
+    # from the requests that wrote them. `message_count` is asserted so a transcript that
+    # returns the turns but miscounts them cannot pass, and the regex asserts the ORDER,
+    # which the count cannot. re.S is on, so `.*` crosses the newlines in the body.
+    expect:
+      status: 200
+      json:
+        thread:
+          message_count: 4
+      body_matches: '"role"\s*:\s*"user".*"role"\s*:\s*"assistant".*"role"\s*:\s*"user".*"role"\s*:\s*"assistant"'
+
+  - name: rename-a-chat
+    owner: chatbot-backend
+    PATCH: /api/v1/threads/${thread_id}
+    # The title carries the chat id rather than the run id, so a chat left behind by a run
+    # that died midway cannot make the list assertion below pass by accident.
+    body:
+      title: Renamed in baseline ${thread_id}
+    expect:
+      status: 200
+      json:
+        thread:
+          title: Renamed in baseline ${thread_id}
+
+  - name: rename-survives-a-reread
+    owner: chatbot-backend
+    GET: /api/v1/threads/${thread_id}
+    # The PATCH response above is satisfied by a handler that echoes the title it was sent
+    # and writes nothing. Only a fresh read proves it was stored.
+    expect:
+      status: 200
+      json:
+        thread:
+          title: Renamed in baseline ${thread_id}
+
+  - name: the-list-shows-the-new-name
+    owner: chatbot-backend
+    GET: /api/v1/threads
+    # A title stored on the detail record but absent from the list is what a sidebar would
+    # actually show, so the list is asserted separately rather than assumed.
+    expect:
+      status: 200
+      body_matches: 'Renamed in baseline ${thread_id}'
+
+  - name: register-another-account
+    owner: chatbot-backend
+    # From here the jar holds the OTHER account. Every owner step below re-addresses the
+    # owner by hand.
+    POST: /api/v1/auth/register
+    body:
+      email: smoke-baseline-other-${SMOKE_RUN_ID}@auth.test
+      password: "${SMOKE_PASSWORD}"
+      signup_code: "${SIGNUP_CODE}"
+      display_name: Baseline Other
+    expect:
+      status: [201, 409]
+
+  - name: login-another-account
+    owner: chatbot-backend
+    POST: /api/v1/auth/login
+    body:
+      email: smoke-baseline-other-${SMOKE_RUN_ID}@auth.test
+      password: "${SMOKE_PASSWORD}"
+    expect:
+      status: 200
+      cookie: session
+
+  - name: another-user-cannot-read-the-chat
+    owner: chatbot-backend
+    GET: /api/v1/threads/${thread_id}
+    # 404 and not 403, by contract: a 403 would confirm the chat exists, which makes chat
+    # ids an enumeration oracle — and they appear in URLs people paste. The body must not
+    # leak the transcript either.
+    expect:
+      status: 404
+      json:
+        error:
+          code: THREAD_NOT_FOUND
+      body_excludes: '"messages"'
+
+  - name: another-user-cannot-rename-the-chat
+    owner: chatbot-backend
+    PATCH: /api/v1/threads/${thread_id}
+    body:
+      title: Renamed by somebody who does not own this
+    expect:
+      status: 404
+      json:
+        error:
+          code: THREAD_NOT_FOUND
+
+  - name: another-user-cannot-delete-the-chat
+    owner: chatbot-backend
+    DELETE: /api/v1/threads/${thread_id}
+    expect:
+      status: 404
+      json:
+        error:
+          code: THREAD_NOT_FOUND
+
+  - name: the-other-users-list-does-not-contain-it
+    owner: chatbot-backend
+    GET: /api/v1/threads
+    # The listing is scoped per account, not merely the detail read. A list that returns
+    # everybody's chats while the detail endpoint guards correctly leaks every title and
+    # every id in the deployment, and none of the three 404s above would notice.
+    expect:
+      status: 200
+      body_excludes: '${thread_id}'
+
+  - name: logout-the-other-account
+    owner: chatbot-backend
+    # Positional, not incidental. This empties the jar so the owner's replayed cookie below
+    # is the only identity on the request. Without it two identities travel together and
+    # whichever the backend happens to read decides whether a correct implementation passes.
+    POST: /api/v1/auth/logout
+    expect:
+      status: 204
+
+  - name: the-chat-survived-the-other-users-attempts
+    owner: chatbot-backend
+    GET: /api/v1/threads/${thread_id}
+    headers:
+      Cookie: session=${owner_session}
+    # THE step this block exists for. Everything above is satisfied by a backend that
+    # deletes the chat and then honestly reports it missing — from the other account's side
+    # the refusal and the destruction look identical. Only the owner reading it back, with
+    # its title and its transcript intact, tells an ownership check apart from a delete.
+    expect:
+      status: 200
+      json:
+        thread:
+          title: Renamed in baseline ${thread_id}
+      body_matches: '"role"\s*:\s*"assistant"'
+
+  - name: the-owner-deletes-the-chat
+    owner: chatbot-backend
+    DELETE: /api/v1/threads/${thread_id}
+    headers:
+      Cookie: session=${owner_session}
+    # Also what keeps this account's chat list from growing by one on every run.
+    expect:
+      status: 204
+
+  - name: a-deleted-chat-is-gone
+    owner: chatbot-backend
+    GET: /api/v1/threads/${thread_id}
+    headers:
+      Cookie: session=${owner_session}
+    # The same 404 the other account got. A deleted chat and a chat that was never yours
+    # are indistinguishable, which is the point.
+    expect:
+      status: 404
+      json:
+        error:
+          code: THREAD_NOT_FOUND
+
+  - name: a-deleted-chat-leaves-the-list
+    owner: chatbot-backend
+    GET: /api/v1/threads
+    headers:
+      Cookie: session=${owner_session}
+    # A delete that removes the detail record but leaves the row the sidebar reads is a chat
+    # the person still sees and can no longer open — worse than no delete at all, and the
+    # step above cannot see it.
+    expect:
+      status: 200
+      body_excludes: '${thread_id}'

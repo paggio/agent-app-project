@@ -289,12 +289,25 @@ def check_gate_messages() -> None:
     same in its breaking-change advice, months after docs/adr/0005 deleted the skills.
     check_dead_wiring and check_commands both scan prose files only, so `scripts/` — the
     one surface consulted at the moment of failure — had no coverage at all.
+
+    Scanned twice, and the second pass is the one that earns its place. This check was
+    line-oriented, and a gate message long enough to matter is a wrapped Python string:
+    `manifest.py`'s freeze advice sat across a seam as `"... the freeze-contract "` plus
+    `"skill), commit ..."`, so the phrase existed in the file, reached the reader whole,
+    and appeared on no single line. The check reported 13 passing while the one reference
+    it was written to catch was still there. So adjacent literals are joined and the file
+    is searched again — without a line number, because the offsets no longer map to one,
+    and a file-level report is worth more than a precise number for a reference that is
+    not there.
     """
     have_cmd = {os.path.basename(p)[:-3]
                 for p in glob.glob(os.path.join(ROOT, ".claude", "commands", "*.md"))}
     have_skill = {os.path.basename(p)
                   for p in glob.glob(os.path.join(ROOT, ".claude", "skills", "*"))}
     named_skill = re.compile(r"\bthe ([a-z][a-z0-9]*(?:-[a-z0-9]+)+) skill\b")
+    # `"... one half "` newline indent `"other half ..."` — one string to the reader, two
+    # to a line-oriented scan.
+    LITERAL_SEAM = re.compile(r"[\"']\s*\n\s*[\"']")
 
     for script in sorted(glob.glob(os.path.join(ROOT, "scripts", "*"))):
         if os.path.isdir(script):
@@ -319,6 +332,24 @@ def check_gate_messages() -> None:
                     fail("gate-messages",
                          f"{rel(script)}:{n} names /{name}, which does not exist in "
                          f".claude/commands/.")
+
+        # Second pass: the same two searches over a view of the file with adjacent string
+        # literals joined, which is the form the reader actually sees. Only references the
+        # per-line pass could not see are reported, so a wrapped message is named once.
+        joined = LITERAL_SEAM.sub("", text)
+        for name in named_skill.findall(joined):
+            if name not in have_skill and not any(
+                    name in named_skill.findall(l) for l in text.splitlines()):
+                fail("gate-messages",
+                     f"{rel(script)} tells the reader to see the {name!r} skill, which "
+                     f"does not exist. It is wrapped across a string seam, so it appears "
+                     f"on no single line while reaching the reader whole.")
+        for name in re.findall(r"`/([a-z][a-z0-9-]*)`", joined):
+            if name not in have_cmd and not any(
+                    name in re.findall(r"`/([a-z][a-z0-9-]*)`", l) for l in text.splitlines()):
+                fail("gate-messages",
+                     f"{rel(script)} names /{name}, which does not exist in "
+                     f".claude/commands/. It is wrapped across a string seam.")
 
 
 def _referenced_in_scripts(needle: str) -> bool:

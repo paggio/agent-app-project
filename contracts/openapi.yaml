@@ -7,7 +7,7 @@
 openapi: 3.1.0
 info:
   title: agent-app API
-  version: 1.2.0
+  version: 1.3.0
   description: Frozen HTTP contract between the backend and its consumers. Changes are made here only,
     in a dedicated commit, before any implementation.
 servers:
@@ -245,6 +245,284 @@ paths:
             application/json:
               schema:
                 $ref: '#/components/schemas/ErrorResponse'
+  /v1/threads:
+    post:
+      tags:
+      - threads
+      summary: Start a chat
+      description: 'Creates an empty chat owned by the calling account. A title may be supplied, but is
+        normally omitted: the server derives one from the first message, so a client never has to invent
+        a title and two clients cannot derive different ones. Creating a chat invokes no model and costs
+        nothing.'
+      operationId: postThreadCreate
+      security:
+      - cookieAuth: []
+      requestBody:
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/CreateThreadRequest'
+        required: false
+      responses:
+        '201':
+          description: The chat was created and belongs to the calling account.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ThreadResponse'
+        '401':
+          description: There is no valid session (`AUTH_REQUIRED`). Nothing was created — the gate is in
+            front of the write, so a refusal never leaves a row behind.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+        '403':
+          description: The request was cross-origin (`AUTH_CROSS_ORIGIN`).
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+        '422':
+          description: The body failed validation; `detail` lists what.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/HTTPValidationError'
+    get:
+      tags:
+      - threads
+      summary: The caller's chats
+      description: 'Every chat owned by the calling account and no others, most recently active first.
+        Scoped in the query rather than filtered afterwards, so this endpoint cannot leak another account''s
+        titles. Capped at the 200 most recent, which is a deliberate omission of pagination rather than
+        an oversight: a `cursor` parameter is additive when somebody actually has 200 chats. Returns an
+        empty array for an account with none — that is a normal state, not a 404.'
+      operationId: getThreadList
+      security:
+      - cookieAuth: []
+      responses:
+        '200':
+          description: The caller's chats. Possibly empty.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ThreadListResponse'
+        '401':
+          description: There is no valid session (`AUTH_REQUIRED`). Not an empty list — a stranger is
+            refused rather than told there is nothing here.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+  /v1/threads/{thread_id}:
+    get:
+      tags:
+      - threads
+      summary: One chat and its transcript
+      description: 'The chat and its messages in the order they happened, read from storage — which is
+        what makes a conversation survive a reload. Capped at the 500 most recent messages, same reasoning
+        as the list cap. Never mutates: this is a GET, and the CSRF posture in contracts/README.md depends
+        on no GET mutating anything, so reading a chat does not touch its `updated_at`.'
+      operationId: getThread
+      security:
+      - cookieAuth: []
+      parameters:
+      - name: thread_id
+        in: path
+        required: true
+        schema:
+          type: string
+      responses:
+        '200':
+          description: The chat and its transcript.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ThreadDetailResponse'
+        '401':
+          description: There is no valid session (`AUTH_REQUIRED`).
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+        '404':
+          description: No such chat for this account (`THREAD_NOT_FOUND`). Returned identically whether
+            the chat never existed, was deleted, or belongs to somebody else — see contracts/README.md
+            § "Chats, ownership and titles" for why this is not a 403.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+    patch:
+      tags:
+      - threads
+      summary: Rename a chat
+      description: 'Sets the title, replacing whatever was there — a derived one or an earlier chosen one.
+        A chosen title is permanent: later messages never re-derive it, so a rename is not silently undone
+        by continuing the conversation.'
+      operationId: patchThread
+      security:
+      - cookieAuth: []
+      parameters:
+      - name: thread_id
+        in: path
+        required: true
+        schema:
+          type: string
+      requestBody:
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/RenameThreadRequest'
+        required: true
+      responses:
+        '200':
+          description: The chat as it now stands, with the new title.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ThreadResponse'
+        '401':
+          description: There is no valid session (`AUTH_REQUIRED`).
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+        '403':
+          description: The request was cross-origin (`AUTH_CROSS_ORIGIN`).
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+        '404':
+          description: No such chat for this account (`THREAD_NOT_FOUND`), on the same terms as the GET
+            above. A rename attempt is not an existence oracle either.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+        '422':
+          description: The title failed validation — empty, or over 200 characters. The policy is stated,
+            so it is reported in this shape rather than in the error envelope.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/HTTPValidationError'
+    delete:
+      tags:
+      - threads
+      summary: Delete a chat
+      description: 'Deletes the chat and its messages. A HARD delete: there is no archive, no trash and
+        no undo, and a client must not present one. Not idempotent in the forgiving sense — deleting a
+        chat that is already gone is the same 404 a stranger gets, because an endpoint that answered 204
+        for a chat it cannot see would tell a caller which ids once existed.'
+      operationId: deleteThread
+      security:
+      - cookieAuth: []
+      parameters:
+      - name: thread_id
+        in: path
+        required: true
+        schema:
+          type: string
+      responses:
+        '204':
+          description: The chat and its messages are gone.
+        '401':
+          description: There is no valid session (`AUTH_REQUIRED`). Nothing was deleted.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+        '403':
+          description: The request was cross-origin (`AUTH_CROSS_ORIGIN`).
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+        '404':
+          description: No such chat for this account (`THREAD_NOT_FOUND`). The chat is untouched — a
+            refusal here must never be a delete that then reports itself missing.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+  /v1/threads/{thread_id}/messages:
+    post:
+      tags:
+      - threads
+      summary: Send a message in a chat and get the reply
+      description: 'Appends the message to the chat, answers it, and appends the reply — so the transcript
+        is written by the server rather than assembled by a client. Unlike /v1/chat this is NOT stateless:
+        the earlier turns of this chat are supplied to the model, bounded to a recent window, so a follow-up
+        question works. Turns outside that window are not sent and are not summarised; contracts/README.md
+        § "Chats, ownership and titles" states what that promises and what it does not. Rate limited per
+        account, because history multiplies what one request costs. Answers complete — there is no streaming
+        here either, and it is still routed to a separate endpoint that does not exist.'
+      operationId: postThreadMessage
+      security:
+      - cookieAuth: []
+      parameters:
+      - name: thread_id
+        in: path
+        required: true
+        schema:
+          type: string
+      requestBody:
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/SendMessageRequest'
+        required: true
+      responses:
+        '200':
+          description: The reply, the two turns just appended, and the chat as it now stands — whose title
+            may have just been derived from this message.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/SendMessageResponse'
+        '401':
+          description: There is no valid session (`AUTH_REQUIRED`). The refusal carries no reply, because
+            the provider was never called, and appends nothing to the chat.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+        '403':
+          description: The request was cross-origin (`AUTH_CROSS_ORIGIN`).
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+        '404':
+          description: No such chat for this account (`THREAD_NOT_FOUND`). Checked before any model is
+            invoked, so sending into somebody else's chat costs nothing.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+        '422':
+          description: The body failed validation; `detail` lists what. Reachable only with a valid session
+            for a chat the caller owns — both gates are in front of validation.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/HTTPValidationError'
+        '429':
+          description: Too many messages from this account (`AUTH_RATE_LIMITED`). `Retry-After` says when
+            to try again. Present because a turn now carries history and therefore costs more than one
+            message's worth of tokens.
+          headers:
+            Retry-After:
+              description: Seconds until the next attempt is permitted.
+              schema:
+                type: integer
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
 components:
   securitySchemes:
     cookieAuth:
@@ -259,7 +537,10 @@ components:
         code:
           type: string
           description: 'A stable machine-readable reason. Known values: AUTH_REQUIRED, AUTH_BAD_CREDENTIALS,
-            AUTH_EMAIL_TAKEN, AUTH_SIGNUP_CLOSED, AUTH_CROSS_ORIGIN, AUTH_RATE_LIMITED. Consumers MUST
+            AUTH_EMAIL_TAKEN, AUTH_SIGNUP_CLOSED, AUTH_CROSS_ORIGIN, AUTH_RATE_LIMITED, THREAD_NOT_FOUND.
+            The last of those is not about auth at all; this schema keeps its name for the ordinary reason
+            that renaming it would change a generated type name in every consumer for no wire benefit.
+            Consumers MUST
             tolerate an unknown code by falling back to `message` — codes are added additively and a
             client that switches exhaustively on this will break.'
         message:
@@ -295,6 +576,21 @@ components:
       - reply
       title: ChatResponse
       description: Response body for postChat.
+    CreateThreadRequest:
+      properties:
+        title:
+          anyOf:
+          - type: string
+            maxLength: 200
+            minLength: 1
+          - type: 'null'
+          description: 'Optional, and explicitly nullable — omitting it and sending null are both accepted
+            and mean the same thing. Normally omitted: the server derives a title from the first message,
+            so supplying one here is for a client that already knows what the chat is about.'
+      type: object
+      title: CreateThreadRequest
+      description: Request body for postThreadCreate, and the whole body is optional. Unknown fields are
+        ignored rather than rejected.
     ErrorResponse:
       properties:
         error:
@@ -358,6 +654,38 @@ components:
       - password
       title: LoginRequest
       description: Request body for postAuthLogin. Unknown fields are ignored rather than rejected.
+    Message:
+      properties:
+        id:
+          type: string
+          description: Opaque and stable. Addressable so a client can key a list on it, not because
+            anything may be done to one message — there is no endpoint that edits or deletes a single
+            message.
+        role:
+          type: string
+          enum:
+          - user
+          - assistant
+          description: Who said it. Two values, and a third would be a contract change rather than a
+            surprise — so a consumer may switch exhaustively on THIS field, unlike `AuthError.code`.
+        content:
+          type: string
+          description: What was said, complete. The assistant's turns are stored exactly as they were
+            returned.
+        created_at:
+          type: string
+          format: date-time
+          description: When it was stored. Ordering within a chat is by the order the server assigned,
+            not by comparing these — two turns in the same millisecond still read back in the order they
+            happened.
+      type: object
+      required:
+      - id
+      - role
+      - content
+      - created_at
+      title: Message
+      description: One turn in a chat.
     RegisterRequest:
       properties:
         email:
@@ -394,6 +722,134 @@ components:
       - signup_code
       title: RegisterRequest
       description: Request body for postAuthRegister. Unknown fields are ignored rather than rejected.
+    RenameThreadRequest:
+      properties:
+        title:
+          type: string
+          maxLength: 200
+          minLength: 1
+          description: 'The new title, 1-200 characters after trimming. Required and not nullable: clearing
+            a title is not a thing a caller can do, because a chat with no title is not something a client
+            can render.'
+      type: object
+      required:
+      - title
+      title: RenameThreadRequest
+      description: Request body for patchThread. Unknown fields are ignored rather than rejected, so this
+        can grow into a general chat-update body additively.
+    SendMessageRequest:
+      properties:
+        message:
+          type: string
+          maxLength: 8000
+          minLength: 1
+          description: The user's message. 1-8000 characters — deliberately the same bounds ChatRequest
+            declares, so moving a client from /v1/chat to a chat changes where it posts and nothing else.
+      type: object
+      required:
+      - message
+      title: SendMessageRequest
+      description: Request body for postThreadMessage. Unknown fields are ignored rather than rejected.
+    SendMessageResponse:
+      properties:
+        reply:
+          type: string
+          description: The assistant's reply, complete and unstreamed. Exactly the `content` of the last
+            entry in `messages`, present because it is what every consumer wants and because it keeps the
+            shape recognisable to a client coming from ChatResponse.
+        thread:
+          $ref: '#/components/schemas/Thread'
+        messages:
+          items:
+            $ref: '#/components/schemas/Message'
+          type: array
+          description: The two turns just appended, the user's first. Returned rather than left to be
+            re-fetched so a client can render the exchange without a second request, and so the ids and
+            timestamps it renders are the server's rather than invented.
+      type: object
+      required:
+      - reply
+      - thread
+      - messages
+      title: SendMessageResponse
+      description: 'Response body for postThreadMessage. Carries the chat as well as the turns, because
+        this request may have changed it: the title is derived from the first message, so the chat a client
+        holds is stale the moment the first reply arrives.'
+    Thread:
+      properties:
+        id:
+          type: string
+          description: Opaque and stable for the life of the chat. Not a row number — nothing may be
+            inferred from its shape, and it appears in a URL a person can see.
+        title:
+          type: string
+          description: Always present and never empty. Derived from the first message when nobody has
+            chosen one; a chosen one is permanent. How it is derived is not promised.
+        created_at:
+          type: string
+          format: date-time
+        updated_at:
+          type: string
+          format: date-time
+          description: 'When the chat last CHANGED — a message appended, or a rename. Not when it was last
+            read: no GET mutates state, so opening a chat does not move this.'
+        message_count:
+          type: integer
+          description: How many messages the chat holds. Present so a client can render a list without
+            fetching every transcript, and it counts what is stored rather than what a capped read
+            returned.
+      type: object
+      required:
+      - id
+      - title
+      - created_at
+      - updated_at
+      - message_count
+      title: Thread
+      description: A chat, as its owner sees it. Contains no account id — a caller only ever sees its own,
+        so naming the owner would add a field that is always the caller and could only ever leak.
+    ThreadDetailResponse:
+      properties:
+        thread:
+          $ref: '#/components/schemas/Thread'
+        messages:
+          items:
+            $ref: '#/components/schemas/Message'
+          type: array
+          description: The transcript in the order it happened, oldest first, capped at the 500 most recent.
+            `thread.message_count` is the true total, so a client can tell a capped read from a complete
+            one.
+      type: object
+      required:
+      - thread
+      - messages
+      title: ThreadDetailResponse
+      description: Response body for getThread — the chat and its transcript in one round trip, because
+        a client that has one always wants the other.
+    ThreadListResponse:
+      properties:
+        threads:
+          items:
+            $ref: '#/components/schemas/Thread'
+          type: array
+          description: Most recently active first, capped at 200. Empty for an account with no chats,
+            which is a normal state and not an error.
+      type: object
+      required:
+      - threads
+      title: ThreadListResponse
+      description: 'Response body for getThreadList. Nested under a key rather than a bare array for the
+        reason IdentityResponse is: it leaves room for a cursor or a total to arrive additively.'
+    ThreadResponse:
+      properties:
+        thread:
+          $ref: '#/components/schemas/Thread'
+      type: object
+      required:
+      - thread
+      title: ThreadResponse
+      description: Response body for postThreadCreate and patchThread. One shape for both, so a client
+        needs one parser for "here is a chat".
     User:
       properties:
         id:

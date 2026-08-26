@@ -1,0 +1,43 @@
+# The machine half of a change. BRIEF.md is for humans and for the implementing agent;
+# this is what the scripts parse.
+
+change: 0003-chats-rename-delete-history
+
+# The commit that landed contracts/ alone. The dispatch extracts contracts/ at exactly this
+# SHA and gives the slices nothing else, so it refuses to run without one.
+#
+# Filled in phase 2, by the commit that takes contracts/openapi.yaml to 1.3.0 and adds the
+# chats section to contracts/README.md, with nothing else in its diff.
+freeze_sha: "4bcea59b9efbc13b57e47a5d41bebf6de495b31d"
+
+# Which repos get a slice. Each needs a matching <name>.md here. Use the SUBMODULE PATH:
+# chatbot-backend, not backend.
+#
+# No infra slice: nothing is provisioned. Postgres is already a real dependency with a
+# migration applier that runs before the app serves, so two new tables are a numbered .sql
+# file inside the backend repo. See BRIEF.md § "Deployment".
+slices:
+  - chatbot-backend
+  - frontend
+
+deploy:
+  # Bring up the joined stack and smoke it. Effectively always true.
+  local: true
+  # A real deploy. Requires an infra slice.
+  infra: false
+
+smoke:
+  file: smoke.yaml
+  # The single origin a browser uses: app at /, API at /api/. Not the backend's own port —
+  # that cannot catch a broken proxy.
+  base: http://localhost:8080
+  # Raised from the template's 120s, and above 0002's 240s. This suite makes TWO model
+  # calls, each with three attempts at three seconds, plus four argon2id register/login
+  # rounds for two accounts instead of one.
+  timeout_s: 360
+  # REQUIRED here, not an optimisation. "A renamed chat still has its name after a reload"
+  # and "a deleted chat stays deleted" are browser facts, and every HTTP-visible property in
+  # this suite would pass with the frontend still holding threads in browser memory — which
+  # is exactly what change 0002 found for its own headline criterion. This flag is the only
+  # oracle for criterion 8. See BRIEF.md § "A gap in the oracle".
+  e2e: true

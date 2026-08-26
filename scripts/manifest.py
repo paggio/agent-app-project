@@ -110,8 +110,9 @@ def validate_freeze(doc: dict) -> list[str]:
     problems: list[str] = []
     sha = doc.get("freeze_sha") or ""
     if not sha:
-        return ["freeze_sha: is empty — freeze the contract first (see the freeze-contract "
-                "skill), commit contracts/ alone, and record that commit here"]
+        return ['freeze_sha: is empty — freeze the contract first: edit contracts/, commit '
+                'it ALONE with nothing else in the diff, and record that commit here. '
+                'contracts/README.md section "Changing a contract" is the normative version']
 
     rc, kind = git("cat-file", "-t", sha)
     if rc != 0 or kind != "commit":
