@@ -45,22 +45,22 @@ that answer 404, and the transcript would look for citation fields nothing sends
      thing that says they work together. -->
 
 <!-- iterate:begin -->
-- **verified** — 20260826T161953Z, 1 attempt(s)
-- report: `changes/0004-rag-knowledge-base/runs/20260826T161953Z/report.md`
+- **verified** — 20260827T144501Z, 1 attempt(s)
+- report: `changes/0004-rag-knowledge-base/runs/20260827T144501Z/report.md`
 <!-- iterate:end -->
 
 ## What the green run does and does not say
 
-`report.md` says `verified`. Read it as **verified-local**, which is what actually happened
+`report.md` says `verified`, in both runs. Read it as **verified-local**, which is what happened
 and what `/ship`'s own outcome table defines: 61 assertions held through the single origin a
 browser uses, `deploy.infra` is false, `remote_asserted` is false in `verify.json`, and no
 remote environment was touched because there is none to touch. Nothing here is evidence that
 the knowledge base works anywhere but on a laptop.
 
-The run that produced it was `--verify-only`, so the dispatch was skipped and what was
-asserted is the code already committed on the two branches. That is the right oracle — the
-suite ran against the joined stack through the proxy — but it is worth knowing that no agent
-session ran in the run that went green.
+The 2026-08-26 run that first went green was `--verify-only`, so no agent session ran in it.
+The 2026-08-27 amendment run was a full dispatch and both slices reported OK on the first
+attempt — the branches already existed, so each session continued its own work rather than
+rebuilding from scratch.
 
 ## Blockers
 
