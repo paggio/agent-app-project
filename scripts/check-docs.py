@@ -294,7 +294,9 @@ def check_loop_calls() -> None:
 # here; that the instruction is present in every lane that claims it can, and its absence
 # is the whole of the defect. See docs/adr/0009.
 AGENT_DISPATCHERS = {
-    "harness-retro": (".claude/commands/ship.md", ".claude/commands/realign.md"),
+    "harness-retro": (".claude/commands/ship.md",
+                      ".claude/commands/ship-iterate.md",
+                      ".claude/commands/realign.md"),
 }
 
 

@@ -316,60 +316,31 @@ pull requests, which is the question to ask before making it.
 
 ### 5.5 You changed your mind about the requirement
 
-Different from 5.4 and the difference matters: there, the criterion was right and the build
-was wrong. Here the build may be fine and **the criterion is what you no longer want.** So
-it does not start at `smoke.yaml`, and it certainly does not start in a product repo.
+Different from 5.4, and the difference decides the lane: there the criterion was right and
+the build was wrong. Here the build may be fine and **the criterion is what you no longer
+want.**
 
-**Amend the change while nothing is merged. Open a new one once anything is.** That is the
-line, and it is the only judgement call in this section. Before merge the change directory
-is still the record of one in-flight decision, and changing your mind is part of that arc.
-After merge its criteria describe what is running in production, and quietly rewriting them
-makes the record lie about what was decided and when.
+```bash
+> /ship-iterate 0004-rag-knowledge-base: also accept PDFs, and drop the summary column
+```
 
-Amending, in order, because each step is the input to the next:
+It amends `BRIEF.md`, then `smoke.yaml`, then the slice files — that order, because each is
+the input to the next and starting at the code produces a change whose record no longer
+matches it — re-freezes if the interface moved, re-gates, and runs the loop against the
+branches that already exist, so the open pull requests update rather than multiply.
 
-1. **`BRIEF.md` first.** Rewrite the criteria to what you now want — and name what you
-   dropped under "Out of scope", with the reason. That section is not courtesy: it is read
-   by the dispatched agents, and a requirement deleted without being named there is one an
-   agent helpfully puts back.
-2. **`smoke.yaml` second.** Delete the steps that encoded the old requirement, add the ones
-   that encode the new. Criteria and steps are two views of one thing and they drift the
-   moment you edit only one.
-3. **The slice files third**, and this is where the amendment usually goes wrong.
-   **Say what to REMOVE, explicitly.** The implementation of the requirement you dropped is
-   still sitting on the branch, and an agent handed a brief that merely stops mentioning it
-   will leave it there — they add, they do not subtract. Prune `slices:` in `change.yaml`
-   too if a repo has dropped out of the change entirely.
-4. **Re-freeze, only if the interface moved.** Edit `contracts/`, commit it alone, put the
-   new SHA in `change.yaml` as `freeze_sha`. The old freeze is superseded rather than
-   reconciled — the SHA lives in exactly one place, so there is nothing else to update.
-5. **Re-gate**, and take it seriously rather than as a formality:
+**Merge is the boundary.** It refuses once anything has merged, because at that point the
+criteria describe what is running and rewriting them destroys the record of what was decided
+and when. Then it is a new change. `docs/adr/0010`.
 
-   ```bash
-   ./scripts/manifest.py changes/0004-rag-knowledge-base --validate
-   ```
+Two things worth knowing before you invoke it:
 
-   It checks the slices against their files in both directions and refuses a slice with no
-   step it is answerable for — which is precisely what a dropped requirement produces when
-   it happened to carry a repo's only owned step.
-
-6. **Re-run the full loop**, unlike 5.4's one-repo case:
-
-   ```bash
-   ./scripts/iterate.sh 0004-rag-knowledge-base
-   ```
-
-   Full dispatch is correct here, because the slice briefs themselves changed and each agent
-   has to read the new one. Fold any small "also this is slightly off" into the slice file
-   while you are here rather than hand-fixing it — you are paying for the session anyway.
-
-**One rule genuinely relaxes before merge.** `contracts/README.md` § "Changing a contract"
-says additive by default, and the reason is deploy skew: the repos deploy independently, so
-production briefly runs mismatched versions. Nothing has merged and nothing has deployed,
-so that constraint is not binding yet — a frozen-but-unmerged contract can be reshaped
-freely, including removing a field you added an hour ago, and the version need not move
-again because the old one never shipped. That window closes the moment the first pull
-request merges, and afterwards it is a new change with two consumers to migrate.
+- **A dropped requirement does not remove itself.** Its implementation is on the branch, and
+  agents add rather than subtract — so the slice file has to say "remove this" in words. The
+  lane does that; it is the step most worth reading in its output.
+- **Additive-by-default is suspended until the first merge.** That rule exists for deploy
+  skew and nothing has deployed, so a frozen-but-unmerged contract can be reshaped freely —
+  a field removed, the version left alone. The window closes at the first merge.
 
 ---
 
