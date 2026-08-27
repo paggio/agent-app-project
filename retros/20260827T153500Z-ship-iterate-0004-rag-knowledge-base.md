@@ -4,7 +4,7 @@ change: 0004-rag-knowledge-base
 run: changes/0004-rag-knowledge-base/runs/20260827T144501Z
 date: 2026-08-27
 verdict: coherent-with-warnings
-findings: 2 proposed, 6 recorded, 4 rejected
+findings: 2 proposed, 7 recorded, 4 rejected
 pr: none — `make check` cannot pass on any branch this lane is allowed to use; see R2
 ---
 
@@ -236,6 +236,24 @@ what is broken, and it is broken in a way that compounds.
   (`AGENT_DISPATCHERS`). The fixes are on `harness/retro-20260826T163132Z`, unopened. F1
   proposed here is what would have told the lane that.
 - **Disposition:** recorded. The first half is the lane prose gap below; the second is F1.
+
+### R11 — the control repo's half of this change is not pushed, and no lane says it should be
+
+- **Evidence:** found after this record was first written. `feat/0004-rag-knowledge-base`
+  is three commits ahead of its remote — `be87279` (the freeze), `8139f43` (the amendment),
+  `698b8e3` (the run) — so the commit that `change.yaml` records as `freeze_sha`, that
+  `vendor-contracts.sh` published into both product repos at dispatch, and that both open
+  pull requests are implemented against, exists on one laptop. `grep -n "git push"` across
+  `scripts/*.sh` and `.claude/commands/*.md` returns nothing; `prs.sh --create` iterates
+  `$CHANGE_SLICES`, which is the product repos, and `prs.sh --list` was taught about this
+  repo in `915f772` precisely because its half kept going missing. Second occurrence of the
+  class: pull request #7 is titled "realign: recover 0002's stranded control-repo half".
+- **Judgement:** meets the bar. The smallest change is not obvious, though — pushing a
+  branch is a network side effect in a loop that otherwise touches no remote except through
+  `prs.sh`, and whether this repo's half is a pull request per change or a push before
+  dispatch is a decision with an ADR's worth of consequence.
+- **Disposition:** recorded, and reported to the human as a system defect for the state it
+  left behind rather than fixed here.
 
 ### The new lane, graded on its first run
 
