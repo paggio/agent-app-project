@@ -211,10 +211,22 @@ envelope. **The limit is enforced before anything is stored, chunked or embedded
 that has already paid for the embeddings is not a refusal, and no status code reveals the
 difference.
 
-**Text only, for now, and the enum is exhaustive.** `text/plain` and `text/markdown`. Binary
-formats are not an enum value away — extraction quality decides retrieval quality, so a PDF
-path is a change with its own criteria. There is no multipart upload: a client reads the file
-and sends the text in the JSON body.
+**Two intakes, one resource.** `application/json` with a `content` string carries text and
+markdown. `multipart/form-data` with a `file` part carries anything binary, which today means
+`application/pdf`. A client picks by what it holds; a PDF read as text is a corrupted PDF.
+There is deliberately no base64 field: at the size limits a deployment configures, a base64
+body is a third larger and has to be decoded in memory before it can be refused, which makes
+the refusal the expensive path.
+
+**A PDF is stored as a PDF and indexed as its text.** The extracted text is what is chunked,
+summarised, retrieved and quoted in a citation; the content path still returns the original
+bytes.
+How extraction works is not promised. **A PDF with no extractable text is refused `422`**
+rather than stored — a scan indexes nothing, so accepting it would put a document in a
+knowledge base that can never be retrieved, which looks like success and is not.
+
+**Formats are exhaustive per intake, and grow additively.** Nothing else is accepted today,
+and a new format arrives as a new accepted content type rather than as a new endpoint.
 
 ### What a citation promises
 
@@ -234,9 +246,17 @@ which is exactly the thing a person cannot otherwise see.
   that develops holes the first time somebody tidies up. `document_id` is carried alongside
   it so a consumer can link to a document that still exists — and must handle the `404` when
   it does not.
-- **`marker` is per message**, 1-based, and is what the reply's own text refers to as `[1]`.
-  It is not stable across messages. A reply from a model that emits no markers still carries
-  a complete citation list; the list is the promise and the inline markers are a convenience.
+- **At most one citation per document, per message.** Retrieval may supply several chunks of
+  one file and often does; the citation list is per DOCUMENT, and the highest-scoring chunk
+  is the one whose `chunk_index` and `snippet` represent it. This is promised rather than
+  left to a consumer to collapse, because a consumer cannot: two genuinely different
+  documents may share a filename, so a client deduplicating by name would hide a real
+  distinction, and one deduplicating by `document_id` would be reimplementing this rule
+  slightly differently in every client.
+- **`marker` is per message**, 1-based, contiguous over the deduplicated list, and is what
+  the reply's own text refers to as `[1]`. It is not stable across messages. A reply from a
+  model that emits no markers still carries a complete citation list; the list is the promise
+  and the inline markers are a convenience.
 - **`retrieval_consulted` absent is a real state, not false.** Every assistant message stored
   before knowledge bases existed has neither field, and a transcript that mixes old and new
   messages is the ordinary case rather than an edge case. Treat absence as "not applicable".

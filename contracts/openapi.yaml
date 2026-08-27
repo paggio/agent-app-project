@@ -7,7 +7,7 @@
 openapi: 3.1.0
 info:
   title: agent-app API
-  version: 1.4.0
+  version: 1.5.0
   description: Frozen HTTP contract between the backend and its consumers. Changes are made here only,
     in a dedicated commit, before any implementation.
 servers:
@@ -543,6 +543,9 @@ paths:
           application/json:
             schema:
               $ref: '#/components/schemas/CreateDocumentRequest'
+          multipart/form-data:
+            schema:
+              $ref: '#/components/schemas/CreateDocumentUpload'
         required: true
       responses:
         '201':
@@ -718,6 +721,10 @@ paths:
             text/markdown:
               schema:
                 type: string
+            application/pdf:
+              schema:
+                type: string
+                format: binary
         '401':
           description: There is no valid session (`AUTH_REQUIRED`).
           content:
@@ -796,7 +803,8 @@ components:
             the list is the promise, the inline markers are a convenience.
         document_id:
           type: string
-          description: The document this came from, so a consumer can link to it. The document may since
+          description: The document this came from, so a consumer can link to it. Unique within
+            one message's citation list. The document may since
             have been DELETED, in which case every document path answers 404 for this id — a consumer
             must handle that rather than assume the link resolves.
         filename:
@@ -807,9 +815,10 @@ components:
         chunk_index:
           type: integer
           minimum: 0
-          description: Which piece of the document was supplied, counting from 0. How a document is split
-            is not promised and will change, so this is useful for showing "one part of a longer document"
-            and not for addressing anything.
+          description: Which piece of the document was supplied, counting from 0 — the
+            highest-scoring one when several matched. How a document is split is not promised and
+            will change, so this is useful for showing "one part of a longer document" and not for
+            addressing anything.
         snippet:
           type: string
           description: The text that was actually put in front of the model, truncated for display. Safe
@@ -822,9 +831,11 @@ components:
       - chunk_index
       - snippet
       title: Citation
-      description: 'One source supplied to the model for one answer. Read the promise precisely: a citation
-        says this text WAS GIVEN to the model, not that the model demonstrably used it. Nothing in this
-        contract can certify the second, and a consumer must not phrase it as proof.'
+      description: 'One source supplied to the model for one answer, and AT MOST ONE PER DOCUMENT
+        per message — several matching chunks of one file are one source, not several. Read the
+        rest of the promise precisely: a citation says this text WAS GIVEN to the model, not that
+        the model demonstrably used it. Nothing in this contract can certify the second, and a
+        consumer must not phrase it as proof.'
     CreateDocumentRequest:
       properties:
         filename:
@@ -856,6 +867,28 @@ components:
       - content
       title: CreateDocumentRequest
       description: Request body for createDocument.
+    CreateDocumentUpload:
+      properties:
+        file:
+          type: string
+          format: binary
+          description: 'The document itself. This is the intake for anything that is not UTF-8
+            text — a PDF, today. Sending a PDF as text through the JSON intake corrupts it,
+            and there is no base64 field on purpose: at this size limit a base64 body is a
+            third larger and has to be decoded in memory before it can be refused.'
+        filename:
+          type: string
+          minLength: 1
+          maxLength: 255
+          description: Optional. Defaults to the uploaded part's own filename. Same meaning as
+            on the JSON intake — shown to the person, and snapshotted onto every citation.
+      type: object
+      required:
+      - file
+      title: CreateDocumentUpload
+      description: 'Request body for createDocument as multipart/form-data. The content type is
+        taken from the uploaded part, and must be one the deployment accepts: `application/pdf`
+        today. Text and markdown use the JSON intake instead.'
     CreateThreadRequest:
       properties:
         title:
