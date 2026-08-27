@@ -11,12 +11,15 @@
 #   SMOKE_PASSWORD  12+ characters, not on the common-password list.
 #   SMOKE_RUN_ID    the run nonce, in every identity these steps create.
 #
-# ONE COUPLING WORTH KNOWING ABOUT. `an-oversize-document-is-refused` depends on
-# DOCUMENT_MAX_BYTES being 2000 in stack/dev.env — a production-shaped cap would need a
-# megabyte of prose in this file, which nobody would read, and an unreadable suite stops
-# being usable as acceptance criteria. The cap is configuration, not behaviour, so
-# configuring the stack for the suite is the same move SIGNUP_CODE already makes. Every
-# document below is therefore deliberately under 2000 bytes.
+# NO OVERSIZE STEP, DELIBERATELY. The cap is 10 MB. At 2000 bytes a fixture that tripped it
+# was prose a reviewer could read; at 10 MB it is not expressible in a file meant to be read
+# as acceptance criteria, and a step nobody can check is worse than an honest gap. Criterion
+# 12's size half lives in chatbot-backend's tests, where 10 MB is a generated buffer.
+#
+# NO PDF STEP EITHER, and that one is a harness limit rather than a choice: smoke.py speaks
+# `body` and `form` and cannot send a file. Text still seeds this suite, so everything below
+# is asserted exactly as before; the PDF path is proved by Playwright instead. BRIEF.md
+# § "A gap in the oracle" says what that costs.
 #
 # ORDER IS LOAD-BEARING, in four ways. Cookies persist across steps within a run, so:
 #
@@ -108,50 +111,6 @@ steps:
       status: 422
       body_excludes: '"document"'
 
-  - name: an-oversize-document-is-refused
-    owner: chatbot-backend
-    POST: /api/v1/documents
-    body:
-      filename: too-long.md
-      content_type: text/markdown
-      content: |
-        The refusal has to happen before any work does, which is the whole point of this
-        step. Chunking, embedding and indexing all cost something, and a backend that
-        does them first and checks the size afterwards has already spent the money by the
-        time it answers. Nothing downstream can tell the two apart from the status alone,
-        so the assertion below also insists that no document came back.
-        This passage exists only to exceed DOCUMENT_MAX_BYTES, which stack/dev.env pins at
-        2000 for the joined stack. It is prose rather than repeated filler because a
-        reviewer should be able to read every line of a suite that is meant to be read as
-        acceptance criteria, and a wall of the same character defeats that. It is also why
-        the cap is small: a production-shaped cap would need a megabyte here.
-        The size is checked against the decoded UTF-8 content, not against the JSON
-        envelope, because the envelope carries a filename and a content type whose length
-        the caller does not control in any meaningful way and which would make the
-        effective limit depend on how long somebody named their file.
-        A caller that sends this gets a 422 with a message naming the limit, and the
-        knowledge base is exactly as it was before the request arrived. That last part is
-        what the body_excludes line below is for: a 422 that nonetheless indexed the
-        content would satisfy the status assertion perfectly well.
-        THIS PASSAGE HAS TO STAY LONGER THAN THE CAP, and the first version of it did not:
-        it came to 1372 bytes against a limit of 2000, so a completely correct backend
-        answered 201 and the suite called that a failure. The step was right and the fixture
-        was wrong, which is a distinction worth keeping in mind whenever a single assertion
-        fails alone in an otherwise green run. Anybody editing this passage for style should
-        count the bytes afterwards rather than trusting how long it looks on screen, because
-        a block scalar is easy to misjudge by a factor of two.
-        There is a second reason not to trim it. If this fixture ever slipped back under the
-        limit the step would stop asserting anything at all — it would pass on a backend
-        that enforces no limit whatsoever, since such a backend also returns 201, and the
-        only visible difference would be the status code this step no longer checks. That is
-        the vacuous pass this whole harness is built to refuse, arriving through the fixture
-        rather than through the assertion, which is the one door nothing else is watching.
-        So the margin below the cap is deliberate: roughly a quarter again over the limit,
-        which is enough that ordinary editing cannot silently cross back under it.
-    expect:
-      status: 422
-      body_excludes: '"document"'
-
   # --------------------------------------------------------------- ingest, and the record
 
   - name: upload-the-charter
@@ -182,6 +141,24 @@ steps:
 
         The charter is amended by two consecutive votes at quorum, taken in different
         sittings, with the text unchanged between them. A single vote amends nothing.
+
+        ## The harbourmaster
+
+        The harbourmaster is appointed for three years and may not sit on the council in the
+        same period. The office exists so that the winter recess does not leave the
+        settlement without anyone able to decide anything, and its powers are deliberately
+        broad in that window and deliberately narrow outside it.
+
+        ## Records
+
+        Every vote is recorded with the count and the names, and the record is public within
+        the settlement. A vote whose record is lost is treated as void rather than as
+        carried, which is the same principle the quorum rule rests on: the charter would
+        rather nothing happened than that something happened nobody can account for.
+
+        THIS DOCUMENT IS DELIBERATELY LONG ENOUGH TO SPAN SEVERAL CHUNKS. The step below
+        asserts that a document matching in more than one chunk is cited ONCE, and a
+        single-chunk fixture would satisfy that by accident.
     expect:
       status: 201
       json:
@@ -193,7 +170,9 @@ steps:
       # document the retriever can never return, and it would satisfy `status: ready`
       # perfectly happily; a summary is what the router is given, so an empty one is a
       # router deciding on a filename.
-      body_matches: '"chunk_count":\s*[1-9]'
+      # At least TWO, not merely non-zero: the dedup assertion further down is vacuous
+      # against a document that only ever produces one chunk to cite.
+      body_matches: '"chunk_count":\s*[2-9]'
     capture:
       document_id: document.id
     retry:
@@ -266,6 +245,17 @@ steps:
               - marker: 1
                 document_id: ${document_id}
                 filename: quillhaven-charter.md
+      # CRITERION 16, asserted on this same response rather than as its own step, because it
+      # is a property of THIS answer and a second step would buy a second model call to
+      # re-establish what is already in front of us.
+      #
+      # The charter spans several chunks and the question matches more than one of them, so
+      # an implementation that emits one citation per retrieved CHUNK produces the document
+      # twice — which is what [1] README.MD / [2] README.MD looked like in
+      # evidence/duplicate-citations.png. The regex fails if the filename appears twice
+      # anywhere in the body, which is exactly that bug and nothing else: the question does
+      # not contain the filename, and no other field repeats it.
+      body_excludes: 'quillhaven-charter\.md(?:.|\n)*quillhaven-charter\.md'
     retry:
       attempts: 3
       delay: 3

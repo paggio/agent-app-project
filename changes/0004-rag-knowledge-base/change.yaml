@@ -6,10 +6,10 @@ change: 0004-rag-knowledge-base
 # The commit that landed contracts/ alone. The dispatch extracts contracts/ at exactly this
 # SHA and gives the slices nothing else, so it refuses to run without one.
 #
-# Filled in phase 2, by the commit that adds the five /v1/documents paths, the Document and
-# Citation schemas, the two additive fields on Message, and the knowledge-base section of
-# contracts/README.md — with nothing else in its diff.
-freeze_sha: "44e38bc6c2f773e081c7131c4b8adaf1964bde9c"
+# Re-frozen by /ship-iterate: 0e068d7 supersedes 44e38bc, which never merged. It adds the
+# multipart intake, the PDF rules and the one-citation-per-document promise. Only this line
+# is read, so there is no second copy to reconcile.
+freeze_sha: "be87279ccdd39781a02fc3f917f235d487425df2"
 
 # Which repos get a slice. Each needs a matching <name>.md here. Use the SUBMODULE PATH:
 # chatbot-backend, not backend.

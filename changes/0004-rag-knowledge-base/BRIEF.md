@@ -16,9 +16,10 @@ neither is visible unless the citations are.
 
 ## Acceptance criteria (these are the oracle)
 
-- [ ] 1. A signed-in caller uploads a UTF-8 text or markdown document and gets `201` with
-      `status: ready` and `chunk_count >= 1`. It is searchable on the very next request —
-      there is no polling, no pending state to wait through.
+- [ ] 1. A signed-in caller uploads a document and gets `201` with `status: ready` and
+      `chunk_count >= 1`. It is searchable on the very next request — there is no polling,
+      no pending state to wait through. Two intakes, one resource: `application/json` for
+      text and markdown, `multipart/form-data` for anything binary.
 - [ ] 2. A document belongs to exactly one account. A second account's list does not contain
       it, and reading or deleting it by id answers `404 DOCUMENT_NOT_FOUND` — the same answer
       an id that was never issued gets.
@@ -47,21 +48,32 @@ neither is visible unless the citations are.
       deletion is permanent, and the list updates without a reload.
 - [ ] 11. In a browser: an assistant reply that used the knowledge base shows which documents
       it was given, and one that did not use it shows no sources at all.
-- [ ] 12. A document over `DOCUMENT_MAX_BYTES` is refused `422` and nothing is stored or
-      indexed; a content type outside the accepted set is refused `422` the same way.
+- [ ] 12. A document over `DOCUMENT_MAX_BYTES` (10 MB) is refused `422` and nothing is
+      stored, extracted or indexed; a content type outside the accepted set is refused `422`
+      the same way. The size half is proved in chatbot-backend's own tests — see "A gap in
+      the oracle"; only the content-type half is still reachable at the seam.
 - [ ] 13. An account with an empty knowledge base gets exactly the behaviour it had before
       this change. Retrieval is additive: no documents means no citations, no extra latency
       beyond the router, and every step in `smoke/baseline.yaml` still passes.
+- [ ] 14. A PDF is accepted, its text extracted, and the extracted text is what gets chunked,
+      indexed and cited. A PDF with no extractable text — a scan — is refused `422` rather
+      than stored as a document that can never be retrieved.
+- [ ] 15. A person can read an uploaded document's content in the page, without downloading
+      it and without leaving `/knowledge`.
+- [ ] 16. A document cited more than once in one answer appears **once** in that answer's
+      sources. Two chunks of one file is one source, not two.
 
 ## Out of scope
 
 Each of these is a decision, not an omission.
 
-- **PDF and every other binary format.** Extraction quality dominates retrieval quality, so
-  a PDF path is its own change with its own criteria — and `smoke.py` has no multipart
-  support, so a binary upload could not be asserted at the seam anyway (see "A gap in the
-  oracle"). This milestone accepts `text/plain` and `text/markdown` as a JSON `content`
-  field, which is exactly what makes the whole chain assertable.
+- **Formats beyond text, markdown and PDF.** Office documents, HTML and images are each an
+  extractor with its own failure modes. PDF is in because it is what people actually have.
+- **Scanned PDFs and OCR.** A PDF whose pages are images yields no text. This change refuses
+  it loudly rather than storing something that can never be retrieved; OCR is a dependency
+  and a quality problem of its own.
+- **Page-level citations.** A citation names the document and one extracted chunk. Mapping a
+  chunk back to a page is a property of the extractor, and belongs with whatever needs it.
 - **Asynchronous ingest.** Synchronous is bounded by the size cap and removes a status race
   from every step that follows an upload. `Document.status` is in the contract from day one
   so that `pending`/`indexing` is an additive change rather than a reshape.
@@ -89,6 +101,14 @@ All additive. Nothing existing changes shape, so a deployed old client keeps wor
 
 - **New paths.** `POST /v1/documents`, `GET /v1/documents`, `GET /v1/documents/{document_id}`,
   `GET /v1/documents/{document_id}/content`, `DELETE /v1/documents/{document_id}`.
+- **`POST /v1/documents` takes two request shapes.** `application/json` with a `content`
+  string for text and markdown, unchanged; `multipart/form-data` with a `file` part for
+  binary. Base64 in the JSON body was the alternative and was rejected: at a 10 MB cap it
+  means 13.3 MB request bodies held in memory to be decoded, which is a poor interface
+  chosen to suit a test tool. See "A gap in the oracle" for what that costs.
+- **`application/pdf` joins the accepted content types**, an additive enum value.
+- **At most one citation per document per message**, promised in `contracts/README.md`. Two
+  chunks of one file is one source. The schema does not change; what it promises does.
 - **New schemas.** `Document`, `DocumentResponse`, `DocumentListResponse`,
   `CreateDocumentRequest`, `Citation`.
 - **`Message` gains two optional fields**, `citations` and `retrieval_consulted`. Optional
@@ -210,6 +230,19 @@ criterion nobody is keeping:
 - **The document quota and the upload rate limit are not asserted at the seam**, because
   reaching either costs a hundred ingests. They belong to `chatbot-backend`'s own tests, the
   same reasoning that keeps the per-account message limit out of the smoke suite.
+- **PDF upload is not asserted at the seam either, and this is the one that hurts.**
+  `smoke.py` speaks `body` (JSON) and `form` (urlencoded) and has no multipart, so the suite
+  cannot send a file at all. Text keeps seeding the suite, so the retrieval, citation and
+  deletion chain stays asserted exactly as before — but the headline new format is proved
+  only by Playwright, which uploads a real PDF fixture through the real page. That is a
+  genuine oracle rather than a stub, and it is still one oracle where the others have two.
+  The harness fix is a `files:` key on a smoke step; it is a control-repo change and
+  `CLAUDE.md` forbids slipping one into a change, so it belongs to a retrospective. When it
+  lands, the PDF steps get written and this paragraph gets shorter.
+- **The size refusal left the seam.** At 2000 bytes an oversize fixture was prose a reviewer
+  could read. At 10 MB it is not expressible in a suite meant to be read as criteria, so the
+  step is deleted rather than kept as something nobody can check. Criterion 12's size half
+  is now a `chatbot-backend` test, where 10 MB is a generated buffer and costs nothing.
 - **Criterion 9 is a document.** No step can assert prose. It is verified by review and by
   the backend repo's own gate, which fails a behaviour change that does not update
   `docs/architecture.md`.

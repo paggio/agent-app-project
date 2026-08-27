@@ -29,6 +29,42 @@ which of those documents they were built from.
   field — the summary, the size and the chunk count all come from the server and are re-read
   rather than guessed at, exactly as a chat title is.
 
+### 1b. AMENDED — the picker, PDFs, and reading a document in the page
+
+This section supersedes parts of §1 above and §2 below. Where they disagree, this wins.
+Two screenshots ship with this change and you can open both:
+
+- `changes/0004-rag-knowledge-base/evidence/choose-file-control.png`
+- `changes/0004-rag-knowledge-base/evidence/duplicate-citations.png`
+
+**The file control is a raw `<input type="file">` and should be a button.** The first
+screenshot is what it looks like: the browser's default "Choose file / No file chosen",
+which ignores the design tokens, cannot be sized or labelled, and renders differently in
+every browser. Replace it with a real button that opens a visually hidden input, and show
+the chosen filename beside it as your own text. It must stay a real `<input type="file">`
+underneath and stay reachable by keyboard and by a screen reader — a `<div>` with a click
+handler is not a file picker.
+
+The helper text under it still says text and markdown only. It now accepts PDF too.
+
+**PDFs upload as `multipart/form-data`; text and markdown keep the JSON path.** Send a
+`file` part for a PDF rather than reading it as text — reading a binary as text corrupts it,
+and there is no base64 field in this contract. Accept `.pdf` in the picker.
+
+**A person can read an uploaded document in the page** — criterion 15, and there is no new
+endpoint for it: `GET /v1/documents/{document_id}/content` already serves the stored
+original. Render text and markdown inline; let the browser display a PDF. Reading a document
+must not require leaving `/knowledge` and must not be a download. A `404` here means the
+document is gone, the same as everywhere else in this contract.
+
+**Sources are already deduplicated by the server** — at most one citation per document per
+message, markers renumbered. The second screenshot is what the old behaviour looked like:
+`[1] README.MD` and `[2] README.MD`, two chunks of one file rendered as two sources. Your
+part is not to fix it — it is fixed upstream — but **do not reintroduce it** by keying the
+list on anything other than what the server sent, and do not add a client-side "unique by
+filename" pass either: two genuinely different documents may share a filename, and collapsing
+those would hide a real distinction.
+
 ### 2. Citations in the transcript
 
 - An assistant message may carry `citations` and `retrieval_consulted`. Both are **optional**
@@ -88,6 +124,14 @@ and report it rather than working around it.
 - [ ] An end-to-end flow against the real backend: sign in, upload a document, see it listed,
       ask the assistant about it, see the reply name it as a source, delete it, see the list
       update. This is the oracle for criteria 10 and 11 and there is no other.
+- [ ] **Upload a real PDF fixture through the page**, and assert it is listed, and that a
+      question about its contents comes back citing it. This is the ONLY oracle for criterion
+      14 anywhere in the system: `smoke.py` cannot send a file, so the seam suite never
+      exercises a PDF. Commit a small real PDF as a fixture; do not generate one at runtime.
+- [ ] Reading a document's content in the page, without a download and without navigating
+      away — criterion 15.
+- [ ] A document that matched in more than one chunk renders as ONE source — criterion 16.
+- [ ] The file control is operable by keyboard alone, and announces itself as a file input.
 - [ ] The generated wire types are regenerated and the client typechecks against them.
 - [ ] the repo's own gates pass (`.claude/hooks/gate.sh`) — including no raw colour values
       outside the token layer.

@@ -26,9 +26,9 @@ services:
       # Must stay false for this origin — it is http, and smoke.py's cookie jar never
       # returns a Secure cookie over http. See contracts/README.md.
       SESSION_COOKIE_SECURE: ${SESSION_COOKIE_SECURE:-false}
-      # Small on purpose, so 0004's oversize-upload refusal is assertable with prose a
-      # reviewer can read. stack/dev.env says why at length.
-      DOCUMENT_MAX_BYTES: ${DOCUMENT_MAX_BYTES:-2000}
+      # 10 MB, matching the backend's own default. stack/dev.env records why this stopped
+      # being an override.
+      DOCUMENT_MAX_BYTES: ${DOCUMENT_MAX_BYTES:-10485760}
 
   postgres:
     labels:

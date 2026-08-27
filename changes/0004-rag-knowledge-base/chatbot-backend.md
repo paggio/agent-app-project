@@ -85,6 +85,42 @@ what was decided, so it is specified rather than left open.
   that leaves the object behind passes every metadata assertion and quietly accumulates
   bytes nobody is accounting for.
 
+### 2b. AMENDED — PDFs, a 10 MB cap, and one citation per document
+
+This section supersedes parts of §2 and §3 below. Where they disagree, this wins.
+
+**`POST /v1/documents` takes two request shapes, one resource.**
+
+- `application/json` with a `content` string — text and markdown, exactly as already built.
+  Do not change it; the smoke suite seeds every document through it.
+- `multipart/form-data` with a `file` part — anything binary. Base64 in the JSON body was
+  the alternative and was rejected: at a 10 MB cap it means 13.3 MB bodies decoded in
+  memory, which is a bad interface chosen to suit a test tool.
+
+**`application/pdf` joins the accepted types.** Extract its text; the extracted text is what
+gets chunked, indexed, summarised and cited — the stored original stays the PDF. **A PDF
+with no extractable text is refused `422`**, not stored: a scan indexes nothing and would
+sit in a knowledge base as a document that can never be retrieved, which is worse than a
+refusal because it looks like it worked.
+
+**`DOCUMENT_MAX_BYTES` becomes 10 MB** (10485760). Two consequences that are not just a
+constant:
+
+- Enforce it **while reading the upload**, not after. Reading an unbounded multipart body
+  into memory and then measuring it is how the cap becomes the thing that crashes you.
+- The refusal must still precede storage, extraction and indexing.
+
+**REMOVE the per-chunk citation.** Today two chunks of one document produce two citations,
+which renders as `[1] README.MD` / `[2] README.MD` — see
+`changes/0004-rag-knowledge-base/evidence/duplicate-citations.png`. **At most one citation
+per document per message.** The highest-scoring chunk represents the document; its
+`chunk_index` and `snippet` are the ones carried. Markers are then assigned over the deduped
+list, so they stay 1..k with no gaps. This is a promise in `contracts/README.md`, not an
+option — do not make it configurable.
+
+Retrieval itself still returns chunks and still uses several from one document as context if
+they score. Only the CITATION list is per document.
+
 ### 3. Citations on the stored message
 
 - The assistant message carries `citations` and `retrieval_consulted`, and both are
@@ -165,8 +201,14 @@ and report it rather than working around it.
       `heuristic`, so this repo is where the other branch is covered at all.
 - [ ] Ownership: every document read, write and delete scoped by account in the query, with a
       test that a second account's list is empty rather than filtered.
-- [ ] `DOCUMENT_MAX_BYTES` refuses before anything is stored or indexed — assert the store
-      and the index were not touched, not merely that the status was 422.
+- [ ] `DOCUMENT_MAX_BYTES` refuses before anything is stored, extracted or indexed — assert
+      the store and the index were not touched, not merely that the status was 422. **This is
+      now the only place criterion 12's size half is proved**: 10 MB is not expressible in
+      the smoke suite, so the seam no longer covers it. A generated buffer costs nothing here.
+- [ ] A PDF round trip: uploaded, text extracted, chunked, retrievable, cited. And a PDF with
+      no extractable text refused 422 with nothing stored.
+- [ ] Two chunks of one document in one answer produce ONE citation, with markers renumbered
+      1..k over the deduped list.
 - [ ] Delete removes row, object and chunks; assert all three, separately.
 - [ ] A citation still names its document after the document is deleted.
 - [ ] `make contract` passes against the vendored `contracts/openapi.yaml`.
@@ -181,14 +223,15 @@ After every slice lands, the control repo deploys all of them together and runs
 - [ ] `listing-documents-requires-a-session` — `401` on the read path, no array leaked
 - [ ] `register-kb-owner` — unchanged auth, still works
 - [ ] `an-unsupported-content-type-is-refused` — `422`, no document created
-- [ ] `an-oversize-document-is-refused` — `422`, no document created
-- [ ] `upload-the-charter` — `201`, `status: ready`, a non-zero `chunk_count`
+- [ ] `upload-the-charter` — `201`, `status: ready`, and `chunk_count` of **at least 2**
 - [ ] `the-document-has-a-summary-for-the-router` — the summary was persisted, not just returned
 - [ ] `the-document-is-listed` — it appears in its owner's list
 - [ ] `the-original-is-served-back` — the stored object comes back with its content type
 - [ ] `start-a-chat` — unchanged, still works
 - [ ] `asking-about-the-charter-consults-the-knowledge-base` — `retrieval_consulted: true`,
-      a citation with `marker: 1` naming the document
+      a citation with `marker: 1` naming the document, **and that filename appearing exactly
+      once in the whole response**. The charter now spans several chunks and the question
+      matches more than one, so a per-chunk citation list fails here.
 - [ ] `an-unrelated-question-consults-nothing` — `retrieval_consulted: false` and no citation
 - [ ] `register-a-stranger` — unchanged, still works
 - [ ] `the-strangers-list-omits-the-document` — the list is scoped, not just the detail read
@@ -211,9 +254,9 @@ attached. The assertions belong to the control repo: fix the cause, never the as
 
 ## Notes
 
-- **`DOCUMENT_MAX_BYTES` is 2000 in the joined stack**, deliberately, so the oversize
-  refusal can be asserted with prose a reviewer can read instead of a megabyte of filler.
-  Pick a sane production default in your own configuration; do not hardcode 2000.
+- **`DOCUMENT_MAX_BYTES` is 10 MB everywhere now**, including the joined stack. The old
+  2000-byte override existed only so an oversize fixture could be readable prose, and that
+  trade stopped being worth it — see the Verification list.
 - **Migrations are additive and ordered**: the `documents` table, then the two new columns on
   the message table. Existing assistant messages have neither — a message from before this
   change must read back cleanly with no citations and no `retrieval_consulted`, which is

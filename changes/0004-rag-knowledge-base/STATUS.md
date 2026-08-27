@@ -3,8 +3,27 @@
 
 ## Contract freeze
 
-- SHA: `44e38bc6c2f773e081c7131c4b8adaf1964bde9c`
-- Frozen: 2026-08-26
+- SHA: `be87279ccdd39781a02fc3f917f235d487425df2`
+- Frozen: 2026-08-27
+- Supersedes `44e38bc…` (2026-08-26), which never merged.
+
+## Amended, 2026-08-27 — `/ship-iterate`
+
+The first version shipped text and markdown only, a 2000-byte cap in the joined stack, and a
+citation per retrieved chunk. Looking at it produced four changes:
+
+| Was | Is | Why |
+| --- | --- | --- |
+| text and markdown, JSON only | PDF too, over a second `multipart/form-data` intake | it is what people actually have. Base64 in JSON was rejected: at 10 MB it is a third larger and decoded in memory before it can be refused |
+| `DOCUMENT_MAX_BYTES` 2000 in the stack | 10 MB everywhere | 2000 was an artefact of wanting a readable oversize fixture, and it was what the UI told people |
+| a citation per matching chunk | at most one per document | two chunks of one file rendered as `[1] README.MD` / `[2] README.MD` — `evidence/duplicate-citations.png` |
+| raw `<input type="file">`, no way to read a document | a real button, and content readable in the page | `evidence/choose-file-control.png` |
+
+**What it cost, stated because a diff will not show it.** The oversize smoke step is gone —
+10 MB is not expressible in a suite meant to be read as criteria — so criterion 12's size
+half is now only a backend test. And PDF upload is asserted nowhere at the seam, because
+`smoke.py` cannot send a file; Playwright is its only oracle. Both are in BRIEF.md
+§ "A gap in the oracle".
 
 ## Pull requests
 
