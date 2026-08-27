@@ -53,8 +53,9 @@ VAR = re.compile(r"\$\{([A-Za-z_][A-Za-z0-9_]*)\}")
 
 # The whole step vocabulary, in one place. An unknown key used to be silently ignored, so
 # `expects:` for `expect:` produced a step that passed on any response at all.
-STEP_KEYS = {"name", "owner", "headers", "body", "form", "base", "expect", "capture",
-             "retry", "tags", "contract", "_suite"} | set(METHODS)
+STEP_KEYS = {"name", "owner", "headers", "body", "form", "files", "base", "expect",
+             "capture", "retry", "tags", "contract", "_suite"} | set(METHODS)
+FILE_KEYS = {"path", "filename", "content_type"}
 EXPECT_KEYS = {"status", "json", "body_matches", "body_excludes", "headers", "cookie"}
 TAGS = {"local", "remote"}
 
@@ -108,6 +109,63 @@ def declared_vars() -> set[str]:
     return names
 
 
+def suite_dir(step: dict[str, Any]) -> str:
+    """Fixtures resolve against the suite that names them, so one travels with its change."""
+    return os.path.dirname(os.path.abspath(step.get("_suite") or "."))
+
+
+def lint_files(label: str, step: dict[str, Any], files: Any) -> list[str]:
+    problems: list[str] = []
+    if "body" in step:
+        problems.append(f"{label}: body and files together — a request is JSON or "
+                        f"multipart, not both. Text fields beside an upload go in form:")
+    if not isinstance(files, dict) or not files:
+        return problems + [f"{label}: files must be a non-empty mapping of form field name "
+                           f"to a fixture beside the suite"]
+    for field, item in files.items():
+        if isinstance(item, str):
+            item = {"path": item}
+        if not isinstance(item, dict) or not item.get("path"):
+            problems.append(f"{label}: files.{field} needs a path (a string, or a mapping "
+                            f"with path/filename/content_type)")
+            continue
+        for key in item:
+            if key not in FILE_KEYS:
+                problems.append(f"{label}: files.{field}: unknown key {key!r}"
+                                f"{suggest(key, FILE_KEYS)} "
+                                f"(known: {' '.join(sorted(FILE_KEYS))})")
+        path = str(item["path"])
+        # A fixture that is not there fails at request time, where it reads as the
+        # service's fault. It is the suite's fault, and --lint is where that gets said.
+        if "${" not in path and not os.path.isfile(os.path.join(suite_dir(step), path)):
+            problems.append(f"{label}: files.{field}: {path} is not next to the suite "
+                            f"({suite_dir(step)})")
+    return problems
+
+
+def step_files(step: dict[str, Any], scope: dict[str, Any]) -> dict[str, Any] | None:
+    """`files:` — the one request shape this suite could not make.
+
+    0004's PDF upload has no seam step because the vocabulary was `body` and `form`, so a
+    criterion ended up with a browser as its only oracle and, the freeze before, the
+    interface itself was shaped to suit what could be sent. See docs/adr/0001: the seam is
+    what this suite exists to assert.
+    """
+    spec = step.get("files")
+    if not spec:
+        return None
+    out: dict[str, Any] = {}
+    for field, item in interpolate(spec, scope).items():
+        if isinstance(item, str):
+            item = {"path": item}
+        path = os.path.join(suite_dir(step), str(item.get("path")))
+        with open(path, "rb") as fh:
+            data = fh.read()
+        out[field] = (item.get("filename") or os.path.basename(path), data,
+                      item.get("content_type") or "application/octet-stream")
+    return out
+
+
 def lint_steps(steps: list[dict[str, Any]]) -> list[str]:
     """Everything checkable without making a request.
 
@@ -132,6 +190,10 @@ def lint_steps(steps: list[dict[str, Any]]) -> list[str]:
         if len(found) != 1:
             problems.append(f"{label}: must have exactly one of {', '.join(METHODS)} — "
                             f"found {', '.join(found) if found else 'none'}")
+
+        files = step.get("files")
+        if files is not None:
+            problems += lint_files(label, step, files)
 
         expect = step.get("expect")
         if expect is None:
@@ -341,6 +403,12 @@ def run_step(client: httpx.Client, step: dict[str, Any], scope: dict[str, Any],
     headers = interpolate(step.get("headers") or {}, scope)
     body = interpolate(step.get("body"), scope) if "body" in step else None
     form = interpolate(step.get("form"), scope) if "form" in step else None
+    # A missing fixture is the harness refusing, not the service failing — exit 2, not a
+    # failed assertion routed to whichever repo owns the step. See docs/adr/0003.
+    try:
+        files = step_files(step, scope)
+    except OSError as exc:
+        die(f"step {step.get('name', '?')!r}: {exc}")
     # Interpolated like the request, which it was NOT before: a `${VAR}` inside expect stayed
     # a literal, so an assertion could never match a value the request had templated. It
     # surfaced the moment identities were namespaced with ${SMOKE_RUN_ID} — the request
@@ -369,7 +437,7 @@ def run_step(client: httpx.Client, step: dict[str, Any], scope: dict[str, Any],
     for attempt in range(1, attempts + 1):
         try:
             resp = client.request(method, step_base.rstrip("/") + path, headers=headers,
-                                  json=body, data=form)
+                                  json=body, data=form, files=files)
         except httpx.RequestError as exc:
             last_err = f"request failed: {exc.__class__.__name__}: {exc}"
             result["actual"] = {"error": last_err}
