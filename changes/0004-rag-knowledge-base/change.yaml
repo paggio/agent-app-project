@@ -1,0 +1,48 @@
+# The machine half of a change. BRIEF.md is for humans and for the implementing agent;
+# this is what the scripts parse.
+
+change: 0004-rag-knowledge-base
+
+# The commit that landed contracts/ alone. The dispatch extracts contracts/ at exactly this
+# SHA and gives the slices nothing else, so it refuses to run without one.
+#
+# Re-frozen by /ship-iterate: 0e068d7 supersedes 44e38bc, which never merged. It adds the
+# multipart intake, the PDF rules and the one-citation-per-document promise. Only this line
+# is read, so there is no second copy to reconcile.
+freeze_sha: "be87279ccdd39781a02fc3f917f235d487425df2"
+
+# Which repos get a slice. Each needs a matching <name>.md here. Use the SUBMODULE PATH:
+# chatbot-backend, not backend.
+#
+# No infra slice: nothing is provisioned. OpenSearch and MinIO join the LOCAL stack only,
+# and infra/ is an empty skeleton with no IaC tool chosen — a cloud knowledge base is a
+# later change against a repo that can currently deploy nothing. See BRIEF.md § Deployment.
+slices:
+  - chatbot-backend
+  - frontend
+
+deploy:
+  # Bring up the joined stack and smoke it. Effectively always true.
+  local: true
+  # A real deploy. Requires an infra slice, and there is nothing to deploy to: the best
+  # outcome this change can reach is `verified-local`, and that is on purpose rather than
+  # an oversight. Setting this true would fail loudly with "infra declares no deploy
+  # target", which is docs/adr/0002 §4 working as intended.
+  infra: false
+
+smoke:
+  file: smoke.yaml
+  # The single origin a browser uses: app at /, API at /api/. Not the backend's own port —
+  # that cannot catch a broken proxy.
+  base: http://localhost:8080
+  # Raised from 0003's 360s. This suite makes SIX model-bearing calls where 0003 made two:
+  # three turns through the graph, each paying the routing node as well as the answer node.
+  # On top of that the first upload loads the ONNX embedding model into the process and
+  # embeds every chunk. OpenSearch's own cold start is NOT in here — `up --wait` pays that
+  # before the suite begins — but a first query against a freshly created index is.
+  timeout_s: 600
+  # REQUIRED here, not an optimisation. Criteria 10 and 11 are browser facts: every
+  # HTTP-visible property in this suite passes with no /knowledge page in existence at all,
+  # and with an assistant reply that renders its citations nowhere. This flag is their only
+  # oracle. See BRIEF.md § "A gap in the oracle".
+  e2e: true

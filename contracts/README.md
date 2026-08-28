@@ -158,6 +158,123 @@ does not extend anything. This is not a new rule — it is the invariant the who
 above rests on, restated here because `updated_at` is exactly the field somebody will be
 tempted to bump on read.
 
+## Documents, the knowledge base, and what a citation promises
+
+Promised here rather than in `openapi.yaml` for the same reason the session and the chats
+are: these are rules about *which* answer is correct and *why*, and a re-harvest would drop
+every word of it.
+
+**A document belongs to exactly one account, and everyone else gets `404`.** The same four
+situations collapse to one indistinguishable `404 DOCUMENT_NOT_FOUND` — never issued,
+deleted, owned by someone else, malformed — for the reason the chats section already gives:
+a `403` confirms the id exists, and ids appear in URLs people paste. **Including on the
+content path**, which is the one that reaches the object store: that is the one handler where
+fetching first and checking ownership afterwards is a natural thing to write, and where the
+consequence is somebody else's document body on the wire rather than a status code.
+
+> **The refusal must not be a delete that reports itself missing.** Identical to the trap
+> the chats section names, and it has the same only-cure: the owner reads the document back
+> afterwards. Every negative assertion is satisfied by a backend that destroys the thing and
+> then honestly reports it gone.
+
+**Scoped in the query, not filtered after it.** The list endpoint especially. A detail
+endpoint can be scoped correctly while the list returns everybody's documents, and no
+assertion about the detail endpoint would notice.
+
+**The stored original is the system of record; the index is derived.** This is the load-bearing
+one, and it is why `GET /v1/documents/{document_id}/content` exists at all rather than being
+an obvious thing to omit. Chunking strategies, embedding models and vector dimensions all
+change, and every one of those changes means re-deriving the index from the originals.
+Re-deriving must never mean asking people to upload their documents again. So:
+
+- What was uploaded is served back unchanged, under the content type it was uploaded as.
+- How a document is split, what it is embedded with, and how retrieval scores are combined
+  are **not promised** and will change. `chunk_count` and `chunk_index` are therefore
+  descriptive, not addressable: they tell a consumer "one part of a longer document" and
+  nothing more.
+- **Deleting a document deletes all three copies** — the record, the stored original, and
+  every indexed piece. A delete that leaves the object behind satisfies every metadata
+  assertion and quietly accumulates bytes nobody is accounting for.
+
+**Ingest is synchronous, and `status` exists anyway.** A `201` means the document is already
+searchable — there is no pending state to poll through, which is what keeps a client from
+having to model one. `Document.status` is in the schema from the first version so that
+`pending` or `indexing` is an additive value later rather than a reshape, and a consumer
+must tolerate a value it does not know.
+
+**Size and type are stated policy; the quota is a refusal.** Content over the configured
+limit and a content type outside the accepted set are `422`, because the rule above —
+*422 means the request was malformed or violated a stated policy* — puts them there, exactly
+as it puts the password policy there. An account that has reached its document limit sent a
+well-formed request that was refused, so that is `409 DOCUMENT_QUOTA_EXCEEDED` in the
+envelope. **The limit is enforced before anything is stored, chunked or embedded**: a refusal
+that has already paid for the embeddings is not a refusal, and no status code reveals the
+difference.
+
+**Two intakes, one resource.** `application/json` with a `content` string carries text and
+markdown. `multipart/form-data` with a `file` part carries anything binary, which today means
+`application/pdf`. A client picks by what it holds; a PDF read as text is a corrupted PDF.
+There is deliberately no base64 field: at the size limits a deployment configures, a base64
+body is a third larger and has to be decoded in memory before it can be refused, which makes
+the refusal the expensive path.
+
+**A PDF is stored as a PDF and indexed as its text.** The extracted text is what is chunked,
+summarised, retrieved and quoted in a citation; the content path still returns the original
+bytes.
+How extraction works is not promised. **A PDF with no extractable text is refused `422`**
+rather than stored — a scan indexes nothing, so accepting it would put a document in a
+knowledge base that can never be retrieved, which looks like success and is not.
+
+**Formats are exhaustive per intake, and grow additively.** Nothing else is accepted today,
+and a new format arrives as a new accepted content type rather than as a new endpoint.
+
+### What a citation promises
+
+Read this one precisely, because the temptation to over-claim is the whole risk of a grounded
+assistant.
+
+> **A citation says the model WAS GIVEN this text. It does not say the model used it.**
+
+Nothing in this contract can certify the second. A consumer must not present citations as
+proof that a particular sentence came from a particular document, and must not phrase them as
+verification. What they honestly support is "here is what the assistant was working from",
+which is exactly the thing a person cannot otherwise see.
+
+- **`filename` on a citation is a snapshot**, taken when the answer was written. It is not a
+  lookup and it is not a join. This is what lets a transcript keep naming its sources after
+  the knowledge base has moved on, and it is the difference between a durable record and one
+  that develops holes the first time somebody tidies up. `document_id` is carried alongside
+  it so a consumer can link to a document that still exists — and must handle the `404` when
+  it does not.
+- **At most one citation per document, per message.** Retrieval may supply several chunks of
+  one file and often does; the citation list is per DOCUMENT, and the highest-scoring chunk
+  is the one whose `chunk_index` and `snippet` represent it. This is promised rather than
+  left to a consumer to collapse, because a consumer cannot: two genuinely different
+  documents may share a filename, so a client deduplicating by name would hide a real
+  distinction, and one deduplicating by `document_id` would be reimplementing this rule
+  slightly differently in every client.
+- **`marker` is per message**, 1-based, contiguous over the deduplicated list, and is what
+  the reply's own text refers to as `[1]`. It is not stable across messages. A reply from a
+  model that emits no markers still carries a complete citation list; the list is the promise
+  and the inline markers are a convenience.
+- **`retrieval_consulted` absent is a real state, not false.** Every assistant message stored
+  before knowledge bases existed has neither field, and a transcript that mixes old and new
+  messages is the ordinary case rather than an edge case. Treat absence as "not applicable".
+- **True with an empty citation list is also a real state**: the assistant consulted the
+  knowledge base and found nothing relevant. That is a different fact from not having looked,
+  and it is worth showing as one.
+
+**Whether a turn consults the knowledge base is a per-turn judgement, and its criteria are
+not promised.** A consumer must not depend on any particular question producing retrieval,
+must not offer a control that forces it, and must not describe the assistant as searching
+every time — because it does not, deliberately: consulting a knowledge base costs something
+on every turn, and the decision not to is the reason it is affordable.
+
+**`POST /v1/chat` never consults anything.** It is stateless by contract, it has no history,
+and it has no knowledge base either. That is its whole shape, and the reason it survives
+alongside the chat endpoints rather than being replaced. A caller that wants the knowledge
+base posts into a chat.
+
 ## Changing a contract
 
 1. Additive by default. The repos deploy independently, so production will always

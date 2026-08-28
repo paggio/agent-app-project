@@ -250,6 +250,98 @@ The stack is left running after a verify, so the fast loop is `make ps`,
 `make logs SVC=backend` and `./scripts/stack.sh rebuild backend` — one service, not a full
 cycle.
 
+### 5.4 It went green and you still do not like it
+
+The most common state, and the one with the least written about it. The suite passed, the
+pull requests are open, nothing is merged — and you have now actually looked at the thing
+and something is wrong. **The lane is not over and you do not start a new change.** `/ship`
+takes a change directory as well as a sentence, and resumes at the phase that change has
+reached:
+
+```bash
+> /ship 0004-rag-knowledge-base
+```
+
+What it costs depends entirely on which of three things you dislike, and picking wrong is
+what turns a small objection into an afternoon.
+
+**a. The behaviour is wrong and no assertion caught it.** Then the missing thing is a
+criterion, and it is missing *here*. Write the step in `changes/<change>/smoke.yaml` first
+and watch it fail against what is already built:
+
+```bash
+make verify CHANGE=0004-rag-knowledge-base    # asserts what is checked out; dispatches nothing
+```
+
+Do this before touching any implementation. A dislike that never becomes an assertion is
+one the next change re-breaks silently, and the whole point of the suite is that the
+criteria outlive the conversation that produced them. `make verify` is strict about the
+branch: it refuses unless each slice repo is on `feat/<change>`, because asserting against
+code this change did not write is a pass that means nothing.
+
+**b. The behaviour is wrong, in one repo, and the interface does not move.** The cheapest
+path by a wide margin, and the submodule is already on the right branch:
+
+```bash
+cd chatbot-backend      # already on feat/0004-…; do NOT switch to main
+claude
+```
+
+That repo's own gates and Stop hook apply, and pushing updates the open pull request in
+place. Then come back and re-assert with `make verify` above. **Do not reach for the full
+loop for this.** `./scripts/iterate.sh` re-dispatches *every* slice on its first attempt —
+there is no `--only` — so a one-line frontend fix buys you a fresh backend session too.
+
+**c. The interface itself is wrong.** Then it is phase 2 again, and the freeze has to move
+with it: edit `contracts/`, commit it **alone**, put that commit's SHA in `change.yaml` as
+`freeze_sha`, and re-run the whole loop so both slices are rebuilt against the new tree.
+
+```bash
+./scripts/iterate.sh 0004-rag-knowledge-base
+```
+
+This is the expensive one and it is supposed to be. A contract change costs two consumer
+pull requests, which is the question to ask before making it.
+
+**Three things that bite.**
+
+- `make verify` and `--verify-only` assert what is **checked out**, uncommitted work
+  included. That is what makes them the fast loop, and it is also why a green verify is not
+  evidence about what a reviewer will see unless the submodule trees are clean.
+- **Do not merge in order to fix.** Merging ends this lane; `/realign` is the after-merge
+  lane and it will not reopen it. Iterate while the pull requests are still open.
+- If a smoke assertion is what you disagree with, change it **here, on purpose** — never in
+  a product repo, and never by weakening it to match what was built. That is the one edit
+  this whole structure exists to prevent.
+
+### 5.5 You changed your mind about the requirement
+
+Different from 5.4, and the difference decides the lane: there the criterion was right and
+the build was wrong. Here the build may be fine and **the criterion is what you no longer
+want.**
+
+```bash
+> /ship-iterate 0004-rag-knowledge-base: also accept PDFs, and drop the summary column
+```
+
+It amends `BRIEF.md`, then `smoke.yaml`, then the slice files — that order, because each is
+the input to the next and starting at the code produces a change whose record no longer
+matches it — re-freezes if the interface moved, re-gates, and runs the loop against the
+branches that already exist, so the open pull requests update rather than multiply.
+
+**Merge is the boundary.** It refuses once anything has merged, because at that point the
+criteria describe what is running and rewriting them destroys the record of what was decided
+and when. Then it is a new change. `docs/adr/0010`.
+
+Two things worth knowing before you invoke it:
+
+- **A dropped requirement does not remove itself.** Its implementation is on the branch, and
+  agents add rather than subtract — so the slice file has to say "remove this" in words. The
+  lane does that; it is the step most worth reading in its output.
+- **Additive-by-default is suspended until the first merge.** That rule exists for deploy
+  skew and nothing has deployed, so a frozen-but-unmerged contract can be reshaped freely —
+  a field removed, the version left alone. The window closes at the first merge.
+
 ---
 
 ## 6. Submodules, the sharpest edge

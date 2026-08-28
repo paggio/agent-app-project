@@ -7,7 +7,7 @@
 openapi: 3.1.0
 info:
   title: agent-app API
-  version: 1.3.0
+  version: 1.5.0
   description: Frozen HTTP contract between the backend and its consumers. Changes are made here only,
     in a dedicated commit, before any implementation.
 servers:
@@ -523,6 +523,220 @@ paths:
             application/json:
               schema:
                 $ref: '#/components/schemas/ErrorResponse'
+  /v1/documents:
+    post:
+      tags:
+      - documents
+      summary: Add a document to the caller's knowledge base
+      description: 'Stores the original, splits it, indexes it, and returns when it is searchable — there
+        is no pending state to poll through. The body carries the text directly: this milestone accepts
+        UTF-8 text and markdown only, and there is no multipart upload. Content over the configured size
+        limit and content types outside the accepted set are both 422, because both are stated policy;
+        an account that has reached its document limit is a well-formed request refused, so it is 409.
+        The limit is enforced before anything is stored or indexed, so a refusal costs nothing. See
+        contracts/README.md § "Documents, the knowledge base, and what a citation promises".'
+      operationId: createDocument
+      security:
+      - cookieAuth: []
+      requestBody:
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/CreateDocumentRequest'
+          multipart/form-data:
+            schema:
+              $ref: '#/components/schemas/CreateDocumentUpload'
+        required: true
+      responses:
+        '201':
+          description: The document as stored, already searchable. `chunk_count` is how many pieces it
+            was split into and is at least 1; `summary` is the one line the server derived, which is what
+            the retrieval decision is made against.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/DocumentResponse'
+        '401':
+          description: There is no valid session (`AUTH_REQUIRED`). Nothing is stored and nothing is indexed.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+        '403':
+          description: The request was cross-origin (`AUTH_CROSS_ORIGIN`).
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+        '409':
+          description: This account already holds as many documents as it may (`DOCUMENT_QUOTA_EXCEEDED`).
+            Well-formed and refused, which is why it is the error envelope rather than a validation failure.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+        '422':
+          description: The body failed validation; `detail` lists what. Content larger than the limit and
+            a content type outside the accepted set both land here, because both are stated policy — the
+            same rule that puts the password policy in 422.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/HTTPValidationError'
+        '429':
+          description: Too many uploads from this account (`AUTH_RATE_LIMITED`). `Retry-After` says when
+            to try again. Present because ingest buys embeddings.
+          headers:
+            Retry-After:
+              description: Seconds until the next attempt is permitted.
+              schema:
+                type: integer
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+    get:
+      tags:
+      - documents
+      summary: The caller's documents
+      description: Every document this account owns and no others, most recently added first, capped at
+        200. An empty array is a normal state, not a 404. The cap is a deliberate omission of pagination;
+        a cursor is additive when somebody actually has 200 documents. Scoped in the query that finds them,
+        never filtered afterwards.
+      operationId: listDocuments
+      security:
+      - cookieAuth: []
+      responses:
+        '200':
+          description: The account's documents, newest first.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/DocumentListResponse'
+        '401':
+          description: There is no valid session (`AUTH_REQUIRED`).
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+  /v1/documents/{document_id}:
+    get:
+      tags:
+      - documents
+      summary: One document's record
+      description: Metadata only — the stored text is served by the /content path below. A document owned
+        by another account, one that was deleted, one that never existed and a malformed id all answer
+        404 identically; contracts/README.md says why, and it is the same reasoning that governs chats.
+      operationId: getDocument
+      security:
+      - cookieAuth: []
+      parameters:
+      - name: document_id
+        in: path
+        required: true
+        schema:
+          type: string
+      responses:
+        '200':
+          description: The document as stored.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/DocumentResponse'
+        '401':
+          description: There is no valid session (`AUTH_REQUIRED`).
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+        '404':
+          description: No such document for this account (`DOCUMENT_NOT_FOUND`).
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+    delete:
+      tags:
+      - documents
+      summary: Remove a document from the knowledge base
+      description: A hard delete, and it takes all three copies with it — the record, the stored original,
+        and every indexed piece. No archive, no trash, no undo. Deleting an already-deleted document is
+        the same 404 a stranger gets, not a forgiving 204. Citations already written into a transcript
+        are NOT affected; they carry the document's name as a snapshot and keep it.
+      operationId: deleteDocument
+      security:
+      - cookieAuth: []
+      parameters:
+      - name: document_id
+        in: path
+        required: true
+        schema:
+          type: string
+      responses:
+        '204':
+          description: Gone. No body.
+        '401':
+          description: There is no valid session (`AUTH_REQUIRED`).
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+        '403':
+          description: The request was cross-origin (`AUTH_CROSS_ORIGIN`).
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+        '404':
+          description: No such document for this account (`DOCUMENT_NOT_FOUND`).
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+  /v1/documents/{document_id}/content:
+    get:
+      tags:
+      - documents
+      summary: The stored original, byte for byte
+      description: 'Serves what was uploaded, from the object store, with the content type it was uploaded
+        as. This path exists because the search index is DERIVED data: it can be rebuilt, and rebuilding
+        it must never require anyone to upload anything again. A consumer may use it to show the source
+        behind a citation. Scoped by account exactly as the metadata path is.'
+      operationId: getDocumentContent
+      security:
+      - cookieAuth: []
+      parameters:
+      - name: document_id
+        in: path
+        required: true
+        schema:
+          type: string
+      responses:
+        '200':
+          description: The original content, with the content type it was stored under.
+          content:
+            text/plain:
+              schema:
+                type: string
+            text/markdown:
+              schema:
+                type: string
+            application/pdf:
+              schema:
+                type: string
+                format: binary
+        '401':
+          description: There is no valid session (`AUTH_REQUIRED`).
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+        '404':
+          description: No such document for this account (`DOCUMENT_NOT_FOUND`).
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
 components:
   securitySchemes:
     cookieAuth:
@@ -537,8 +751,9 @@ components:
         code:
           type: string
           description: 'A stable machine-readable reason. Known values: AUTH_REQUIRED, AUTH_BAD_CREDENTIALS,
-            AUTH_EMAIL_TAKEN, AUTH_SIGNUP_CLOSED, AUTH_CROSS_ORIGIN, AUTH_RATE_LIMITED, THREAD_NOT_FOUND.
-            The last of those is not about auth at all; this schema keeps its name for the ordinary reason
+            AUTH_EMAIL_TAKEN, AUTH_SIGNUP_CLOSED, AUTH_CROSS_ORIGIN, AUTH_RATE_LIMITED, THREAD_NOT_FOUND,
+            DOCUMENT_NOT_FOUND, DOCUMENT_QUOTA_EXCEEDED.
+            The last three are not about auth at all; this schema keeps its name for the ordinary reason
             that renaming it would change a generated type name in every consumer for no wire benefit.
             Consumers MUST
             tolerate an unknown code by falling back to `message` — codes are added additively and a
@@ -576,6 +791,104 @@ components:
       - reply
       title: ChatResponse
       description: Response body for postChat.
+    Citation:
+      properties:
+        marker:
+          type: integer
+          minimum: 1
+          description: A 1-based number identifying this source within THIS message's citation list. The
+            reply's own text refers to it as `[1]`, `[2]` and so on, so a consumer rendering the sources
+            should show this number. Markers are assigned per message and are not stable across messages.
+            A reply produced by a model that emits no markers still carries a complete citation list —
+            the list is the promise, the inline markers are a convenience.
+        document_id:
+          type: string
+          description: The document this came from, so a consumer can link to it. Unique within
+            one message's citation list. The document may since
+            have been DELETED, in which case every document path answers 404 for this id — a consumer
+            must handle that rather than assume the link resolves.
+        filename:
+          type: string
+          description: The document's name AS IT WAS when this answer was written — a snapshot, not a
+            lookup. This is what lets a transcript keep naming its sources after the knowledge base has
+            moved on, and it is why a citation never becomes a hole.
+        chunk_index:
+          type: integer
+          minimum: 0
+          description: Which piece of the document was supplied, counting from 0 — the
+            highest-scoring one when several matched. How a document is split is not promised and
+            will change, so this is useful for showing "one part of a longer document" and not for
+            addressing anything.
+        snippet:
+          type: string
+          description: The text that was actually put in front of the model, truncated for display. Safe
+            to show; it is the caller's own uploaded content.
+      type: object
+      required:
+      - marker
+      - document_id
+      - filename
+      - chunk_index
+      - snippet
+      title: Citation
+      description: 'One source supplied to the model for one answer, and AT MOST ONE PER DOCUMENT
+        per message — several matching chunks of one file are one source, not several. Read the
+        rest of the promise precisely: a citation says this text WAS GIVEN to the model, not that
+        the model demonstrably used it. Nothing in this contract can certify the second, and a
+        consumer must not phrase it as proof.'
+    CreateDocumentRequest:
+      properties:
+        filename:
+          type: string
+          minLength: 1
+          maxLength: 255
+          description: What to call it. Shown to the person and snapshotted onto every citation, so it is
+            worth being a real name. Not a path, and not unique — uploading the same file twice makes two
+            documents.
+        content_type:
+          type: string
+          enum:
+          - text/plain
+          - text/markdown
+          description: 'The accepted set for this version, and it is exhaustive. Anything else is a 422.
+            Binary formats are a later change: extraction quality decides retrieval quality, so a PDF path
+            needs its own criteria rather than a new enum value.'
+        content:
+          type: string
+          minLength: 1
+          description: The document itself, as UTF-8 text. There is no multipart upload; a client reads the
+            file and sends it here. Size is bounded by the deployment's configured limit and measured on
+            THIS field after decoding — not on the whole request — so the limit does not depend on how long
+            somebody named their file.
+      type: object
+      required:
+      - filename
+      - content_type
+      - content
+      title: CreateDocumentRequest
+      description: Request body for createDocument.
+    CreateDocumentUpload:
+      properties:
+        file:
+          type: string
+          format: binary
+          description: 'The document itself. This is the intake for anything that is not UTF-8
+            text — a PDF, today. Sending a PDF as text through the JSON intake corrupts it,
+            and there is no base64 field on purpose: at this size limit a base64 body is a
+            third larger and has to be decoded in memory before it can be refused.'
+        filename:
+          type: string
+          minLength: 1
+          maxLength: 255
+          description: Optional. Defaults to the uploaded part's own filename. Same meaning as
+            on the JSON intake — shown to the person, and snapshotted onto every citation.
+      type: object
+      required:
+      - file
+      title: CreateDocumentUpload
+      description: 'Request body for createDocument as multipart/form-data. The content type is
+        taken from the uploaded part, and must be one the deployment accepts: `application/pdf`
+        today. Text and markdown use the JSON intake instead.'
     CreateThreadRequest:
       properties:
         title:
@@ -591,6 +904,85 @@ components:
       title: CreateThreadRequest
       description: Request body for postThreadCreate, and the whole body is optional. Unknown fields are
         ignored rather than rejected.
+    Document:
+      properties:
+        id:
+          type: string
+          description: Opaque and stable. Appears in citations and in URLs.
+        filename:
+          type: string
+          description: As supplied at upload. Not unique within an account.
+        content_type:
+          type: string
+          description: As supplied at upload, from the accepted set.
+        byte_size:
+          type: integer
+          minimum: 0
+          description: The size of the stored content in bytes, decoded — the same number the size limit
+            is applied to.
+        chunk_count:
+          type: integer
+          minimum: 1
+          description: How many pieces the document was split into for retrieval. At least 1 for a ready
+            document; a ready document that indexed nothing could never be returned by a search. How the
+            splitting works is NOT promised and will change.
+        summary:
+          type: string
+          description: One line describing what this document is about, derived by the server at upload.
+            It is not decoration — it is what the retrieval decision is made against, so it is exposed so
+            a person can see what the assistant thinks they uploaded. How it is derived is not promised.
+        status:
+          type: string
+          enum:
+          - ready
+          - failed
+          description: 'Ingest is synchronous in this version, so a document that answers 201 is already
+            `ready`. The field exists anyway: it is what lets a later version add `pending` or `indexing`
+            additively instead of reshaping this schema. A consumer must tolerate an unknown value.'
+        created_at:
+          type: string
+          format: date-time
+          description: When it was added.
+        updated_at:
+          type: string
+          format: date-time
+          description: When the record last changed. Reading a document does not touch it — no GET mutates
+            anything, which is the invariant the whole CSRF posture rests on.
+      type: object
+      required:
+      - id
+      - filename
+      - content_type
+      - byte_size
+      - chunk_count
+      - summary
+      - status
+      - created_at
+      - updated_at
+      title: Document
+      description: One document in an account's knowledge base. The record and the stored original are the
+        system of record; the search index is derived from them and can be rebuilt.
+    DocumentListResponse:
+      properties:
+        documents:
+          items:
+            $ref: '#/components/schemas/Document'
+          type: array
+          description: Newest first, capped at 200. Empty is normal.
+      type: object
+      required:
+      - documents
+      title: DocumentListResponse
+      description: Response body for listDocuments.
+    DocumentResponse:
+      properties:
+        document:
+          $ref: '#/components/schemas/Document'
+      type: object
+      required:
+      - document
+      title: DocumentResponse
+      description: Response body for createDocument and getDocument.
     ErrorResponse:
       properties:
         error:
@@ -678,6 +1070,20 @@ components:
           description: When it was stored. Ordering within a chat is by the order the server assigned,
             not by comparing these — two turns in the same millisecond still read back in the order they
             happened.
+        retrieval_consulted:
+          type: boolean
+          description: 'Whether the knowledge base was consulted while producing THIS turn. Meaningful only
+            on an assistant turn. ABSENT is a real and common state: every message stored before knowledge
+            bases existed has neither this field nor `citations`, so a consumer must treat absence as "not
+            applicable" rather than as false. True with an empty `citations` means the assistant looked and
+            found nothing relevant, which is a different fact from not having looked.'
+        citations:
+          items:
+            $ref: '#/components/schemas/Citation'
+          type: array
+          description: The sources supplied to the model for this turn, in marker order. Present only on
+            assistant turns that had any. Each entry names its document as it was AT THE TIME, so this list
+            keeps meaning after a document is deleted.
       type: object
       required:
       - id
@@ -685,7 +1091,8 @@ components:
       - content
       - created_at
       title: Message
-      description: One turn in a chat.
+      description: One turn in a chat. `retrieval_consulted` and `citations` are additive and optional —
+        an assistant turn from before knowledge bases existed carries neither.
     RegisterRequest:
       properties:
         email:

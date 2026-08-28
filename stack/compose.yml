@@ -26,8 +26,28 @@ services:
       # Must stay false for this origin — it is http, and smoke.py's cookie jar never
       # returns a Secure cookie over http. See contracts/README.md.
       SESSION_COOKIE_SECURE: ${SESSION_COOKIE_SECURE:-false}
+      # 10 MB, matching the backend's own default. stack/dev.env records why this stopped
+      # being an override.
+      DOCUMENT_MAX_BYTES: ${DOCUMENT_MAX_BYTES:-10485760}
 
   postgres:
+    labels:
+      agentapp.owner: chatbot-backend
+
+  # The knowledge base's two datastores, both chatbot-backend's. They are DEFINED in that
+  # repo's compose file — this block only declares who is answerable when one of them does
+  # not come up, which is a question only this file can see the answer to.
+  #
+  # THE COUPLING IS THE SERVICE NAME. `opensearch` and `minio` must be what chatbot-backend
+  # calls them, or compose reads these as new services with no image and refuses to start
+  # anything. That is a loud failure rather than a silent misattribution, which is the right
+  # way round, but it does mean this file is ahead of the submodule until 0004's backend
+  # slice lands.
+  opensearch:
+    labels:
+      agentapp.owner: chatbot-backend
+
+  minio:
     labels:
       agentapp.owner: chatbot-backend
 

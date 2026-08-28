@@ -10,6 +10,7 @@ session can see it.
 | --- | --- |
 | One repo, no interface change | Not here — `cd <repo> && claude`. That repo's CI fails if the work turns out to touch contract surface; come back for `/ship` if it does. |
 | Two or more repos, or any change to `contracts/` | `/ship "<what you want>"` — one command: plan artifact, contract freeze, dispatch, iterate, smoke, pull requests. |
+| A change is in flight — PRs open, nothing merged — and you want it different | `/ship-iterate <change>: <what to change>` — amend the brief, the criteria and the slices, then run the loop again against the same branches. |
 | The product PRs are merged and this repo is behind | `/realign` — bump the submodules, re-check the contract against what is served, re-run the baseline, promote the durable steps. |
 
 Never run two lanes in one session.
@@ -27,10 +28,6 @@ Never run two lanes in one session.
   on: `git -C <repo> switch -c <branch>` first, every time. `git submodule update` leaves
   a detached HEAD, `/realign` leaves `main`, and a commit on either is a commit in the
   wrong place.
-- Comments: concise, non-invasive, sparse. If I want deeper understanding I will ask
-  Claude Code directly rather than read comments. The one exception is a file whose header
-  IS the reference — the step schema in `changes/0000-example-change/smoke.yaml`, which
-  `check-docs.py` requires to stay complete.
 - The freeze point is the commit that lands `contracts/` alone. Its SHA goes in that
   change's `change.yaml` as `freeze_sha`. Nowhere else — nothing reads anywhere else.
 - "Three PRs exist" is not shipped. Shipped means deployed together with the smoke suite
@@ -42,6 +39,9 @@ Never run two lanes in one session.
   `env_file`, so it prints the real AWS credentials in `chatbot-backend/.env`. Use
   `make config`, which redacts.
 - Ignore `TODO.md` — it is a personal ideas dump, not something you must maintain/populate/read into.
+- Concise EVERYWHERE — comments, docs, briefs, commit messages. Verbosity is the failure,
+  not the fix; if I want depth I will ask. One exception: the step-schema header in
+  `changes/0000-example-change/smoke.yaml`, which `check-docs.py` requires kept complete.
 
 ## Layout
 
@@ -56,5 +56,5 @@ Never run two lanes in one session.
 
 ## Commands
 
-`make help` lists the hand tools for looking at the running system. `/ship` and `/realign`
-are how work gets done.
+`make help` lists the hand tools for looking at the running system. `/ship`,
+`/ship-iterate` and `/realign` are how work gets done.
