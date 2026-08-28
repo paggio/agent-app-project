@@ -17,7 +17,7 @@ Filename `<UTC timestamp>-<lane>[-<change>].md`, e.g. `20260826T140355Z-ship-000
 
 ```markdown
 ---
-lane: ship | realign
+lane: ship | ship-iterate | realign
 change: NNNN-slug | none
 run: changes/NNNN-slug/runs/<ts> | none
 date: YYYY-MM-DD

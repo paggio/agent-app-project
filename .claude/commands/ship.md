@@ -128,7 +128,7 @@ Route on the outcome:
 | Outcome | What it means, and what to do |
 | --- | --- |
 | `verified` | Deployed and asserted, locally and remotely. Nothing to fix. |
-| `verified-local` | Passed locally; **no remote environment was touched**. Not shippable for a change that is supposed to deploy. |
+| `verified-local` | Passed locally; **no remote environment was touched**. The best outcome a change with `deploy.infra: false` can reach — a full pass, and not evidence about a deployment. Not shippable for a change that is supposed to deploy. |
 | `contract-gap` | A slice reported it cannot be built against the frozen contract, and named the gap. Do NOT patch around it: go back to phase 2, re-freeze, update `freeze_sha`, re-run. |
 | `failed` | Read `runs/<ts>/attempt-*/failure-*.md` — that is exactly what the agents were given. Decide whether the implementation is wrong (re-run with more attempts) or the assertion is wrong (fix it here, never in a product repo). |
 | `blocked` | A precondition was unmet, so nothing was dispatched and nothing deployed. There is no deploy evidence to read. Fix what the dispatcher named. |

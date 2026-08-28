@@ -320,12 +320,39 @@ say "## 7. What the harness has already been told"
 say ""
 say '```'
 say "previous retros:"
-prev="$(ls -1 retros/*.md 2>/dev/null | grep -v '/README\.md$')"
-printf '%s\n' "${prev:-  (none)}" | sed 's/^\(retros\)/  \1/' | tail -20
+# A retro lands by pull request, so a retro whose pull request was never opened exists only
+# on a branch — and that is the one the next retrospective most needs, because the
+# second-occurrence rule is written against it. Listing the working tree alone printed
+# "(none)" while retros/20260826T163132Z-ship-0004-rag-knowledge-base.md sat on a pushed
+# branch, and the friction it recorded was met again the next day.
+prev="$( { ls -1 retros/*.md 2>/dev/null | grep -v '/README\.md$' | sed 's/^/  /'
+  git for-each-ref --format='%(refname:short)' refs/heads refs/remotes 2>/dev/null |
+    while read -r ref; do
+      git ls-tree -r --name-only "$ref" -- retros/ 2>/dev/null | grep -v 'README\.md$' |
+        while read -r f; do
+          [ -e "$f" ] || printf '%s\t%s\n' "$f" "$ref"
+        done
+    done | sort -u |
+    awk -F'\t' '!seen[$1]++ { printf "  %s  — NOT in this tree, on %s\n", $1, $2 }'
+} )"
+printf '%s\n' "${prev:-  (none)}" | tail -20
 say ""
 say "open pull requests in this repo:"
 open_prs="$(gh pr list --state open --json number,title,headRefName --jq '.[] | "  #\(.number) \(.headRefName)  \(.title)"' 2>/dev/null)"
 printf '%s\n' "${open_prs:-  (none, or gh unavailable)}"
+say ""
+say "harness branches with no pull request — a fix nobody can merge:"
+# The other half of the same defect: the three fixes the 20260826 retro committed were
+# pushed and never opened, and the next lane paid for two of them again believing they
+# were in an open pull request. A branch with no PR is invisible to `gh pr list`.
+heads="$(gh pr list --state all --limit 100 --json headRefName --jq '.[].headRefName' 2>/dev/null)"
+stranded="$(git for-each-ref --format='%(refname:short)' 'refs/remotes/origin/harness/*' 2>/dev/null |
+  sed 's|^origin/||' |
+  while read -r b; do
+    printf '%s\n' "$heads" | grep -qx "$b" || echo "  $b — pushed, no pull request"
+  done)"
+printf '%s\n' "${stranded:-  (none, or gh unavailable)}"
+
 say ""
 say "retro proposals already decided — do not re-propose a closed one without new evidence:"
 decided="$(gh pr list --state closed --search "head:harness/" --limit 100 \

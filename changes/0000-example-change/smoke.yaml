@@ -10,6 +10,10 @@
 #   headers   map, optional
 #   body      JSON body, optional
 #   form      form-encoded body, optional
+#   files     {field: <path beside this suite>} or {field: {path, filename,
+#             content_type}} — a multipart upload. Use `form` for the text fields
+#             beside it; `body` and `files` together are refused. A criterion whose
+#             only oracle is a browser is one the seam cannot see.
 #   base      a different origin for this step only (env vars interpolate)
 #   expect    REQUIRED: status (int or list) | json (deep subset) | body_matches (regex)
 #             | body_excludes (regex) | headers {name: regex} | cookie (name or list).

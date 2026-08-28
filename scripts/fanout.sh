@@ -224,7 +224,16 @@ $EXTRA"
 
   # No timeout existed anywhere in the harness, so one hung session blocked the loop
   # forever. `timeout(1)` is not on macOS, hence a watchdog per slice.
-  ( sleep "$TIMEOUT_S"; kill -TERM -"$pid" 2>/dev/null && touch "$RUN_DIR/.timeout-$r" ) \
+  #
+  # The marker is written BEFORE the signal, and it is the whole of the fix for a race the
+  # watchdog lost every time: the parent's `wait` wakes the moment the child dies, while the
+  # old `kill && touch` still had to fork /usr/bin/touch. So the only timeout this harness
+  # has ever fired was collected as `crashed` with `exit 143` as its sole clue, and
+  # slice-result.py's `timeout` status — which says in words that the budget ran out — was
+  # unreachable. Writing first inverts the race; pairing it with a non-zero exit on
+  # collection is what keeps a slice that finished on its own before its watchdog woke from
+  # being labelled a timeout.
+  ( sleep "$TIMEOUT_S"; touch "$RUN_DIR/.timeout-$r"; kill -TERM -"$pid" 2>/dev/null ) \
     >/dev/null 2>&1 &
   WATCHDOGS+=($!)
 
@@ -243,11 +252,12 @@ fi
 FAILED=""
 RESULTS="$RUN_DIR/fanout.json"
 : > "$RUN_DIR/.results.tsv"
+: > "$RUN_DIR/.left.tsv"
 for i in "${!PIDS[@]}"; do
   r="${LAUNCHED[$i]}"
   if wait "${PIDS[$i]}"; then code=0; else code=$?; fi
   timed_out=0
-  [ -f "$RUN_DIR/.timeout-$r" ] && timed_out=1
+  [ -f "$RUN_DIR/.timeout-$r" ] && [ "$code" != "0" ] && timed_out=1
   branch="$(git -C "$r" rev-parse --abbrev-ref HEAD 2>/dev/null || echo unknown)"
   # The result is a parsed field, not a matched line. `case "$last" in OK|OK.*)` needed a
   # literal dot, so `OK — done` and `**OK**` all fell through to "unclear", which counted
@@ -258,16 +268,43 @@ for i in "${!PIDS[@]}"; do
   reason="$(tail -1 "$RUN_DIR/.results.tsv" | cut -f5)"
   [ "$status" = "ok" ] || FAILED="$FAILED $r"
   echo "fanout: $r -> $status${reason:+ ($reason)}"
+
+  # What a slice that did not report LEFT BEHIND. A killed session writes its log at exit,
+  # so a timeout leaves a zero-byte log and a status that reads as "this repo produced
+  # nothing" — while its branch held four commits and a clean tree, and the loop went on to
+  # drop it for lack of evidence. The commits are the evidence. Recorded as a field so the
+  # repair path and a reader see the same fact.
+  commits=""; uncommitted=""
+  if [ "$status" != "ok" ]; then
+    base="$(git -C "$r" rev-parse --verify -q origin/main >/dev/null 2>&1 \
+            && echo origin/main || echo main)"
+    commits="$(git -C "$r" rev-list --count "$base..HEAD" 2>/dev/null || true)"
+    uncommitted="$(git -C "$r" status --porcelain 2>/dev/null | grep -c . || true)"
+    if [ "${commits:-0}" != "0" ] && [ -n "$commits" ]; then
+      echo "fanout:   $r left $commits commit(s) on $branch (${uncommitted:-?} uncommitted file(s))."
+      echo "fanout:   A slice that did not report is not a slice that did nothing — read"
+      echo "fanout:   \`git -C $r log --oneline $base..HEAD\` before treating this as no work."
+    fi
+  fi
+  printf '%s\t%s\n' "${commits:-}" "${uncommitted:-}" >> "$RUN_DIR/.left.tsv"
 done
 
 # Watchdogs are no longer needed; leaving them would keep the script alive for the timeout.
 for w in "${WATCHDOGS[@]:-}"; do kill "$w" 2>/dev/null || true; done
 
-python3 - "$RUN_DIR/.results.tsv" "$RESULTS" "$CHANGE" "$ATTEMPT" "$RUN_DIR" <<'PY'
+python3 - "$RUN_DIR/.results.tsv" "$RESULTS" "$CHANGE" "$ATTEMPT" "$RUN_DIR" \
+       "$RUN_DIR/.left.tsv" <<'PY'
 import json, os, sys
-tsv, out, change, attempt, run_dir = sys.argv[1:6]
+tsv, out, change, attempt, run_dir, left_tsv = sys.argv[1:7]
+left = []
+try:
+    for line in open(left_tsv):
+        c, u = (line.rstrip("\n").split("\t") + ["", ""])[:2]
+        left.append((int(c) if c.isdigit() else None, int(u) if u.isdigit() else None))
+except OSError:
+    pass
 repos = {}
-for line in open(tsv):
+for i, line in enumerate(open(tsv)):
     if not line.strip():
         continue
     parts = (line.rstrip("\n").split("\t") + [""] * 7)[:7]
@@ -280,6 +317,12 @@ for line in open(tsv):
         "pr": pr or None,
         # A field, so iterate.sh stops grepping the whole file for the word "contract".
         "contract_gap": gap or None,
+        # What is on the branch, for a slice that did not report one. `null` when the slice
+        # reported ok — its PR is the answer — or when the repo could not be read.
+        "left_on_branch": (
+            None if status == "ok" or i >= len(left) or left[i][0] is None
+            else {"commits": left[i][0], "uncommitted": left[i][1]}
+        ),
         "log": os.path.join(run_dir, f"{repo}.log"),
     }
 json.dump({
@@ -292,7 +335,7 @@ json.dump({
     "repos": repos,
 }, open(out, "w"), indent=2)
 PY
-rm -f "$RUN_DIR/.results.tsv" "$RUN_DIR"/.timeout-* 2>/dev/null || true
+rm -f "$RUN_DIR/.results.tsv" "$RUN_DIR/.left.tsv" "$RUN_DIR"/.timeout-* 2>/dev/null || true
 
 echo "fanout: results -> $RESULTS"
 if [ -n "$FAILED" ]; then
