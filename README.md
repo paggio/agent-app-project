@@ -45,6 +45,19 @@ deployed together with the suite passing, not three PRs existing. See `docs/adr/
 
 Nothing is merged for you. Merging is a human decision, in dependency order.
 
+**Changed your mind before it merged.** The pull requests are open, you have looked at the
+thing, and the requirement itself is what you now want different.
+
+```bash
+> /ship-iterate 0004-rag-knowledge-base: also accept PDFs, and drop the summary column
+```
+
+Amends the brief, the criteria and the slice briefs in that order, re-freezes the contract
+if the interface moved, then runs the same loop against the branches that already exist —
+so the open pull requests update rather than multiply. It refuses once anything has merged,
+because at that point the criteria describe what is running and a new change is the honest
+record. See `docs/adr/0010`.
+
 **After the merge.**
 
 ```bash
@@ -56,7 +69,7 @@ Bumps the submodules to their merged `main`, pins the triple in `repos.lock`, re
 promotes the assertions worth keeping forever into `smoke/baseline.yaml`. This is also the
 lane a single-repo deploy needs on its own — it is the only check that can fail on the seam.
 
-**Both lanes end by grading themselves.** The last phase of `/ship` and of `/realign`
+**Every lane ends by grading itself.** The last phase of `/ship`, `/ship-iterate` and `/realign`
 dispatches the `harness-retro` agent: a separate session that audits the state the lane left
 behind — submodule pointers, the contract against what is served, the assertions and their
 count, whether anything actually reached a remote environment — and then grades the harness
