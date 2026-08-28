@@ -495,3 +495,182 @@ steps:
     expect:
       status: 200
       body_excludes: '${thread_id}'
+
+  # ============================================================================ 0004
+  # Promoted from changes/0004-rag-knowledge-base/smoke.yaml at realign. The knowledge
+  # base adds two datastores to the joined stack — OpenSearch and MinIO — and these steps
+  # exist because nothing else here would notice either going missing. Everything below
+  # re-addresses the owner by hand with ${owner_session}, exactly as the chat steps above
+  # do, because the jar was emptied by `logout-the-other-account`.
+  #
+  # WHAT WAS DELIBERATELY NOT PROMOTED, and why:
+  #   * the document ownership trio (a stranger's 404s, then the owner reading it back).
+  #     It costs a second registration — two argon2 rounds — and the identical doctrine is
+  #     already asserted at this seam by the chat trio above. It stays in the change suite
+  #     and in chatbot-backend's own tests.
+  #   * the router's negative branch (an unrelated question consults nothing). A second
+  #     model call for a property that is cheaper and sharper to assert in the backend.
+  #   * the summary-for-the-router read, which is a step about an internal input.
+
+  - name: creating-a-document-requires-a-session
+    owner: chatbot-backend
+    POST: /api/v1/documents
+    # Anonymous, and it only is anonymous because `logout-the-other-account` above emptied
+    # the jar and every step since has re-addressed the owner with an explicit header,
+    # which http.cookiejar does not learn from. Moving this above that logout makes it
+    # assert nothing.
+    body:
+      filename: anonymous.md
+      content_type: text/markdown
+      content: "Nobody should be able to put this anywhere."
+    expect:
+      status: 401
+      json:
+        error:
+          code: AUTH_REQUIRED
+      body_excludes: '"id"'
+
+  - name: listing-documents-requires-a-session
+    owner: chatbot-backend
+    GET: /api/v1/documents
+    expect:
+      status: 401
+      json:
+        error:
+          code: AUTH_REQUIRED
+      body_excludes: '"documents"'
+
+  - name: an-unsupported-content-type-is-refused
+    owner: chatbot-backend
+    POST: /api/v1/documents
+    headers:
+      Cookie: session=${owner_session}
+    body:
+      filename: balance.csv
+      content_type: text/csv
+      content: "quarter,revenue\nQ3,41\n"
+    # 422 rather than the error envelope: the accepted set is stated policy, and stated
+    # policy is validation. The size limit is NOT asserted here — it is 10 MB, and no
+    # fixture short enough to belong in this file can reach it.
+    expect:
+      status: 422
+      body_excludes: '"document"'
+
+  - name: a-document-can-be-added-to-the-knowledge-base
+    owner: chatbot-backend
+    POST: /api/v1/documents
+    headers:
+      Cookie: session=${owner_session}
+    body:
+      filename: baseline-charter.md
+      content_type: text/markdown
+      content: |
+        # The Quillhaven Charter
+
+        The council reaches quorum at seven members. Below seven it may adjourn and it may
+        record minutes, and it may do nothing else. A vote taken below quorum is void even
+        if every member present agrees.
+
+        Between the first frost and the thaw the council does not sit. Urgent matters go to
+        the harbourmaster, whose decisions stand until the council next reaches quorum and
+        either affirms or reverses them.
+
+        The charter is amended by two consecutive votes at quorum, taken in different
+        sittings, with the text unchanged between them. A single vote amends nothing.
+
+        The harbourmaster is appointed for three years and may not sit on the council in
+        the same period. The office exists so that the winter recess does not leave the
+        settlement unable to decide anything, and its powers are deliberately broad in
+        that window and narrow outside it.
+
+        Every vote is recorded with the count and the names. A vote whose record is lost is
+        treated as void rather than as carried, which is the same principle the quorum rule
+        rests on.
+    # At least two chunks, because the one-citation-per-document assertion below is vacuous
+    # against a document that can only ever contribute one.
+    expect:
+      status: 201
+      json:
+        document:
+          filename: baseline-charter.md
+          status: ready
+      body_matches: '"chunk_count":\s*[2-9]'
+    capture:
+      document_id: document.id
+    retry:
+      attempts: 3
+      delay: 3
+
+  - name: the-stored-original-is-served-back
+    owner: chatbot-backend
+    GET: /api/v1/documents/${document_id}/content
+    headers:
+      Cookie: session=${owner_session}
+    # The object store, reached through the joined stack. The index is derived data and can
+    # be rebuilt; this is the only step in this file that proves the SYSTEM OF RECORD is
+    # readable, and a MinIO that never came up fails right here rather than three steps later
+    # as a confusing retrieval miss.
+    expect:
+      status: 200
+      headers:
+        content-type: text/markdown
+      body_matches: The council reaches quorum at seven members\.
+
+  - name: a-chat-for-the-knowledge-base
+    owner: chatbot-backend
+    POST: /api/v1/threads
+    headers:
+      Cookie: session=${owner_session}
+    # The chat above was deleted by its owner, so this needs its own.
+    expect:
+      status: 201
+    capture:
+      kb_thread_id: thread.id
+
+  - name: a-question-about-the-document-is-answered-with-one-citation
+    owner: chatbot-backend
+    POST: /api/v1/threads/${kb_thread_id}/messages
+    headers:
+      Cookie: session=${owner_session}
+    body:
+      message: "What does the Quillhaven charter say about quorum?"
+    # The whole knowledge base in one step: the router chose to consult it, OpenSearch
+    # returned something from the right document, and the citation carries the marker the
+    # answer refers to. The body_excludes is the one-citation-per-document promise — the
+    # charter spans several chunks and this question matches more than one, so an
+    # implementation that cites per CHUNK names the file twice and fails here.
+    expect:
+      status: 200
+      json:
+        messages:
+          - role: user
+          - role: assistant
+            retrieval_consulted: true
+            citations:
+              - marker: 1
+                document_id: ${document_id}
+                filename: baseline-charter.md
+      body_excludes: 'baseline-charter\.md(?:.|\n)*baseline-charter\.md'
+    retry:
+      attempts: 3
+      delay: 3
+
+  - name: deleting-a-document-empties-both-stores
+    owner: chatbot-backend
+    DELETE: /api/v1/documents/${document_id}
+    headers:
+      Cookie: session=${owner_session}
+    expect:
+      status: 204
+
+  - name: the-deleted-documents-original-is-gone-too
+    owner: chatbot-backend
+    GET: /api/v1/documents/${document_id}/content
+    headers:
+      Cookie: session=${owner_session}
+    # Deleting the row and leaving the object is the easy half-delete to write and the hard
+    # one to notice: every metadata assertion passes and the bytes accumulate in a bucket
+    # nobody is accounting for.
+    expect:
+      status: 404
+      body_excludes: The council reaches quorum at seven members\.
