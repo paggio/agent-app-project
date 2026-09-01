@@ -2,7 +2,7 @@
 
 ## Contract freeze
 
-- SHA: `<sha>`
+- SHA: `dfbb48f8f081c08ccda14d07928c299f01928a81`
 - Frozen: 2026-09-01
 
 ## Pull requests

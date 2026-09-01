@@ -5,7 +5,7 @@ change: 0005-observability-phoenix
 
 # The commit that landed contracts/ alone. The dispatch extracts contracts/ at exactly this
 # SHA and gives the slices nothing else, so it refuses to run without one.
-freeze_sha: ""
+freeze_sha: "dfbb48f8f081c08ccda14d07928c299f01928a81"
 
 # One slice. The original request named backend and infra; infra/ is a two-.gitkeep scaffold
 # with no IaC tool chosen, so there is nothing there to change. BRIEF.md § Out of scope
