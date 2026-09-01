@@ -275,6 +275,45 @@ and it has no knowledge base either. That is its whole shape, and the reason it 
 alongside the chat endpoints rather than being replaced. A caller that wants the knowledge
 base posts into a chat.
 
+## Trace correlation
+
+Promised here rather than in `openapi.yaml` for the reason the session cookie already is:
+`openapi.yaml` is machine-rewritten by `harvest-contract.py`, so a response header declared
+there is dropped at the next re-harvest. This is also not a body or a status, which is all
+that file describes.
+
+**`X-Trace-Id` is on every response the API produces** — successes, refusals and failures
+alike. Its value is the W3C trace id of the request's root span: 32 lowercase hexadecimal
+characters, no dashes.
+
+| Situation | Header |
+| --- | --- |
+| any API response, tracing enabled | present |
+| tracing not configured in that environment | **absent**, never empty |
+| `/healthz` | absent — health checks are deliberately not traced |
+
+Three things it promises, and they are narrow on purpose:
+
+- **It identifies a trace, not a request and not a session.** One request produces one
+  trace, so the two coincide today; nothing promises they always will, and a consumer must
+  not use the value as an idempotency key, a request id or a correlation id of its own.
+- **It is safe to show a person and safe to log.** An opaque hex id carrying no account, no
+  session and no content. That is what makes it the right thing to put in a support report
+  or an error page.
+- **It is not authorisation and not a lookup.** Holding one grants nothing. Whether any
+  store can still resolve it — and who is allowed to ask — is entirely a property of the
+  telemetry backend that environment runs, and there may not be one.
+
+**A consumer must tolerate its absence.** An environment with no telemetry configured is an
+ordinary environment, not a broken one, and a client that requires the header to render a
+response is a client that breaks the moment tracing is turned off.
+
+**What may NOT be inferred from its presence.** That a trace exists somewhere a person can
+open, that it is complete, or that it will still be there later. Export is batched and
+lossy by design: a response returns before its spans are written, and a collector that is
+unreachable drops them without touching the request. The header says what the id was, not
+that anybody kept it.
+
 ## Changing a contract
 
 1. Additive by default. The repos deploy independently, so production will always
