@@ -5,7 +5,7 @@ run: changes/0005-observability-phoenix/runs/20260901T113130Z
 date: 2026-09-01
 verdict: coherent-with-warnings
 findings: 3 proposed, 11 recorded, 4 rejected
-pr: https://github.com/Paggio/agent-app-project/pull/PENDING
+pr: https://github.com/Paggio/agent-app-project/pull/14
 ---
 
 Four runs. The green one is honest — `verified-local`, 55 assertions, 10 from the change's
