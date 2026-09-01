@@ -10,7 +10,7 @@
 | Repo | Branch | PR | CI | Merged |
 | --- | --- | --- | --- | --- |
 | chatbot-backend | `feat/0005-observability-phoenix` | https://github.com/Paggio/chatbot-backend/pull/8 | ☐ | ☐ |
-| control (this repo) | `feat/0005-observability-phoenix` | _opened below_ | ☐ | ☐ |
+| control (this repo) | `feat/0005-observability-phoenix` | https://github.com/Paggio/agent-app-project/pull/13 | ☐ | ☐ |
 
 No frontend or infra row: neither repo changes. See BRIEF.md § Out of scope.
 
