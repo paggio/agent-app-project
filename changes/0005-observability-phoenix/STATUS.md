@@ -9,8 +9,8 @@
 
 | Repo | Branch | PR | CI | Merged |
 | --- | --- | --- | --- | --- |
-| chatbot-backend | `feat/0005-observability-phoenix` | <link> | ☐ | ☐ |
-| control (this repo) | `feat/0005-observability-phoenix` | <link> | ☐ | ☐ |
+| chatbot-backend | `feat/0005-observability-phoenix` | _opened by phase 5_ | ☐ | ☐ |
+| control (this repo) | `feat/0005-observability-phoenix` | _opened by phase 5_ | ☐ | ☐ |
 
 No frontend or infra row: neither repo changes. See BRIEF.md § Out of scope.
 
