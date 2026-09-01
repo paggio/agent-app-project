@@ -1,0 +1,35 @@
+# The machine half of a change. BRIEF.md is for humans and for the implementing agent;
+# this is what the scripts parse.
+
+change: 0005-observability-phoenix
+
+# The commit that landed contracts/ alone. The dispatch extracts contracts/ at exactly this
+# SHA and gives the slices nothing else, so it refuses to run without one.
+freeze_sha: ""
+
+# One slice. The original request named backend and infra; infra/ is a two-.gitkeep scaffold
+# with no IaC tool chosen, so there is nothing there to change. BRIEF.md § Out of scope
+# records that as a decision rather than an omission. No frontend slice either — nothing a
+# person sees moves.
+slices:
+  - chatbot-backend
+
+deploy:
+  local: true
+  # No infra slice and nothing to deploy to, so `verified-local` is the best outcome this
+  # change can reach — on purpose. True here would fail with "infra declares no deploy
+  # target", which is docs/adr/0002 §4 working as intended.
+  infra: false
+
+smoke:
+  file: smoke.yaml
+  # The single origin a browser uses. The steps that read a trace back override `base` per
+  # step, because Phoenix is a different service and must not be reachable through /api.
+  base: http://localhost:8080
+  # Two model-bearing turns, plus up to 30s of batch-export wait on each of the four
+  # Phoenix reads. Phoenix's own cold start is not in here — `up --wait` pays that before
+  # the suite begins.
+  timeout_s: 480
+  # No browser fact in this change: nothing renders a trace, and the header is for machines.
+  # BRIEF.md § "A gap in the oracle" says what is checked elsewhere instead.
+  e2e: false
