@@ -25,6 +25,10 @@ Exit codes (docs/adr/0003):
   2  the suite or its inputs are invalid, so NO assertion result is meaningful —
      a malformed step, an undefined ${VAR}, a missing contract, an empty selection
 
+A ${VAR} that an earlier SELECTED step declared in `capture:` is not that case. It is
+unbound because the step that would have bound it failed, so the thing under test failed:
+that step is recorded as a failure owned by its `owner` and the run exits 1.
+
 The distinction matters because verify.sh routes exit 1 to the owning repo as a repair
 brief and exit 2 to the control repo as its own bug. They used to share a stage string, so
 "this suite is broken" was reported to an agent as "your code is broken".
@@ -63,6 +67,21 @@ TAGS = {"local", "remote"}
 # malformed suite produced no JSON, verify.sh found no owners, and a control-repo bug was
 # reported as an unattributable failure.
 _JSON_OUT: str | None = None
+# The steps evaluated so far, so an exit-2 death mid-suite reports what it had rather than
+# zeros. It used to write passed=0 failed=0 steps=[] over a run in which 45 steps had
+# already been judged, which is the evidence a reader needs to see what went wrong.
+_RESULTS: list[dict[str, Any]] = []
+# Every name the SELECTED steps declare in `capture:`. Filled by main() after selection, so
+# a capture whose step was filtered out by --only/--tag is correctly still exit 2.
+_CAPTURE_NAMES: set[str] = set()
+
+
+class CascadeSkip(Exception):
+    """A ${var} an earlier step declared in `capture:` never bound: that step failed."""
+
+    def __init__(self, key: str) -> None:
+        super().__init__(key)
+        self.key = key
 
 
 # --------------------------------------------------------------------------- helpers
@@ -71,9 +90,13 @@ def die(msg: str) -> None:
     print(f"smoke: {msg}", file=sys.stderr)
     if _JSON_OUT:
         try:
+            failed = [r for r in _RESULTS if not r["ok"]]
             with open(_JSON_OUT, "w") as fh:
-                json.dump({"ok": False, "error": msg, "passed": 0, "failed": 0,
-                           "owners_failing": [], "failures": [], "steps": []}, fh, indent=2)
+                json.dump({"ok": False, "error": msg,
+                           "passed": len(_RESULTS) - len(failed), "failed": len(failed),
+                           "owners_failing": sorted({r["owner"] for r in failed
+                                                     if r.get("owner")}),
+                           "failures": failed, "steps": _RESULTS}, fh, indent=2)
         except OSError:
             pass
     raise SystemExit(2)
@@ -268,6 +291,8 @@ def interpolate(value: Any, scope: dict[str, Any]) -> Any:
                 return str(scope[key])
             if key in os.environ:
                 return os.environ[key]
+            if key in _CAPTURE_NAMES:
+                raise CascadeSkip(key)
             die(f"undefined variable ${{{key}}} — not captured by an earlier step or in env")
             return ""
         return VAR.sub(sub, value)
@@ -399,31 +424,50 @@ def request_line(step: dict[str, Any]) -> tuple[str, str]:
 def run_step(client: httpx.Client, step: dict[str, Any], scope: dict[str, Any],
              contract: Contract | None, base: str) -> dict[str, Any]:
     method, raw_path = request_line(step)
-    path = interpolate(raw_path, scope)
-    headers = interpolate(step.get("headers") or {}, scope)
-    body = interpolate(step.get("body"), scope) if "body" in step else None
-    form = interpolate(step.get("form"), scope) if "form" in step else None
-    # A missing fixture is the harness refusing, not the service failing — exit 2, not a
-    # failed assertion routed to whichever repo owns the step. See docs/adr/0003.
+    # A ${var} an earlier step declared in `capture:` and never bound is a CASCADE of that
+    # step's failure, not a malformed suite. It used to reach interpolate()'s die(): exit 2,
+    # `smoke: the suite is invalid`, `fault: harness`, outcome `unattributable` — a real
+    # product-repo 500 reclassified as a control-repo bug, with no brief written for anyone.
+    # Every suite that captures and reuses a value has this shape.
     try:
-        files = step_files(step, scope)
-    except OSError as exc:
-        die(f"step {step.get('name', '?')!r}: {exc}")
-    # Interpolated like the request, which it was NOT before: a `${VAR}` inside expect stayed
-    # a literal, so an assertion could never match a value the request had templated. It
-    # surfaced the moment identities were namespaced with ${SMOKE_RUN_ID} — the request
-    # registered smoke-0001-<nonce>@auth.test and the expectation compared against the raw
-    # `${SMOKE_RUN_ID}` string. An expectation that cannot reference what the request sent
-    # is not much of an expectation.
-    expect = interpolate(step.get("expect") or {}, scope)
+        path = interpolate(raw_path, scope)
+        headers = interpolate(step.get("headers") or {}, scope)
+        body = interpolate(step.get("body"), scope) if "body" in step else None
+        form = interpolate(step.get("form"), scope) if "form" in step else None
+        # A missing fixture is the harness refusing, not the service failing — exit 2, not a
+        # failed assertion routed to whichever repo owns the step. See docs/adr/0003.
+        try:
+            files = step_files(step, scope)
+        except OSError as exc:
+            die(f"step {step.get('name', '?')!r}: {exc}")
+        # Interpolated like the request, which it was NOT before: a `${VAR}` inside expect
+        # stayed a literal, so an assertion could never match a value the request had
+        # templated. It surfaced the moment identities were namespaced with ${SMOKE_RUN_ID}
+        # — the request registered smoke-0001-<nonce>@auth.test and the expectation compared
+        # against the raw `${SMOKE_RUN_ID}` string. An expectation that cannot reference what
+        # the request sent is not much of an expectation.
+        expect = interpolate(step.get("expect") or {}, scope)
+        # A step may target a different origin than the suite default — the proxy is the
+        # browser's view, but "is the backend itself healthy" is a different question and
+        # answering both is how a 502 gets attributed to the right repo.
+        step_base = interpolate(step["base"], scope) if "base" in step else base
+    except CascadeSkip as exc:
+        return {
+            "name": step.get("name") or f"{method} {raw_path}",
+            "owner": step.get("owner"),
+            "suite": step.get("_suite"),
+            "request": f"{method} {raw_path}  (not sent)",
+            "expected": step.get("expect") or {},
+            "actual": {"error": f"${{{exc.key}}} was never bound"},
+            "ok": False,
+            "message": (f"not sent: ${{{exc.key}}} is captured by an earlier step in this "
+                        f"suite and that step did not pass, so it never bound. This step is "
+                        f"a consequence — fix the failure above it."),
+        }
+
     retry = step.get("retry") or {}
     attempts = int(retry.get("attempts", 1))
     delay = float(retry.get("delay", 1.0))
-
-    # A step may target a different origin than the suite default — the proxy is the
-    # browser's view, but "is the backend itself healthy" is a different question and
-    # answering both is how a 502 gets attributed to the right repo.
-    step_base = interpolate(step["base"], scope) if "base" in step else base
 
     result: dict[str, Any] = {
         "name": step.get("name") or f"{method} {path}",
@@ -593,7 +637,12 @@ def main() -> int:
             print(f"smoke: note — {args.contract} declares no paths; "
                   f"contract assertions are inert until it is filled in")
 
-    results: list[dict[str, Any]] = []
+    # After selection, not before: a capture whose step --only or --tag filtered out is
+    # genuinely undefined, and stays exit 2.
+    for s in steps:
+        _CAPTURE_NAMES.update((s.get("capture") or {}).keys())
+
+    results = _RESULTS
     scope: dict[str, Any] = {}
     # One client for the whole suite: cookies persist across steps, which is the only way
     # register -> login -> me is testable when sessions are httpOnly cookies.

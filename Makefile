@@ -136,6 +136,11 @@ lock: ## Refresh repos.lock from the current submodule SHAs
 prs: ## List the open pull requests in each product repo
 	@./scripts/prs.sh --list
 
+# `changes/*/` is a filesystem glob and `changes/*/runs/` is gitignored evidence, so a run
+# executed on a change's branch leaves a directory behind that looks like a change on every
+# OTHER branch. `make check` then failed with "change.yaml not found — run new-change.sh" on
+# a branch off origin/main, which is the branch a retrospective is required to use. git is
+# what says which directories are changes; the glob only says which exist.
 check: ## This repo's gates, then each product repo's read-only ones
 	@echo "── control"
 	@./scripts/check-docs.py || exit 1
@@ -143,6 +148,7 @@ check: ## This repo's gates, then each product repo's read-only ones
 	@echo "  the submodule-write guard blocks what it claims, and nothing else"
 	@for d in changes/*/; do \
 		case "$$d" in changes/0000-example-change/) continue ;; esac; \
+		git ls-files --error-unmatch "$$d" >/dev/null 2>&1 || continue; \
 		./scripts/manifest.py "$$d" --validate >/dev/null || exit 1; \
 	done
 	@echo "  every change validates"
