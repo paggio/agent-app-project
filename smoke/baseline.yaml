@@ -674,3 +674,248 @@ steps:
     expect:
       status: 404
       body_excludes: The council reaches quorum at seven members\.
+
+  # ═══════════════════════════════════════════════════════════════════════════════════
+  # Promoted from changes/0005-observability-phoenix, 2026-09-02.
+  #
+  # Fifteen of that change's eighteen steps. What earns a place here is a property that
+  # regresses SILENTLY — every one of these keeps passing as a 200 while the thing it
+  # describes has stopped being true, which is exactly what a baseline is for:
+  #
+  #   * X-Trace-Id is a frozen promise (contracts/README.md § "Trace correlation"), and a
+  #     header that stops being sent breaks no test that does not look for it.
+  #   * the ASGI span exclusion is one dependency bump away from silently reverting —
+  #     `evidence/` in that change is the picture of what it looked like before.
+  #   * a redaction regression puts real passwords in a store with a UI and an API, and
+  #     nothing else in this repo would notice.
+  #
+  # ALL TAGGED `local`, carried across unchanged: there is no deployed Phoenix and no
+  # deployed OTLP endpoint, so none of this is a claim about a remote origin.
+  #
+  # THE JAR ARRIVES HERE HOLDING THE KNOWLEDGE-BASE OWNER'S SESSION, and leaves empty —
+  # `logout-the-dev-account` at the bottom is what makes that true. Before this block the
+  # baseline ended signed in, which was accidental rather than decided; a change suite that
+  # opens with an anonymous refusal (0004's did) depends on it being empty.
+  #
+  # NOT PROMOTED, and why: `stateless-chat-carries-a-trace-id-too` and
+  # `the-stateless-trace-is-rooted-at-its-own-route` proved instrumentation covers more than
+  # one router — `the-sign-in-trace-reached-phoenix` below is a different router and proves
+  # the same thing for free. `phoenix-knows-the-backend-project` is implied by every
+  # project-scoped query here, which 404s when the project is absent.
+
+  - name: phoenix-is-up
+    owner: chatbot-backend
+    GET: /healthz
+    base: ${PHOENIX_BASE}
+    contract: false
+    tags: [local]
+    expect:
+      status: 200
+
+  - name: register-a-trace-owner
+    owner: chatbot-backend
+    POST: /api/v1/auth/register
+    tags: [local]
+    body:
+      email: smoke-baseline-trace-${SMOKE_RUN_ID}@auth.test
+      password: ${SMOKE_PASSWORD}
+      signup_code: ${SIGNUP_CODE}
+      display_name: Trace Owner
+    expect:
+      status: 201
+      cookie: session
+    capture:
+      # Deliberately not `account_id`/`thread_id`: `thread_id` is already captured further
+      # up this file, and a promoted block that quietly rebinds an earlier suite's variable
+      # is a trap for whoever adds a step between them.
+      trace_account_id: user.id
+
+  - name: start-a-chat-to-trace
+    owner: chatbot-backend
+    POST: /api/v1/threads
+    tags: [local]
+    body: {}
+    expect:
+      status: 201
+    capture:
+      trace_thread_id: thread.id
+
+  - name: a-message-carries-a-trace-id
+    owner: chatbot-backend
+    POST: /api/v1/threads/${trace_thread_id}/messages
+    tags: [local]
+    body:
+      message: "How many moons does Mars have?"
+    # The frozen promise. 32 lowercase hex, anchored: a handler echoing a request header,
+    # or writing a dashed UUID, satisfies a looser pattern and correlates with nothing.
+    expect:
+      status: 200
+      headers:
+        X-Trace-Id: '^[0-9a-f]{32}$'
+    capture:
+      chat_trace: header:X-Trace-Id
+
+  - name: phoenix-has-the-chat-trace
+    owner: chatbot-backend
+    GET: /v1/projects/${PHOENIX_PROJECT_NAME}/spans?trace_id=${chat_trace}
+    base: ${PHOENIX_BASE}
+    contract: false
+    tags: [local]
+    retry: {attempts: 15, delay: 2.0}
+    # The retries are the batch export's schedule, not flakiness insurance. Batch processors
+    # are required — a synchronous one puts collector latency on the request path.
+    expect:
+      status: 200
+      body_matches: '"trace_id":\s*"${chat_trace}"'
+
+  - name: the-chat-trace-is-rooted-at-the-http-request
+    owner: chatbot-backend
+    GET: /v1/projects/${PHOENIX_PROJECT_NAME}/spans?trace_id=${chat_trace}&name=POST%20%2Fv1%2Fthreads%2F%7Bthread_id%7D%2Fmessages
+    base: ${PHOENIX_BASE}
+    contract: false
+    tags: [local]
+    retry: {attempts: 15, delay: 2.0}
+    # Filtered server-side by name, so `parent_id: null` is about THAT span rather than
+    # whichever one serialised first. The route template, not the concrete path — a span
+    # named with the chat id in it makes every trace its own endpoint.
+    expect:
+      status: 200
+      body_matches: '"parent_id":\s*null'
+
+  - name: the-graph-run-is-nested-under-it
+    owner: chatbot-backend
+    GET: /v1/projects/${PHOENIX_PROJECT_NAME}/spans?trace_id=${chat_trace}&span_kind=CHAIN
+    base: ${PHOENIX_BASE}
+    contract: false
+    tags: [local]
+    retry: {attempts: 15, delay: 2.0}
+    # Both clauses, and they need each other. A LangGraph run given its own tracer provider
+    # returns nothing here; one instrumented without the FastAPI root returns a null parent.
+    # Without `body_matches` the exclusion passes vacuously on an empty list.
+    expect:
+      status: 200
+      body_matches: '"span_kind":\s*"CHAIN"'
+      body_excludes: '"parent_id":\s*null'
+
+  - name: one-request-draws-one-http-span
+    owner: chatbot-backend
+    GET: /v1/projects/${PHOENIX_PROJECT_NAME}/spans?trace_id=${chat_trace}&name=POST%20%2Fv1%2Fthreads%2F%7Bthread_id%7D%2Fmessages%20http%20receive&name=POST%20%2Fv1%2Fthreads%2F%7Bthread_id%7D%2Fmessages%20http%20send
+    base: ${PHOENIX_BASE}
+    contract: false
+    tags: [local]
+    retry: {attempts: 15, delay: 2.0}
+    # The one most likely to regress without anybody touching this repo: an
+    # opentelemetry-instrumentation-asgi bump that changes the `exclude_spans` default puts
+    # four ASGI plumbing spans back into every trace. Asserting an EMPTY filtered list, and
+    # the filter is proven live by the two steps above that return rows through it.
+    expect:
+      status: 200
+      body_matches: '"data":\s*\[\s*\]'
+
+  - name: the-root-span-names-the-account
+    owner: chatbot-backend
+    GET: /v1/projects/${PHOENIX_PROJECT_NAME}/spans?trace_id=${chat_trace}&attribute=user.id:${trace_account_id}
+    base: ${PHOENIX_BASE}
+    contract: false
+    tags: [local]
+    retry: {attempts: 15, delay: 2.0}
+    # "Who made this call" — the id the API issued, filtered on server-side, and pinned to
+    # the ROOT span. On a child only, it would pass a looser check while the span anybody
+    # actually opens still could not answer the question.
+    expect:
+      status: 200
+      body_matches: '"parent_id":\s*null'
+
+  - name: the-root-span-names-the-chat
+    owner: chatbot-backend
+    GET: /v1/projects/${PHOENIX_PROJECT_NAME}/spans?trace_id=${chat_trace}&attribute=session.id:${trace_thread_id}
+    base: ${PHOENIX_BASE}
+    contract: false
+    tags: [local]
+    retry: {attempts: 15, delay: 2.0}
+    # `session.id` is the OpenInference name, which is what makes a conversation's turns
+    # group in Phoenix rather than showing as loose requests.
+    expect:
+      status: 200
+      body_matches: '"parent_id":\s*null'
+
+  - name: the-root-span-carries-the-request-body
+    owner: chatbot-backend
+    GET: /v1/projects/${PHOENIX_PROJECT_NAME}/spans?trace_id=${chat_trace}&name=POST%20%2Fv1%2Fthreads%2F%7Bthread_id%7D%2Fmessages
+    base: ${PHOENIX_BASE}
+    contract: false
+    tags: [local]
+    retry: {attempts: 15, delay: 2.0}
+    # Filtered to the root span FIRST: the message also appears on the LangGraph spans, so
+    # an unfiltered query passes with the HTTP span carrying nothing.
+    expect:
+      status: 200
+      body_matches: 'How many moons does Mars have'
+
+  - name: dev-account-signs-in
+    owner: chatbot-backend
+    POST: /api/v1/auth/login
+    tags: [local]
+    body:
+      email: ${DEV_ACCOUNT_EMAIL}
+      password: ${DEV_ACCOUNT_PASSWORD}
+    # The standing account seeded at startup. The two values committed in stack/dev.env are
+    # the two values that work — a backend that seeded a different password fails here
+    # rather than at nine in the morning on somebody's machine.
+    expect:
+      status: 200
+      cookie: session
+      headers:
+        X-Trace-Id: '^[0-9a-f]{32}$'
+    capture:
+      dev_trace: header:X-Trace-Id
+
+  - name: dev-account-identifies
+    owner: chatbot-backend
+    GET: /api/v1/auth/me
+    tags: [local]
+    expect:
+      status: 200
+      json:
+        user:
+          email: ${DEV_ACCOUNT_EMAIL}
+
+  - name: the-sign-in-trace-reached-phoenix
+    owner: chatbot-backend
+    GET: /v1/projects/${PHOENIX_PROJECT_NAME}/spans?trace_id=${dev_trace}&name=POST%20%2Fv1%2Fauth%2Flogin
+    base: ${PHOENIX_BASE}
+    contract: false
+    tags: [local]
+    retry: {attempts: 15, delay: 2.0}
+    # Not a property anybody asked for — it is what makes the NEXT step mean something.
+    # Asserting a password is absent from a store that has not received the login yet is a
+    # pass that proves nothing, and it keeps passing right up until somebody looks.
+    # It also covers a second router, which is why the two /v1/chat steps were not promoted.
+    expect:
+      status: 200
+      body_matches: '"parent_id":\s*null'
+
+  - name: no-credential-ever-reaches-a-span
+    owner: chatbot-backend
+    GET: /v1/projects/${PHOENIX_PROJECT_NAME}/spans?limit=1000
+    base: ${PHOENIX_BASE}
+    contract: false
+    tags: [local]
+    # Across the WHOLE project, not one trace: a redactor covering /v1/auth/login and
+    # missing /v1/auth/register leaks just as completely, and only a project-wide look
+    # catches it. `body_matches` keeps it honest — an empty project satisfies an exclusion.
+    expect:
+      status: 200
+      body_matches: '"parent_id"'
+      body_excludes: '(${DEV_ACCOUNT_PASSWORD}|${SMOKE_PASSWORD}|${SIGNUP_CODE})'
+
+  - name: logout-the-dev-account
+    owner: chatbot-backend
+    POST: /api/v1/auth/logout
+    tags: [local]
+    # LAST, and it is about the file rather than about logout. The baseline used to end
+    # signed in, by accident. Every change suite runs in the same process and inherits this
+    # jar, so a suite opening with an anonymous refusal — the shape 0004 used — would assert
+    # nothing. Leaving the jar empty makes that inheritance a decision.
+    expect:
+      status: 204
