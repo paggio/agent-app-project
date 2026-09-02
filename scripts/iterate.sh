@@ -106,6 +106,14 @@ if [ -n "$ONLY" ]; then
     esac
   done
   ONLY="${KEPT# }"
+  # `--only ,` and `--only " "` pass the -n guard above, then word-split to zero words, so
+  # the loop never runs and KEPT is empty — and ${ONLY:-…} below would read that as "every
+  # slice" with nothing in the report saying it had been narrowed. The caller asked for a
+  # subset; an empty one is a refusal, not the whole set.
+  [ -n "$ONLY" ] || {
+    echo "iterate: --only matched no slices — it was given separators or blanks only" >&2
+    echo "iterate: slices are: $CHANGE_SLICES" >&2
+    exit 2; }
 fi
 
 # A repair attempt against a real environment costs an apply, so the budget is 1 unless

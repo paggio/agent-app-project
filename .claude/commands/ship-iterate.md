@@ -16,7 +16,10 @@ Both checks before anything else. `./scripts/prs.sh --list` shows what is open; 
 `runs/<ts>/prs.json` shows what was opened for it.
 
 - **No pull request for a slice yet** — nothing to amend. `/ship <change>` resumes at the
-  phase it reached.
+  phase it reached. This bar is higher than `/ship-correct`'s on purpose: that lane needs
+  only a run that asserted something, because a `failed` run opens no pull request and is
+  the commonest thing to arrive there with. Here there is no built thing to amend *toward*
+  — the brief is still the only description of it, and editing it is just planning.
 - **A pull request already merged** — a URL in `prs.json` that `--list` no longer shows.
   Then this is a NEW change, not an amendment: those criteria describe what is running, and
   rewriting them makes the record lie about what was decided. `docs/adr/0010`.

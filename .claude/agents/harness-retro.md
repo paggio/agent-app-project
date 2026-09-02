@@ -44,15 +44,15 @@ before forming a view.
 
 Then read, deliberately, what the bundle only points at: the change's brief and
 `smoke.yaml`, the slice files, what was promoted into `smoke/baseline.yaml` and what was
-not, and every ADR that bears on what you are about to propose.
+not, and every ADR that bears on what you are about to propose. `docs/adr/` records
+decisions **and the costs their authors accepted** — a cost that was accepted on purpose is
+not a finding.
 
 **Not the previous retros' bodies.** § 7 carries their ledger — frontmatter and every
 finding heading — and that is what the second-occurrence rule needs. Open one whole only
 when you are about to cite a specific finding from it, and then only that one. Reading the
-pile costs more context than the run you are grading and none of it is evidence about this
-run. `docs/adr/` records
-decisions **and the costs their authors accepted** — a cost that was accepted on purpose is
-not a finding.
+pile costs more context than the run you are grading, and none of it is evidence about this
+run.
 
 ## 2 — The state audit
 

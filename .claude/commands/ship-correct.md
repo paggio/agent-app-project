@@ -20,12 +20,14 @@ too weak, or already failing, and which repo is answerable. Do not ask the user 
 
 ## Refuse early, mechanically
 
-Both checks before anything else. `changes/<change>/runs/*/attempt-*/verify.json` is
-whether the loop has ever asserted anything; `./scripts/prs.sh --list` against the most
-recent `runs/<ts>/prs.json` is whether anything has merged.
+Both checks before anything else. `find changes/<change>/runs -name verify.json` is
+whether anything has ever been asserted — a loop run writes it under `attempt-*/`, a
+standalone `make verify` writes it beside the run directory, and either counts;
+`./scripts/prs.sh --list` against the most recent `runs/<ts>/prs.json` is whether anything
+has merged.
 
-- **The loop has never run** — no `verify.json` under any run. Then nothing was built and
-  there is nothing to object to: `/ship <change>` resumes at the phase it reached.
+- **Nothing has ever been asserted** — that `find` comes back empty. Then nothing was built
+  and there is nothing to object to: `/ship <change>` resumes at the phase it reached.
 - **A pull request already merged** — a URL in `prs.json` that `--list` no longer shows.
   Then the criteria describe what is running and some of them are in `smoke/baseline.yaml`
   already. Correcting it is a new change; `/realign` first if this repo is behind.
@@ -64,13 +66,22 @@ one that does. This is the whole of the phase: a dislike that never becomes an a
 one the next change silently re-breaks, and the criteria are supposed to outlive the
 conversation that produced them.
 
-`verify.json`'s `owners_failing` now names the repo answerable. That is the routing, and it
-came from evidence rather than from a guess.
+`owners_failing` in the `verify.json` that run just wrote — the path is in `make verify`'s
+own output, `changes/<change>/runs/<ts>/verify.json` — now names the repo answerable. That
+is the routing, and it came from evidence rather than from a guess. Intersect it with the
+change's slices: a failing owner with no slice file cannot be dispatched, and `--only`
+refuses a name that is not a slice.
 
-If the objection cannot be expressed as a step at all — it is how something looks — save the
-evidence under `changes/<change>/evidence/` and name the path in the slice file, in words,
-in phase 3. Say so in the report: an unassertable criterion is a hole the suite cannot
-cover, and the next change will not know about it.
+**A screenshot cannot be dispatched.** `fanout.sh` sends text, so an image pasted into this
+session does not cross that boundary — save it under `changes/<change>/evidence/` and name
+the path in the slice file in phase 3. The dispatch adds the change directory to every
+slice session, so the path resolves and the agent opens it itself. Say in words what is
+wrong with it as well; a path with no sentence is a puzzle. That applies whether or not the
+objection is assertable — most of them are, and the screenshot is just how you noticed.
+
+If it cannot be expressed as a step **at all** — it is purely how something looks — the
+evidence file is the whole of the brief, and say so in the report: an unassertable criterion
+is a hole the suite cannot cover, and the next change will not know about it.
 
 ## 2 — Re-freeze, only if the interface is what is wrong
 
@@ -110,7 +121,7 @@ with no step it is answerable for — which is what a hand-written correction pr
 often.
 
 ```
-./scripts/iterate.sh <change> --only <the repo owners_failing named>
+./scripts/iterate.sh <change> --only <the answerable repo, if it is a slice>
 ```
 
 `--only` restricts the **first** dispatch; repair passes follow the evidence wherever it
@@ -131,9 +142,10 @@ requests update rather than multiply. `prs.sh --create` is idempotent and keeps 
 
 ## 5 — Report
 
-Read `changes/<change>/runs/<ts>/report.md` and route on the outcome exactly as `/ship`
-phase 5 does — same table, same rule that an assertion is fixed here and never in a product
-repo. Then say, and keep it short:
+Read `changes/<change>/runs/<ts>/report.md` and route on the outcome as `/ship` phase 5
+does — same table, same rule that an assertion is fixed here and never in a product repo —
+with one exception: its `failed` row sends the reader to this lane, and you are already in
+it. Then say, and keep it short:
 
 - the outcome **with its assertion count beside it**, and which assertion is the new one;
 - what the correction turned out to be: a missing criterion, a weak one, or an

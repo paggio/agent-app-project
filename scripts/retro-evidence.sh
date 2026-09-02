@@ -373,6 +373,12 @@ if not rows:
     print("  trusting it.)")
     raise SystemExit
 
+# Sorted before slicing: working-tree rows arrive ascending, then the branch-only group is
+# appended, so `rows[-MAX:]` took the branch-only ones whatever their date — and the line
+# below said "newest" about them. The filename leads with a UTC timestamp, so the basename
+# IS the order.
+rows.sort(key=lambda r: os.path.basename(r[0]))
+
 omitted = max(0, len(rows) - MAX)
 if omitted:
     print(f"  {omitted} older retro(s) not listed; {len(rows)} exist. Newest {MAX} follow.")

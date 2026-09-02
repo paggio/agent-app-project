@@ -379,11 +379,15 @@ def check_lane_vocabulary() -> None:
         fail("lane-vocabulary", "scripts/retro-evidence.sh is missing; it is what the "
                                 "retrospective is told to run first")
         return
-    m = re.search(r'case "\$LANE" in\s*\n\s*([a-z|-]+)\)', ev)
+    # `\)\s*;;` on purpose: capturing the alternation alone would pass a branch rewritten
+    # to `ship|…|realign) echo no; exit 2 ;;`, which refuses every lane while listing them
+    # all. The accept branch has to be empty for the list to mean what this reads it as.
+    m = re.search(r'case "\$LANE" in\s*\n\s*([a-z|-]+)\)\s*;;', ev)
     if not m:
         fail("lane-vocabulary",
-             "could not find the `case \"$LANE\" in` alternatives in "
-             "scripts/retro-evidence.sh — this check needs them as the accepted set")
+             "could not find the `case \"$LANE\" in` accept branch in "
+             "scripts/retro-evidence.sh, or its first branch is not a bare alternation "
+             "list followed by `;;` — this check needs that as the accepted set")
     else:
         accepted = set(m.group(1).split("|"))
         for lane in sorted(lanes - accepted):
@@ -416,6 +420,41 @@ def check_lane_vocabulary() -> None:
              f"retros/README.md's `lane:` vocabulary omits {lane!r}. A retrospective for "
              f"that lane writes a value the schema does not list, which is how the last "
              f"lane's file ended up outside its own spec.")
+    # Both directions, like the case statement above: a lane that is deleted leaves its
+    # name in the schema, and the next reader takes a vocabulary as a list of what exists.
+    for lane in sorted(declared - lanes):
+        fail("lane-vocabulary",
+             f"retros/README.md's `lane:` vocabulary lists {lane!r} and there is no "
+             f".claude/commands/{lane}.md. Drop it — a schema is read as the set of lanes "
+             f"that exist.")
+
+
+# The second run of a change has to be legible across changes, and the heading is the whole
+# of that: 0004 and 0005 each invented `## Amended, <date> — /ship-iterate` by hand, and the
+# fourth lane would have invented a fifth spelling. There is no template to hold — neither
+# section exists when new-change.sh scaffolds — so the lanes are what carry it, and this is
+# what keeps the two lanes from drifting apart.
+STATUS_HEADINGS = {
+    "ship-correct": "## Corrected, <YYYY-MM-DD> — /ship-correct",
+    "ship-iterate": "## Amended, <YYYY-MM-DD> — /ship-iterate",
+}
+
+
+def check_status_headings() -> None:
+    for lane, heading in sorted(STATUS_HEADINGS.items()):
+        path = os.path.join(ROOT, ".claude", "commands", f"{lane}.md")
+        if not os.path.exists(path):
+            fail("status-headings",
+                 f"STATUS_HEADINGS names the {lane!r} lane and "
+                 f".claude/commands/{lane}.md does not exist. Drop the entry, or the "
+                 f"heading has no lane to be written by.")
+            continue
+        if heading not in open(path).read():
+            fail("status-headings",
+                 f".claude/commands/{lane}.md does not spell the STATUS.md heading "
+                 f"{heading!r} literally. Both lanes write into the same file and the "
+                 f"heading is what tells an amendment from a correction — a lane that "
+                 f"spells it differently makes STATUS.md unreadable across changes.")
 
 
 def check_gate_messages() -> None:
@@ -845,7 +884,7 @@ def main() -> int:
               check_scripts_are_not_the_entry_point, check_env_layers,
               check_gate_messages, check_loop_calls, check_agent_dispatchers,
               check_stack_services, check_clean_slate, check_lane_coverage,
-              check_lane_vocabulary,
+              check_lane_vocabulary, check_status_headings,
               report_readme_divergence)
     for fn in checks:
         try:
