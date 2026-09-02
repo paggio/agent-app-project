@@ -1,7 +1,8 @@
 #!/usr/bin/env bash
 # Everything the harness-retro agent must not have to take on trust, collected in one pass.
 #
-#   ./scripts/retro-evidence.sh --lane ship|realign [--change NNNN-slug] [--run-dir DIR]
+#   ./scripts/retro-evidence.sh --lane <lane> [--change NNNN-slug] [--run-dir DIR]
+#     --lane  ship | ship-correct | ship-iterate | realign
 #
 # Why this exists: the retrospective's first job is to say whether the system is coherent
 # right now — locally and in whatever environment the lane claimed to touch. An agent asked
@@ -32,15 +33,20 @@ while [ $# -gt 0 ]; do
     --lane)    LANE="${2:-}"; shift ;;
     --change)  CHANGE="${2:-}"; shift ;;
     --run-dir) RUN_DIR="${2:-}"; shift ;;
-    -h|--help) sed -n '2,19p' "${BASH_SOURCE[0]}"; exit 0 ;;
+    -h|--help) sed -n '2,24p' "${BASH_SOURCE[0]}"; exit 0 ;;
     *) echo "retro-evidence: unknown argument $1" >&2; exit 2 ;;
   esac
   shift
 done
 
+# Every lane's name is accepted, because the name is what the retro's frontmatter records
+# and a lane whose own name the bundle refuses is an exit 2 for a correct invocation. The
+# three dispatching lanes produce a run directory; /realign does not.
 case "$LANE" in
-  ship|realign) ;;
-  *) echo "retro-evidence: --lane must be ship or realign" >&2; exit 2 ;;
+  ship|ship-correct|ship-iterate|realign) ;;
+  *) echo "retro-evidence: --lane must be one of: ship, ship-correct, ship-iterate," >&2
+     echo "retro-evidence: realign — the lane names retros/README.md's frontmatter uses" >&2
+     exit 2 ;;
 esac
 
 CHANGE="${CHANGE#changes/}"; CHANGE="${CHANGE%/}"
@@ -134,8 +140,9 @@ fi
 if [ -z "$RUN_DIR" ] || [ ! -d "$RUN_DIR" ]; then
   say ""
   say "No run directory. For /realign that is expected — the evidence is sections 2, 4 and 5."
-  say "For /ship it is a finding: phase 4 produces one, and its absence means the loop did"
-  say "not finish, or the change was shipped by hand."
+  say "For /ship, /ship-correct and /ship-iterate it is a finding: each ends in the loop and"
+  say "the loop produces one, so its absence means the loop did not finish, or the change was"
+  say "shipped by hand."
 else
   say ""
   say "\`$RUN_DIR\`"
@@ -319,23 +326,106 @@ say ""
 say "## 7. What the harness has already been told"
 say ""
 say '```'
-say "previous retros:"
+say "previous retros — the LEDGER, not the retros. Frontmatter and finding headings only."
+say "The bodies are history: a lane's worth of them is over a thousand lines and none of it"
+say "is evidence about this run. Open one whole ONLY to cite a specific finding, which is"
+say "what the second-occurrence rule needs — and then just that one."
+say ""
 # A retro lands by pull request, so a retro whose pull request was never opened exists only
 # on a branch — and that is the one the next retrospective most needs, because the
 # second-occurrence rule is written against it. Listing the working tree alone printed
 # "(none)" while retros/20260826T163132Z-ship-0004-rag-knowledge-base.md sat on a pushed
 # branch, and the friction it recorded was met again the next day.
-prev="$( { ls -1 retros/*.md 2>/dev/null | grep -v '/README\.md$' | sed 's/^/  /'
+RETRO_LIST="$( { ls -1 retros/*.md 2>/dev/null | grep -v '/README\.md$' | sed 's/$/\t/'
   git for-each-ref --format='%(refname:short)' refs/heads refs/remotes 2>/dev/null |
     while read -r ref; do
       git ls-tree -r --name-only "$ref" -- retros/ 2>/dev/null | grep -v 'README\.md$' |
         while read -r f; do
           [ -e "$f" ] || printf '%s\t%s\n' "$f" "$ref"
         done
-    done | sort -u |
-    awk -F'\t' '!seen[$1]++ { printf "  %s  — NOT in this tree, on %s\n", $1, $2 }'
-} )"
-printf '%s\n' "${prev:-  (none)}" | tail -20
+    done | sort -u
+} | awk -F'\t' '!seen[$1]++' )"
+# The program comes from the heredoc, so the list arrives in the environment: a pipe into
+# `python3 -` would be swallowed by the heredoc and the section would silently list nothing.
+RETRO_LIST="$RETRO_LIST" LEDGER_MAX=8 python3 - <<'LEDGERPY'
+"""One line of identity and one line per finding, per retro.
+
+retros/ is the harness's memory and it grows by one 250-line file per lane. The agent that
+reads it is told to apply the second-occurrence rule, and until this existed the bundle gave
+it filenames — so complying meant opening every file, which is how a directory of history
+became a per-run context cost that grows forever. The headings ARE the mechanism; the prose
+under them is for the human reading the pull request.
+
+An unparseable retro is reported as unparseable, in the bundle. A silence here reads as
+"nothing was ever recorded", which is the one answer that switches the rule off.
+"""
+import os, re, subprocess
+
+MAX = int(os.environ.get("LEDGER_MAX", "8"))
+rows = []
+for line in os.environ.get("RETRO_LIST", "").splitlines():
+    path, _, ref = line.rstrip("\n").partition("\t")
+    if path:
+        rows.append((path, ref))
+if not rows:
+    print("  (none — nothing has been recorded, so the second-occurrence rule has nothing")
+    print("  to stand on. On a repo with lanes behind it, suspect this section rather than")
+    print("  trusting it.)")
+    raise SystemExit
+
+omitted = max(0, len(rows) - MAX)
+if omitted:
+    print(f"  {omitted} older retro(s) not listed; {len(rows)} exist. Newest {MAX} follow.")
+    print("")
+
+HEAD = re.compile(r"^#{2,3}\s+(.*)$")
+KEEP = ("lane", "change", "date", "verdict", "findings", "pr")
+
+for path, ref in rows[-MAX:]:
+    where = f"  {path}" + (f"  — NOT in this tree, on {ref}" if ref else "")
+    print(where)
+    try:
+        if ref:
+            text = subprocess.run(["git", "show", f"{ref}:{path}"], capture_output=True,
+                                  text=True, check=True).stdout
+        else:
+            text = open(path, errors="replace").read()
+    except Exception as exc:
+        print(f"    (UNREADABLE: {exc!r} — treat this retro as NOT read)")
+        continue
+
+    fm = {}
+    if text.startswith("---"):
+        end = text.find("\n---", 3)
+        if end != -1:
+            for fl in text[3:end].splitlines():
+                k, _, v = fl.partition(":")
+                if k.strip() in KEEP:
+                    fm[k.strip()] = v.strip()
+    if fm:
+        print("    " + "  ".join(f"{k}={fm[k]}" for k in KEEP if k in fm))
+    else:
+        print("    (no parseable frontmatter — retros/README.md specifies it)")
+
+    section, n = "", 0
+    for fl in text.splitlines():
+        m = HEAD.match(fl)
+        if not m:
+            continue
+        title = m.group(1).strip()
+        if fl.startswith("## "):
+            section = title
+            continue
+        if section.lower().startswith(("state audit", "not verified")):
+            continue
+        # Announced, like cap() does: a heading that stops mid-token reads as a malformed
+        # retro rather than a long one.
+        shown = title if len(title) <= 110 else title[:110] + " …"
+        print(f"    [{section or '?'}] {shown}")
+        n += 1
+    if not n:
+        print("    (no finding headings — either a clean bill, or a shape README.md forbids)")
+LEDGERPY
 say ""
 say "open pull requests in this repo:"
 open_prs="$(gh pr list --state open --json number,title,headRefName --jq '.[] | "  #\(.number) \(.headRefName)  \(.title)"' 2>/dev/null)"

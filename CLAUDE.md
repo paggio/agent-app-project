@@ -10,7 +10,8 @@ session can see it.
 | --- | --- |
 | One repo, no interface change | Not here — `cd <repo> && claude`. That repo's CI fails if the work turns out to touch contract surface; come back for `/ship` if it does. |
 | Two or more repos, or any change to `contracts/` | `/ship "<what you want>"` — one command: plan artifact, contract freeze, dispatch, iterate, smoke, pull requests. |
-| A change is in flight — PRs open, nothing merged — and you want it different | `/ship-iterate <change>: <what to change>` — amend the brief, the criteria and the slices, then run the loop again against the same branches. |
+| A change is in flight — PRs open, nothing merged — and the result is not what you asked for | `/ship-correct <change>: <what is wrong>` — turn the objection into a failing assertion, route it to the repo answerable, run the loop. |
+| Same window, and you now want a different requirement | `/ship-iterate <change>: <what to change>` — amend the brief, the criteria and the slices, then run the loop again against the same branches. |
 | The product PRs are merged and this repo is behind | `/realign` — bump the submodules, re-check the contract against what is served, re-run the baseline, promote the durable steps. |
 
 Never run two lanes in one session.
@@ -30,8 +31,7 @@ Never run two lanes in one session.
   wrong place.
 - The freeze point is the commit that lands `contracts/` alone. Its SHA goes in that
   change's `change.yaml` as `freeze_sha`. Nowhere else — nothing reads anywhere else.
-- "Three PRs exist" is not shipped. Shipped means deployed together with the smoke suite
-  passing. See `docs/adr/0002`.
+- "Three PRs exist" is not shipped: shipped means deployed together with the smoke suite passing. See `docs/adr/0002`.
 - Every variable a smoke suite interpolates is declared in `stack/dev.env`. Never export
   one by hand.
 - Exit 1 = the thing under test failed. Exit 2 = the harness refused. See `docs/adr/0003`.
@@ -57,4 +57,4 @@ Never run two lanes in one session.
 ## Commands
 
 `make help` lists the hand tools for looking at the running system. `/ship`,
-`/ship-iterate` and `/realign` are how work gets done.
+`/ship-correct`, `/ship-iterate` and `/realign` are how work gets done.

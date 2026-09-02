@@ -133,14 +133,22 @@ Route on the outcome:
 | `verified` | Deployed and asserted, locally and remotely. Nothing to fix. |
 | `verified-local` | Passed locally; **no remote environment was touched**. The best outcome a change with `deploy.infra: false` can reach — a full pass, and not evidence about a deployment. Not shippable for a change that is supposed to deploy. |
 | `contract-gap` | A slice reported it cannot be built against the frozen contract, and named the gap. Do NOT patch around it: go back to phase 2, re-freeze, update `freeze_sha`, re-run. |
-| `failed` | Read `runs/<ts>/attempt-*/failure-*.md` — that is exactly what the agents were given. Decide whether the implementation is wrong (re-run with more attempts) or the assertion is wrong (fix it here, never in a product repo). |
+| `failed` | Read `runs/<ts>/attempt-*/failure-*.md` — that is exactly what the agents were given. Then `/ship-correct <change>: <what is wrong>`, which turns the objection into a failing assertion and routes it to the repo answerable. An assertion is fixed here, never in a product repo. |
 | `blocked` | A precondition was unmet, so nothing was dispatched and nothing deployed. There is no deploy evidence to read. Fix what the dispatcher named. |
 | `unattributable` | The failure could not be pinned on a slice. Check `verify.json`'s `fault`: `harness` means it is this repo's bug. |
 
 **Do not merge anything.** Merging is a human decision, in dependency order — the repo
 whose change is backward compatible on its own goes first. Record that order in `STATUS.md`.
 
-Once a human has merged, the next step is `/realign`.
+Then hand the user exactly one next lane, and nothing else:
+
+| Where they are | Next |
+| --- | --- |
+| The result is not what they asked for — including any outcome above that is not green | `/ship-correct <change>: <what is wrong>` |
+| It is right, and they now want a different requirement | `/ship-iterate <change>: <what to change>` |
+| It is right | A human merges, then `/realign` |
+
+Both in-flight lanes refuse once anything has merged, so nothing is lost by stopping here.
 
 ## 6 — The retrospective
 

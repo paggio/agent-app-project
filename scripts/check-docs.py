@@ -292,12 +292,22 @@ def check_loop_calls() -> None:
 # files still read as though they are. This is the LOOP_CALLS argument applied to a gate
 # whose caller is a prompt rather than a script. What a prompt does cannot be asserted from
 # here; that the instruction is present in every lane that claims it can, and its absence
-# is the whole of the defect. See docs/adr/0009.
+# is the whole of the defect. check_lane_coverage below holds this list to the directory,
+# so a lane added without an entry fails rather than going quiet. See docs/adr/0009.
 AGENT_DISPATCHERS = {
     "harness-retro": (".claude/commands/ship.md",
+                      ".claude/commands/ship-correct.md",
                       ".claude/commands/ship-iterate.md",
                       ".claude/commands/realign.md"),
 }
+
+# Every command in .claude/commands/ is a lane, and docs/adr/0009 says every lane ends with
+# the retrospective. AGENT_DISPATCHERS is hand-kept, which is the shape of defect
+# check_stack_services exists for: /ship-correct was added as a fourth lane and nothing
+# would have failed if this dict had been left at three — check_agent_dispatchers would have
+# reported a pass while one lane in four went ungraded. So the dict is held to the directory.
+# A command that genuinely is not a lane goes in NOT_A_LANE, on purpose, with a reason.
+NOT_A_LANE: dict[str, str] = {}
 
 
 def check_agent_dispatchers() -> None:
@@ -322,7 +332,90 @@ def check_agent_dispatchers() -> None:
                      f"{dispatcher} never names the {agent!r} agent, so that lane ends "
                      f"without it. Either dispatch it in the lane's last phase, or remove "
                      f"the lane from AGENT_DISPATCHERS on purpose — a retrospective that "
-                     f"runs on one lane of two is a blind spot with a green light on it.")
+                     f"runs on some lanes and not others is a blind spot with a "
+                     f"green light on it.")
+
+
+def check_lane_coverage() -> None:
+    declared = set(AGENT_DISPATCHERS["harness-retro"])
+    for path in sorted(glob.glob(os.path.join(ROOT, ".claude", "commands", "*.md"))):
+        cmd = os.path.relpath(path, ROOT)
+        if cmd in declared or os.path.basename(cmd)[:-3] in NOT_A_LANE:
+            continue
+        fail("lane-coverage",
+             f"{cmd} is a command and is in neither AGENT_DISPATCHERS['harness-retro'] nor "
+             f"NOT_A_LANE in scripts/check-docs.py. Every lane ends with the retrospective "
+             f"(docs/adr/0009) — add it there so the dispatch is asserted, or declare with a "
+             f"reason that it is not a lane. A lane nothing grades is a blind spot with a "
+             f"green light on it.")
+    for cmd in sorted(declared):
+        if not os.path.exists(os.path.join(ROOT, cmd)):
+            fail("lane-coverage",
+                 f"AGENT_DISPATCHERS names {cmd}, which does not exist. "
+                 f"check_agent_dispatchers reports that too; this is the same list held "
+                 f"from the other side.")
+
+
+def check_lane_vocabulary() -> None:
+    """The set of lanes has three hand-kept copies, and two of them were wrong.
+
+    `/ship-iterate` has told its retrospective to run `retro-evidence.sh --lane
+    ship-iterate` since docs/adr/0010, and that script's case statement accepted
+    `ship|realign` only — exit 2 for a correct invocation, for as long as the lane had
+    existed, in the one script whose whole purpose is that the retro's facts are mechanical
+    rather than re-derived. `retros/README.md`'s `lane:` vocabulary was not extended for
+    that lane either; the 20260827 retrospective recorded it, and it recurred when the
+    fourth lane arrived. So the directory is the source and the other two are asserted
+    against it.
+    """
+    lanes = {os.path.basename(p)[:-3]
+             for p in glob.glob(os.path.join(ROOT, ".claude", "commands", "*.md"))}
+    lanes -= set(NOT_A_LANE)
+
+    ev_path = os.path.join(ROOT, "scripts", "retro-evidence.sh")
+    try:
+        ev = open(ev_path).read()
+    except OSError:
+        fail("lane-vocabulary", "scripts/retro-evidence.sh is missing; it is what the "
+                                "retrospective is told to run first")
+        return
+    m = re.search(r'case "\$LANE" in\s*\n\s*([a-z|-]+)\)', ev)
+    if not m:
+        fail("lane-vocabulary",
+             "could not find the `case \"$LANE\" in` alternatives in "
+             "scripts/retro-evidence.sh — this check needs them as the accepted set")
+    else:
+        accepted = set(m.group(1).split("|"))
+        for lane in sorted(lanes - accepted):
+            fail("lane-vocabulary",
+                 f"scripts/retro-evidence.sh refuses --lane {lane}, and "
+                 f".claude/commands/{lane}.md tells its retrospective to pass exactly "
+                 f"that. Exit 2 for a correct invocation means the retro works from the "
+                 f"session it just read instead of from evidence. Add it to the case.")
+        for lane in sorted(accepted - lanes):
+            fail("lane-vocabulary",
+                 f"scripts/retro-evidence.sh accepts --lane {lane} and there is no "
+                 f".claude/commands/{lane}.md. Drop it, or the bundle names a lane that "
+                 f"cannot have produced it.")
+
+    readme = os.path.join(ROOT, "retros", "README.md")
+    try:
+        m = re.search(r"^lane:\s*(.+)$", open(readme).read(), re.M)
+    except OSError:
+        fail("lane-vocabulary", "retros/README.md is missing; it specifies the frontmatter "
+                                "every retrospective is written against")
+        return
+    if not m:
+        fail("lane-vocabulary",
+             "retros/README.md's frontmatter block declares no `lane:` vocabulary. It is "
+             "what a retrospective writes into every file here.")
+        return
+    declared = {v.strip() for v in m.group(1).split("|")}
+    for lane in sorted(lanes - declared):
+        fail("lane-vocabulary",
+             f"retros/README.md's `lane:` vocabulary omits {lane!r}. A retrospective for "
+             f"that lane writes a value the schema does not list, which is how the last "
+             f"lane's file ended up outside its own spec.")
 
 
 def check_gate_messages() -> None:
@@ -538,8 +631,8 @@ def check_scripts_are_not_the_entry_point() -> None:
                     if re.search(shape.format(s=re.escape(script)), line, re.I | re.M):
                         fail("script-entry-point",
                              f"{r}:{n} presents scripts/{script} as the way to do the work. "
-                             f"The lanes are /ship and /realign; the scripts are what they "
-                             f"call. See docs/adr/0005.")
+                             f"The lanes are the commands in .claude/commands/; the scripts "
+                             f"are what they call. See docs/adr/0005.")
 
 
 # --- 10. the three env layers are in the order docs/adr/0006 claims -------------------
@@ -751,7 +844,8 @@ def main() -> int:
               check_vendored_contracts, check_commands,
               check_scripts_are_not_the_entry_point, check_env_layers,
               check_gate_messages, check_loop_calls, check_agent_dispatchers,
-              check_stack_services, check_clean_slate,
+              check_stack_services, check_clean_slate, check_lane_coverage,
+              check_lane_vocabulary,
               report_readme_divergence)
     for fn in checks:
         try:

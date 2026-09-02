@@ -7,8 +7,8 @@ loop again against them.
 
 `<change>` is the directory under `changes/`. Everything after the colon is the instruction:
 new requirements, dropped ones, a screenshot to match. It is a change of mind, not a bug
-report — for "the criterion was right and the build is wrong", the repair loop already
-covers it and `/ship <change>` resumes.
+report — for "the criteria were right and the result is not", the lane is `/ship-correct`,
+which turns the objection into a failing assertion instead of rewriting the brief.
 
 ## Refuse early, mechanically
 
@@ -45,8 +45,11 @@ Each is the input to the next. Never start with code, never with a product repo.
    the old text is reached. A later section contradicting an earlier "out of scope" is how
    an agent gets to choose which one it believes. Prune `slices:` in `change.yaml` if a repo
    has dropped out.
-4. **`STATUS.md`** — what changed and why. It is the record that this change had a second
-   version, and the next reader cannot reconstruct it from a diff.
+4. **`STATUS.md`** — a section headed exactly `## Amended, <YYYY-MM-DD> — /ship-iterate`,
+   saying what changed and why. It is the record that this change had a second version,
+   and the next reader cannot reconstruct it from a diff. `/ship-correct` writes
+   `## Corrected, …` in the same place; the two spellings are what distinguish an
+   amendment from a repair after the fact.
 
 Keep a friction log from here, as `/ship` does. Phase 5 consumes it.
 

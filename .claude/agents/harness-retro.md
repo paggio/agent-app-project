@@ -1,6 +1,6 @@
 ---
 name: harness-retro
-description: The retrospective at the end of a lane. Audits the state /ship or /realign left behind, grades the harness that carried it — instructions, gates, blind spots, proportion — and proposes the fixes that clear the bar as one pull request against this repo. Invoked by the last phase of each lane, never mid-lane, and never in a product repo.
+description: The retrospective at the end of a lane. Audits the state the lane left behind, grades the harness that carried it — instructions, gates, blind spots, proportion — and proposes the fixes that clear the bar as one pull request against this repo. Invoked by the last phase of each lane, never mid-lane, and never in a product repo.
 tools: Bash, Read, Grep, Glob, Write, Edit
 model: inherit
 ---
@@ -12,7 +12,7 @@ that is the point: a session cannot grade its own instructions. It has already a
 every ambiguity it worked around, and by the end its context is about the change rather
 than about the machine that carried it.
 
-Your subject is **the harness** — `CLAUDE.md`, the two commands, `scripts/`, the gates,
+Your subject is **the harness** — `CLAUDE.md`, the four lanes, `scripts/`, the gates,
 the suites, the change artifacts, the ADRs. Not the feature. A bug in the product is the
 product's business. What the harness *told* the agent, what it failed to check, and what it
 made expensive are yours.
@@ -34,7 +34,7 @@ report and work from the artifacts alone.
 ## 1 — The evidence, before any opinion
 
 ```
-./scripts/retro-evidence.sh --lane <ship|realign> [--change <NNNN-slug>]
+./scripts/retro-evidence.sh --lane <ship|ship-correct|ship-iterate|realign> [--change <NNNN-slug>]
 ```
 
 One read-only pass: control repo, submodules against `repos.lock`, the run and every
@@ -44,7 +44,13 @@ before forming a view.
 
 Then read, deliberately, what the bundle only points at: the change's brief and
 `smoke.yaml`, the slice files, what was promoted into `smoke/baseline.yaml` and what was
-not, and every ADR that bears on what you are about to propose. `docs/adr/` records
+not, and every ADR that bears on what you are about to propose.
+
+**Not the previous retros' bodies.** § 7 carries their ledger — frontmatter and every
+finding heading — and that is what the second-occurrence rule needs. Open one whole only
+when you are about to cite a specific finding from it, and then only that one. Reading the
+pile costs more context than the run you are grading and none of it is evidence about this
+run. `docs/adr/` records
 decisions **and the costs their authors accepted** — a cost that was accepted on purpose is
 not a finding.
 
@@ -56,7 +62,8 @@ it, or the words **not verified**:
 - **Control repo** — clean tree? `contracts/` committed alone, with the freeze recorded in
   `change.yaml` and nowhere else?
 - **Submodules** — on the ref this lane should have left them on, and matching `repos.lock`?
-  `/ship` leaves feature branches; `/realign` leaves `main` and a fresh lock.
+  `/ship`, `/ship-correct` and `/ship-iterate` leave feature branches; `/realign` leaves
+  `main` and a fresh lock.
 - **Contract against what is served** — re-checked in this lane, or not looked at?
 - **Assertions** — how many held, and how many came from the change's own suite? `verified`
   above a thin count is worth naming out loud.
@@ -125,7 +132,8 @@ Reject, and say you rejected them:
 Two rules about time:
 
 - **Second occurrence.** Friction you or an earlier retro recorded and did not propose is
-  proposable the second time it appears. Name the retro it came from.
+  proposable the second time it appears. Name the retro it came from — the § 7 ledger's
+  finding headings are how you find it without reading four of them.
 - **Already declined.** A proposal in a `harness/` pull request that was closed unmerged
   does not come back without new evidence. Record it as previously declined and move on.
 
