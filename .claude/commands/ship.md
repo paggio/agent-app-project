@@ -26,7 +26,10 @@ From here to the end, keep a running note of anything that does not go smoothly 
 that fires, prose you have to re-read, a step you work around. Phase 6 consumes it, and by
 then you will have stopped noticing: the workaround will feel like how it works.
 
-`./scripts/new-change.sh <slug>` scaffolds `changes/NNNN-<slug>/`. Then, before writing:
+`./scripts/new-change.sh <slug>` scaffolds `changes/NNNN-<slug>/`. Do it on a branch —
+`git switch -c feat/<change>` — because nothing lands on this repo's `main` except through
+a reviewed pull request, and because `prs.sh --create` adds this repo's half of the change
+to the pull requests it opens only when it is already on that branch. Then, before writing:
 read `docs/adr/` and the sibling repos' `docs/architecture.md`. Do not fill a gap with an
 assumption — an unstated assumption becomes three divergent implementations.
 

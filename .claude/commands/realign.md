@@ -55,6 +55,10 @@ added to a *request* breaks callers, the same field added to a *response* is har
 field removed from a *response* breaks consumers, removed from a *request* it does not.
 
 - **Agrees, or additive only** — nothing to do. Note it and move on.
+- **Declared by the implementation, never observed** — a status read off `/openapi.json`,
+  which is not evidence the service ever returns it. Do not promise it on that basis: probe
+  the running service first, and check `contracts/README.md` does not already promise
+  something else for that case.
 - **Anything BREAKING** — stop. Do not write. The default answer is expand-and-contract:
   add the new shape alongside the old, migrate every consumer, remove the old in a later
   change. `--accept-breaking` exists only for the case where you have established that
@@ -83,12 +87,15 @@ For a change that also needs the browser, `make e2e`.
 ## 4 — Pin it, in one commit
 
 ```
+git switch -c chore/realign-<change>
 ./scripts/lock.sh
 git add chatbot-backend frontend infra repos.lock
 git commit -m "chore: bump submodules for <change>"
 ```
 
-That commit contains the pointers and `repos.lock` and nothing else.
+That commit contains the pointers and `repos.lock` and nothing else, and it is on a branch:
+nothing lands on this repo's `main` except through a reviewed pull request. A bump is not
+an exception — it is the commit that decides which four SHAs are believed to work together.
 
 ## 5 — Promote the durable smoke steps
 
@@ -98,7 +105,12 @@ tagged `local` is tagged that way for a reason. This is how the loop stops re-br
 an earlier change fixed.
 
 Keep the baseline fast and keep it about the **seam**. Anything provable inside one repo
-belongs in that repo's own suite, not here. Then `make check` and commit.
+belongs in that repo's own suite, not here. Then `make check`, `make smoke` again — the
+promoted steps have only ever run against the stack that is up, and the baseline's job is to
+pass on the next one too — and commit on the same branch.
+
+Then push it and open the pull request (`gh pr create`), and do not merge it. Say in the
+body what moved, what the harvest said and what you did about it, and what you promoted.
 
 ## 6 — Report
 
