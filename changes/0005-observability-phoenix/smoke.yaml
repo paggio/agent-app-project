@@ -1,0 +1,302 @@
+# 0005 — one request, one trace, rooted at the HTTP span: the criteria as steps.
+#
+# TWO ORIGINS, and that is the unusual part of this file. Most steps go through the app
+# origin like every other suite. The ones that read a trace back go to Phoenix's own origin
+# with `base: ${PHOENIX_BASE}` — it is a different service on a different port, so a step
+# that reads it can never be confused with a step that exercises the API.
+#
+# EVERY STEP IS TAGGED `local`, deliberately. There is no deployed Phoenix and no deployed
+# OTLP endpoint (BRIEF.md § Deployment), so nothing here is a claim about a remote origin.
+# When one exists, dropping the tag is the whole change to this file.
+#
+# VARIABLES — declared in stack/dev.env, supplied by scripts/dev-env.sh, never exported by
+# hand:
+#   PHOENIX_BASE     Phoenix's own origin. Not reachable through the proxy on purpose.
+#   PHOENIX_PROJECT_NAME  the project name the backend registers with. A wrong name is a 404
+#                    from Phoenix rather than an empty list, which is the right failure.
+#   SIGNUP_CODE · SMOKE_PASSWORD · SMOKE_RUN_ID  as every other suite.
+#
+# ORDER IS LOAD-BEARING. `phoenix-knows-the-backend-project` sits at the END: Phoenix creates
+# a project when the first span for it arrives, so asserting it before any traced request
+# would assert that the backend had not started yet.
+#
+# THE RETRIES ARE NOT PADDING. Spans leave the backend through a BatchSpanProcessor, which
+# is required (BRIEF.md: batch processors only) and which by design does not export on the
+# request's own thread. Thirty seconds is the export delay plus Phoenix's write, not
+# flakiness insurance.
+#
+# WHAT MAKES THE NESTING ASSERTION REAL is the pair on `the-graph-run-is-nested-under-it`.
+# `body_matches` requires at least one CHAIN span to come back — without it the
+# `body_excludes` passes vacuously on an empty list, which is exactly the shape docs/adr/0003
+# exists to forbid. Together they say: there is a LangGraph span in this trace, and no
+# LangGraph span in this trace is a root.
+
+steps:
+  - name: phoenix-is-up
+    owner: chatbot-backend
+    GET: /healthz
+    base: ${PHOENIX_BASE}
+    # Phoenix is not our API surface; contracts/openapi.yaml says nothing about it.
+    contract: false
+    tags: [local]
+    expect:
+      status: 200
+
+  # ------------------------------------------------------------- a session, then a turn
+
+  - name: register-trace-owner
+    owner: chatbot-backend
+    POST: /api/v1/auth/register
+    tags: [local]
+    body:
+      email: smoke-0005-trace-${SMOKE_RUN_ID}@auth.test
+      password: ${SMOKE_PASSWORD}
+      signup_code: ${SIGNUP_CODE}
+      display_name: Trace Owner
+    expect:
+      status: 201
+      cookie: session
+    capture:
+      # Criterion 9 asserts this exact value came back as `user.id` on the root span, so it
+      # has to be the id the API issued rather than one this file invents.
+      account_id: user.id
+
+  - name: start-a-chat
+    owner: chatbot-backend
+    POST: /api/v1/threads
+    tags: [local]
+    body: {}
+    expect:
+      status: 201
+    capture:
+      thread_id: thread.id
+
+  - name: a-message-carries-a-trace-id
+    owner: chatbot-backend
+    POST: /api/v1/threads/${thread_id}/messages
+    tags: [local]
+    body:
+      message: "How many moons does Mars have?"
+    # Criterion 2. 32 lowercase hex is the W3C trace-id, and the anchors matter: a handler
+    # that echoed a request header, or wrote a UUID with dashes, would satisfy a looser
+    # pattern and correlate with nothing in Phoenix.
+    expect:
+      status: 200
+      headers:
+        X-Trace-Id: '^[0-9a-f]{32}$'
+    capture:
+      chat_trace: header:X-Trace-Id
+
+  - name: phoenix-has-the-chat-trace
+    owner: chatbot-backend
+    GET: /v1/projects/${PHOENIX_PROJECT_NAME}/spans?trace_id=${chat_trace}
+    base: ${PHOENIX_BASE}
+    contract: false
+    tags: [local]
+    retry: {attempts: 15, delay: 2.0}
+    # Criterion 3. The id the caller was handed names a trace that exists. An empty
+    # `data` array fails this, which is the point — a header invented by the app and
+    # exported nowhere would pass every assertion above.
+    expect:
+      status: 200
+      body_matches: '"trace_id":\s*"${chat_trace}"'
+
+  - name: the-chat-trace-is-rooted-at-the-http-request
+    owner: chatbot-backend
+    # `name=` filters server-side, so the only span in this response is the one named for
+    # the HTTP route — which is what lets `parent_id: null` below be about THAT span rather
+    # than about whichever span happened to serialise first.
+    GET: /v1/projects/${PHOENIX_PROJECT_NAME}/spans?trace_id=${chat_trace}&name=POST%20%2Fv1%2Fthreads%2F%7Bthread_id%7D%2Fmessages
+    base: ${PHOENIX_BASE}
+    contract: false
+    tags: [local]
+    retry: {attempts: 15, delay: 2.0}
+    # Criterion 4. The route template, not the concrete path: a span named with the chat id
+    # in it makes every trace its own endpoint and the UI useless at one turn per chat.
+    expect:
+      status: 200
+      body_matches: '"parent_id":\s*null'
+
+  - name: the-graph-run-is-nested-under-it
+    owner: chatbot-backend
+    GET: /v1/projects/${PHOENIX_PROJECT_NAME}/spans?trace_id=${chat_trace}&span_kind=CHAIN
+    base: ${PHOENIX_BASE}
+    contract: false
+    tags: [local]
+    retry: {attempts: 15, delay: 2.0}
+    # Criteria 5 and 6, and they need each other. A LangGraph run instrumented with its own
+    # tracer provider lands in a trace of its own and returns nothing here; one instrumented
+    # without the FastAPI root lands here with a null parent. The two clauses fail
+    # differently and neither passes on an empty response.
+    expect:
+      status: 200
+      body_matches: '"span_kind":\s*"CHAIN"'
+      body_excludes: '"parent_id":\s*null'
+
+  # ------------------------------------------- the composition root covers every route
+
+  - name: stateless-chat-carries-a-trace-id-too
+    owner: chatbot-backend
+    POST: /api/v1/chat
+    tags: [local]
+    body:
+      message: "What is the capital of Portugal?"
+    # Criterion 7, first half. /v1/chat shares no code with the thread endpoints beyond the
+    # app itself, so instrumentation bolted onto one router passes everything above and
+    # fails here.
+    expect:
+      status: 200
+      headers:
+        X-Trace-Id: '^[0-9a-f]{32}$'
+    capture:
+      stateless_trace: header:X-Trace-Id
+
+  - name: the-stateless-trace-is-rooted-at-its-own-route
+    owner: chatbot-backend
+    GET: /v1/projects/${PHOENIX_PROJECT_NAME}/spans?trace_id=${stateless_trace}&name=POST%20%2Fv1%2Fchat
+    base: ${PHOENIX_BASE}
+    contract: false
+    tags: [local]
+    retry: {attempts: 15, delay: 2.0}
+    # Criterion 7, second half. A different route, a different root span name, and — because
+    # the trace id came from this request's own response — necessarily a different trace
+    # from the one above.
+    expect:
+      status: 200
+      body_matches: '"parent_id":\s*null'
+
+  - name: phoenix-knows-the-backend-project
+    owner: chatbot-backend
+    GET: /v1/projects
+    base: ${PHOENIX_BASE}
+    contract: false
+    tags: [local]
+    # Criterion 1, second half, and LAST on purpose — the project exists only once a span
+    # for it has arrived. A backend exporting under Phoenix's `default` project passes every
+    # step above only if the project-scoped queries also used `default`, and they do not:
+    # ${PHOENIX_PROJECT_NAME} is one name in one file.
+    expect:
+      status: 200
+      body_matches: '"name":\s*"${PHOENIX_PROJECT_NAME}"'
+
+  # ------------------------------------------------- what the amendment of 2026-09-02 adds
+
+  - name: one-request-draws-one-http-span
+    owner: chatbot-backend
+    # Criterion 8. `evidence/trace-has-asgi-send-receive-spans.png` is what this exists to
+    # stop: one request drew a root plus one `http receive` and three `http send` children.
+    # Asserting the EMPTINESS of a filtered list rather than the absence of a substring, so
+    # a passing run has actually looked. And the `name=` filter is proven to work by
+    # `the-chat-trace-is-rooted-at-the-http-request` above, which returns a span using it —
+    # without that neighbour this step would pass on a filter the server ignored.
+    GET: /v1/projects/${PHOENIX_PROJECT_NAME}/spans?trace_id=${chat_trace}&name=POST%20%2Fv1%2Fthreads%2F%7Bthread_id%7D%2Fmessages%20http%20receive&name=POST%20%2Fv1%2Fthreads%2F%7Bthread_id%7D%2Fmessages%20http%20send
+    base: ${PHOENIX_BASE}
+    contract: false
+    tags: [local]
+    retry: {attempts: 15, delay: 2.0}
+    expect:
+      status: 200
+      body_matches: '"data":\s*\[\s*\]'
+
+  - name: the-root-span-names-the-account
+    owner: chatbot-backend
+    # Criterion 9, first third. Filtered server-side on the attribute, so an empty list is
+    # the failure and there is nothing to read out of a body by eye. `parent_id: null` is
+    # what pins it to the ROOT span — an account id on a child only would pass a looser
+    # check while leaving the span you actually open unable to answer "who".
+    GET: /v1/projects/${PHOENIX_PROJECT_NAME}/spans?trace_id=${chat_trace}&attribute=user.id:${account_id}
+    base: ${PHOENIX_BASE}
+    contract: false
+    tags: [local]
+    retry: {attempts: 15, delay: 2.0}
+    expect:
+      status: 200
+      body_matches: '"parent_id":\s*null'
+
+  - name: the-root-span-names-the-chat
+    owner: chatbot-backend
+    # Criterion 9, second third. `session.id` is the OpenInference name, which is what makes
+    # Phoenix's Sessions tab group a conversation's turns instead of showing loose requests.
+    GET: /v1/projects/${PHOENIX_PROJECT_NAME}/spans?trace_id=${chat_trace}&attribute=session.id:${thread_id}
+    base: ${PHOENIX_BASE}
+    contract: false
+    tags: [local]
+    retry: {attempts: 15, delay: 2.0}
+    expect:
+      status: 200
+      body_matches: '"parent_id":\s*null'
+
+  - name: the-root-span-carries-the-request-body
+    owner: chatbot-backend
+    # Criterion 9, last third. Filtered to the root span by name FIRST, because the message
+    # also appears on the LangGraph spans — an unfiltered query would pass with the HTTP
+    # span carrying nothing, which is exactly the state the screenshot showed.
+    GET: /v1/projects/${PHOENIX_PROJECT_NAME}/spans?trace_id=${chat_trace}&name=POST%20%2Fv1%2Fthreads%2F%7Bthread_id%7D%2Fmessages
+    base: ${PHOENIX_BASE}
+    contract: false
+    tags: [local]
+    retry: {attempts: 15, delay: 2.0}
+    expect:
+      status: 200
+      body_matches: 'How many moons does Mars have'
+
+  # ------------------------------------------------------------- the standing dev account
+  # LAST, and the order is load-bearing: this login replaces the trace owner in the cookie
+  # jar, so every step above has to have run already.
+
+  - name: dev-account-signs-in
+    owner: chatbot-backend
+    POST: /api/v1/auth/login
+    tags: [local]
+    body:
+      email: ${DEV_ACCOUNT_EMAIL}
+      password: ${DEV_ACCOUNT_PASSWORD}
+    # Criterion 11. This is the whole point of the account: the two values committed in
+    # stack/dev.env are the two values that work. A backend that seeded a different password
+    # fails here rather than at 9am on somebody's Monday.
+    expect:
+      status: 200
+      cookie: session
+      headers:
+        X-Trace-Id: '^[0-9a-f]{32}$'
+    capture:
+      dev_trace: header:X-Trace-Id
+
+  - name: dev-account-identifies
+    owner: chatbot-backend
+    GET: /api/v1/auth/me
+    tags: [local]
+    expect:
+      status: 200
+      json:
+        user:
+          email: ${DEV_ACCOUNT_EMAIL}
+
+  - name: the-sign-in-trace-reached-phoenix
+    owner: chatbot-backend
+    # Not a criterion of its own — it is what makes the NEXT step mean something. Asserting
+    # that a password is absent from a store that has not received the login yet is a pass
+    # that proves nothing, and it would keep passing right up until somebody looked.
+    GET: /v1/projects/${PHOENIX_PROJECT_NAME}/spans?trace_id=${dev_trace}&name=POST%20%2Fv1%2Fauth%2Flogin
+    base: ${PHOENIX_BASE}
+    contract: false
+    tags: [local]
+    retry: {attempts: 15, delay: 2.0}
+    expect:
+      status: 200
+      body_matches: '"parent_id":\s*null'
+
+  - name: no-credential-ever-reaches-a-span
+    owner: chatbot-backend
+    # Criterion 10, and the one that makes criterion 9 safe to want. Across the WHOLE
+    # project, not one trace: a redactor that covers /v1/auth/login and misses
+    # /v1/auth/register leaks just as completely, and only a project-wide look catches it.
+    # `body_matches` keeps it honest — an empty project would satisfy the exclusion.
+    GET: /v1/projects/${PHOENIX_PROJECT_NAME}/spans?limit=1000
+    base: ${PHOENIX_BASE}
+    contract: false
+    tags: [local]
+    expect:
+      status: 200
+      body_matches: '"parent_id"'
+      body_excludes: '(${DEV_ACCOUNT_PASSWORD}|${SMOKE_PASSWORD}|${SIGNUP_CODE})'

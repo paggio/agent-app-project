@@ -9,6 +9,7 @@
 #   ./scripts/stack.sh logs [svc...]     follow logs
 #   ./scripts/stack.sh dump <dir>        write per-service logs into <dir> (used on failure)
 #   ./scripts/stack.sh rebuild <svc>     rebuild one service without touching the rest
+#   ./scripts/stack.sh restart <svc>     stop and start one service, keeping its volumes
 #   ./scripts/stack.sh ps                what is running
 set -euo pipefail
 
@@ -20,7 +21,7 @@ ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 . "$ROOT/scripts/dev-env.sh"
 
 COMPOSE=(docker compose -f "$ROOT/stack/compose.yml")
-SERVICES=(backend postgres redis frontend proxy)
+SERVICES=(backend postgres redis phoenix frontend proxy)
 
 cmd="${1:-}"; shift || true
 
@@ -52,6 +53,13 @@ case "$cmd" in
     svc="${1:?usage: stack.sh rebuild <service>}"
     "${COMPOSE[@]}" up -d --build --wait "$svc"
     ;;
+  restart)
+    # Deliberately NOT `down && up`: that drops the volumes, which is the opposite of what
+    # the one caller wants. `make phoenix-durability` restarts Phoenix and then asks whether
+    # a trace recorded before the restart is still there, so the volume has to survive.
+    svc="${1:?usage: stack.sh restart <service>}"
+    "${COMPOSE[@]}" restart "$svc"
+    ;;
   ps)
     "${COMPOSE[@]}" ps
     ;;
@@ -74,7 +82,7 @@ for line in sys.stdin:
 
     ;;
   *)
-    sed -n '2,12p' "${BASH_SOURCE[0]}" >&2
+    sed -n '2,13p' "${BASH_SOURCE[0]}" >&2
     exit 2
     ;;
 esac
