@@ -54,20 +54,30 @@ the backend on `main`.
      thing that says they work together. -->
 
 <!-- iterate:begin -->
-- **verified-local** — 20260901T113130Z, 1 attempt(s)
-- report: `changes/0005-observability-phoenix/runs/20260901T113130Z/report.md`
+- **verified-local** — 20260902T094706Z, 1 attempt(s)
+- report: `changes/0005-observability-phoenix/runs/20260902T094706Z/report.md`
 <!-- iterate:end -->
 
 ## Out-of-band checks
 
-The criteria `smoke.py` cannot reach — BRIEF.md § "A gap in the oracle". Run against the
-same stack the suite passed against, not asserted from configuration.
+The criteria `smoke.py` cannot reach — BRIEF.md § "A gap in the oracle". Re-run against the
+amended build, not carried over from the first version.
 
 | Criterion | Oracle | Result |
 | --- | --- | --- |
-| 12 — traces survive a restart | `make phoenix-durability` | **PASS.** `0225d2bb…` present before and after `restart phoenix`. |
-| 14 — logs carry the trace id | the same target, plus by hand | **PASS.** Header `88076823718bd2cf87d4a5732ca7aa17` and the `trace_id` on both `app.api.errors` and `uvicorn.access` records are the same string. |
-| 15–18 — disabled, unreachable, no reader, no SaaS | chatbot-backend's own tests | **PASS.** 288 passed, 2 skipped; `typecheck`, `lint` and `contract` green. |
+| 12 — traces survive a restart | `make phoenix-durability` | **PASS.** `b1aa0e0c…` present before and after `restart phoenix`. |
+| 13 — `down` is a clean slate | `check-docs.py [clean-slate]`, plus a measurement | **PASS.** Gate confirmed to block a host bind mount and an `external: true` volume (exit 1) and to pass once reverted (exit 0). Measured separately: 33 traces, `make down && make up`, project gone. |
+| 14 — logs carry the trace id | `make phoenix-durability`, plus by hand | **PASS.** Two log records carry the id the response returned. |
+| 15–18 — disabled, unreachable, no reader, no SaaS | chatbot-backend's own tests | **PASS.** 315 passed, 2 skipped — 27 more than the first version. `typecheck`, `lint`, `contract` green. |
+
+Read by hand off the amended build, because these are what the amendment was for:
+
+- A chat turn is **8 spans**: one root plus the seven LangGraph spans. It was 12 — root,
+  one `http receive`, three `http send`, and the graph.
+- The root span carries `user.id`, `session.id` and
+  `input.value = {"message": "Who won the 1998 world cup?"}`.
+- A sign-in span carries `input.value = {"email": "dev@auth.test", "password": "[redacted]"}`.
+  The real password appears nowhere in it.
 
 ## Blockers
 
