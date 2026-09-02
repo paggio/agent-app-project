@@ -9,6 +9,7 @@
 #   ./scripts/stack.sh logs [svc...]     follow logs
 #   ./scripts/stack.sh dump <dir>        write per-service logs into <dir> (used on failure)
 #   ./scripts/stack.sh rebuild <svc>     rebuild one service without touching the rest
+#   ./scripts/stack.sh restart <svc>     stop and start one service, keeping its volumes
 #   ./scripts/stack.sh ps                what is running
 set -euo pipefail
 
@@ -22,8 +23,9 @@ ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 COMPOSE=(docker compose -f "$ROOT/stack/compose.yml")
 # Every service in stack/compose.yml, and check-docs.py [stack-services] fails if this
 # list falls behind it — 0004 added opensearch and minio and this line did not move, so
-# every failure dump since has been missing two of the backend's datastores.
-SERVICES=(backend postgres opensearch minio redis frontend proxy)
+# every failure dump since has been missing two of the backend's datastores. 0005 added
+# phoenix and phoenix-db; both are here for the same reason and the gate now holds it.
+SERVICES=(backend postgres opensearch minio redis phoenix phoenix-db frontend proxy)
 
 cmd="${1:-}"; shift || true
 
@@ -55,6 +57,13 @@ case "$cmd" in
     svc="${1:?usage: stack.sh rebuild <service>}"
     "${COMPOSE[@]}" up -d --build --wait "$svc"
     ;;
+  restart)
+    # Deliberately NOT `down && up`: that drops the volumes, which is the opposite of what
+    # the one caller wants. `make phoenix-durability` restarts Phoenix and then asks whether
+    # a trace recorded before the restart is still there, so the volume has to survive.
+    svc="${1:?usage: stack.sh restart <service>}"
+    "${COMPOSE[@]}" restart "$svc"
+    ;;
   ps)
     "${COMPOSE[@]}" ps
     ;;
@@ -77,7 +86,7 @@ for line in sys.stdin:
 
     ;;
   *)
-    sed -n '2,12p' "${BASH_SOURCE[0]}" >&2
+    sed -n '2,13p' "${BASH_SOURCE[0]}" >&2
     exit 2
     ;;
 esac

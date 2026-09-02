@@ -681,6 +681,66 @@ def check_stack_services() -> None:
              f"a repair agent. Add it as `primary` or `supporting` for whoever owns it.")
 
 
+# --- 16. the local stack keeps no state across a `down` -------------------------------
+# docs/adr/0011: `down` is a clean slate. A host bind mount for data, or an `external: true`
+# volume, survives `docker compose down -v` — so the stack comes back warm and a run can pass
+# on the previous run's leftovers. That failure is invisible, intermittent, and makes a broken
+# change look green on the second attempt, which is why it is a gate and not a sentence.
+#
+# Reads the two included submodule compose files as plain YAML. NOT `docker compose config`:
+# that inlines env_file and would print the credentials in chatbot-backend/.env (CLAUDE.md).
+# Plain parsing sees the declarations, which is all this needs.
+def check_clean_slate() -> None:
+    files = [os.path.join(ROOT, "stack", "compose.yml")]
+    files += [os.path.join(ROOT, sub, "docker-compose.yml") for sub in SUBMODULES]
+
+    for path in files:
+        if not os.path.exists(path):
+            continue  # infra/ has no compose file, and a fresh clone may have no submodules
+        try:
+            doc = yaml.safe_load(open(path)) or {}
+        except yaml.YAMLError as exc:
+            fail("clean-slate", f"{os.path.relpath(path, ROOT)} is not parseable YAML: {exc}")
+            continue
+        rel = os.path.relpath(path, ROOT)
+
+        for name, svc in (doc.get("services") or {}).items():
+            for mount in (svc or {}).get("volumes") or []:
+                # Long form: {type: bind|volume, source: ..., target: ...}
+                if isinstance(mount, dict):
+                    kind, source, target = (mount.get("type"), mount.get("source"),
+                                            mount.get("target"))
+                else:
+                    parts = str(mount).split(":")
+                    if len(parts) < 2:
+                        continue  # an anonymous volume — Compose owns it, `down -v` takes it
+                    source, target = parts[0], parts[1]
+                    kind = "bind" if source.startswith((".", "/", "~", "$")) else "volume"
+                if kind != "bind":
+                    continue
+                # A read-only mount of source or config is not state. Data is what this is about.
+                if isinstance(mount, str) and mount.endswith((":ro", ":ro,z", ":ro,Z")):
+                    continue
+                if isinstance(mount, dict) and mount.get("read_only"):
+                    continue
+                fail("clean-slate",
+                     f"{rel}: service {name!r} bind-mounts {source!r} at {target!r}. A host "
+                     f"path survives `docker compose down -v`, so `make down && make up` "
+                     f"would come back warm and a run could pass on the last run's data. "
+                     f"docs/adr/0011 requires a project-scoped named volume. Mount it "
+                     f"read-only if it is config rather than state.")
+
+        for name, vol in (doc.get("volumes") or {}).items():
+            if isinstance(vol, dict) and vol.get("external"):
+                fail("clean-slate",
+                     f"{rel}: volume {name!r} is `external: true`, so `docker compose down "
+                     f"-v` leaves it behind and the joined stack comes back warm. "
+                     f"docs/adr/0011 forbids it — declare it in the compose file that uses "
+                     f"it and let Compose own its lifetime.")
+
+
+
+
 def main() -> int:
     ap = argparse.ArgumentParser()
     ap.add_argument("--warnings-are-errors", action="store_true")
@@ -691,7 +751,7 @@ def main() -> int:
               check_vendored_contracts, check_commands,
               check_scripts_are_not_the_entry_point, check_env_layers,
               check_gate_messages, check_loop_calls, check_agent_dispatchers,
-              check_stack_services,
+              check_stack_services, check_clean_slate,
               report_readme_divergence)
     for fn in checks:
         try:

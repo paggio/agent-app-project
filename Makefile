@@ -12,6 +12,7 @@
 PROXY_PORT   ?= 8080
 BASE         ?= http://localhost:$(PROXY_PORT)
 BACKEND_BASE ?= http://localhost:8000
+PHOENIX_BASE ?= http://localhost:6006
 MSG          ?= hello
 SVC          ?=
 CHANGE       ?=
@@ -20,7 +21,7 @@ REPOS := chatbot-backend frontend infra
 
 .DEFAULT_GOAL := help
 .PHONY: help up down restart ps logs rebuild config urls open health chat smoke verify iterate \
-        e2e repos lock prs check check-docs init clean
+        e2e phoenix-durability repos lock prs check check-docs init clean
 
 help: ## Show this list
 	@echo "The full local stack — backend, datastores, frontend, proxy — on one origin."
@@ -64,6 +65,7 @@ urls: ## Print the endpoints worth knowing
 	@echo "  app          $(BASE)/"
 	@echo "  API          $(BASE)/api/          (proxied; the backend sees it without /api)"
 	@echo "  backend      $(BACKEND_BASE)/      (direct, bypassing the proxy)"
+	@echo "  phoenix      $(PHOENIX_BASE)/      (traces; not proxied, and not part of the API)"
 	@echo
 	@echo "  make health   check them      make chat MSG=\"hi\"   talk to the backend"
 	@echo "  make smoke    run assertions  make logs SVC=backend  watch one service"
@@ -113,6 +115,13 @@ iterate: ## What /ship phase 4 runs, by hand: make iterate CHANGE=0001-auth
 # the only oracle for "the UI calls the real endpoint" reports green by not running.
 e2e: ## Run the frontend's Playwright suite against the joined origin
 	@. ./scripts/dev-env.sh && cd frontend && PLAYWRIGHT_BASE_URL=$(BASE) npx playwright test
+
+# The two criteria of 0005 the seam cannot see: a trace outliving a Phoenix restart, and
+# the backend's log lines carrying the id its response returned. smoke.py speaks HTTP against
+# a stack it did not start, so neither is expressible as a step. See changes/0005 BRIEF.md
+# § "A gap in the oracle".
+phoenix-durability: ## Prove a trace survives restarting Phoenix, and show the log lines
+	@./scripts/phoenix-durability.sh
 
 # ── across the repos ─────────────────────────────────────────────────────────────────
 # Read-only, and they stay that way: implementation happens in a session started inside

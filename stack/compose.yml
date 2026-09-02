@@ -55,6 +55,24 @@ services:
     labels:
       agentapp.owner: chatbot-backend
 
+  # The trace store, and the Postgres behind it. Both are chatbot-backend's — it is the only
+  # repo that exports to them — and both are DEFINED in that repo's compose file. Same naming
+  # coupling as opensearch and minio above: `phoenix` and `phoenix-db` must be what
+  # chatbot-backend calls them, or compose reads these as new services with no image and
+  # refuses to start anything. Loud, and ahead of the submodule until 0005's slice lands.
+  #
+  # Nothing here overrides the backend's OTLP endpoint. The backend's own compose file points
+  # it at `phoenix:6006`, which resolves on this network because everything is one project —
+  # and a joined stack that re-declared it would be the ADR 0006 trap, exported from here and
+  # unreachable from anywhere else.
+  phoenix:
+    labels:
+      agentapp.owner: chatbot-backend
+
+  phoenix-db:
+    labels:
+      agentapp.owner: chatbot-backend
+
   frontend:
     labels:
       agentapp.owner: frontend
