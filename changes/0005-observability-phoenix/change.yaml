@@ -26,10 +26,10 @@ smoke:
   # The single origin a browser uses. The steps that read a trace back override `base` per
   # step, because Phoenix is a different service and must not be reachable through /api.
   base: http://localhost:8080
-  # Two model-bearing turns, plus up to 30s of batch-export wait on each of the four
-  # Phoenix reads. Phoenix's own cold start is not in here — `up --wait` pays that before
-  # the suite begins.
-  timeout_s: 480
+  # Raised from 480s by the amendment: the suite went from 10 steps to 18, and NINE of them
+  # now read Phoenix with a 30s batch-export budget each. Two model-bearing turns on top.
+  # Phoenix's own cold start is not in here — `up --wait` pays that before the suite begins.
+  timeout_s: 720
   # No browser fact in this change: nothing renders a trace, and the header is for machines.
   # BRIEF.md § "A gap in the oracle" says what is checked elsewhere instead.
   e2e: false

@@ -1,5 +1,25 @@
 # 0005 — chatbot-backend slice
 
+## AMENDED, 2026-09-02 — read this before the rest
+
+Your branch already carries a working implementation and its PR is open. This amendment
+changes four things about it. **Where this section and the sections below disagree, this
+wins**, and two of the disagreements are places where the earlier text explicitly forbade
+what is now required — so read them rather than pattern-matching.
+
+1. **One HTTP span per request** (§8 below). New.
+2. **The root span must say who and what** (§9). This needs ONE line in `api/dependencies.py`,
+   which §"Out of scope for this slice" previously forbade. That exception is now granted,
+   and it is exactly one line — see §9.
+3. **Credential redaction is now IN scope** (§9). The earlier text said "Sampling, redaction
+   or PII scrubbing of span content... Not here." That was written when nothing captured a
+   request body. §9 captures one, so redaction arrives with it and is not optional.
+4. **A seeded dev account** (§10). New.
+
+**Nothing is removed.** No file on your branch should be deleted and no behaviour reverted
+— every criterion the first version passed still has to pass. Re-read `smoke.yaml`: it grew
+from 10 steps to 18, and the 10 that were there are unchanged.
+
 ## What to build
 
 Telemetry, entirely at the composition root. No node, no route handler, no service and no
@@ -115,27 +135,45 @@ no attributes to read.
 
 ### 6. Tests — these carry the criteria the seam cannot see
 
-The smoke suite asserts criteria 1–7 through the joined stack. These are yours, and they are
-the only oracle for the rest:
+The smoke suite asserts criteria 1–11 through the joined stack. These are yours, and they
+are the only oracle for the rest. **Renumbered by the amendment** — what was 9–13 is now
+14–18, and the content is unchanged:
 
-- **Criterion 9.** One request, and the `X-Trace-Id` on its response equals the `trace_id` in
+- **Criterion 14.** One request, and the `X-Trace-Id` on its response equals the `trace_id` in
   a log record emitted while handling it. Assert equality of the two strings, captured from
   one request — not that both are "present", which passes with two unrelated ids and is the
   exact shape of a correlation that does not correlate. Include a record emitted from the
   guards middleware, which is what pins the middleware ordering in §1.
-- **Criterion 10.** `OTEL_EXPORTER_OTLP_ENDPOINT` unset: the app builds, serves a request,
+- **Criterion 15.** `OTEL_EXPORTER_OTLP_ENDPOINT` unset: the app builds, serves a request,
   logs **exactly one** warning naming telemetry as disabled, and the response has no
   `X-Trace-Id`. Assert the count — a warning per request is a different bug that a
   presence check passes.
-- **Criterion 11.** The endpoint pointed at a port nothing listens on: the app builds, serves,
+- **Criterion 16.** The endpoint pointed at a port nothing listens on: the app builds, serves,
   and the response is unaffected. This is the test that catches a sync span processor,
   because that is where the request pays for the failed export.
-- **Criterion 12.** The four instruments exist by name, and the meter provider has **no**
+- **Criterion 17.** The four instruments exist by name, and the meter provider has **no**
   metric reader. Assert the emptiness — it is the whole "instrumented, not deployed" claim,
   and the day someone adds an exporter this is what says so.
-- **Criterion 13.** No `arize.otel` import and no Arize API key anywhere in the source or
+- **Criterion 18.** No `arize.otel` import and no Arize API key anywhere in the source or
   the lockfile. A grep-shaped test is fine; the point is that it fails if someone reaches for
   the hosted product.
+
+Four more, from the amendment. The smoke suite asserts all of these too, but each is
+cheaper to debug here and two of them are about a case smoke cannot construct:
+
+- **Redaction, per field and per shape.** A login body produces a span whose `input.value`
+  contains neither the password nor the signup code; a register body likewise. Then the two
+  cases the seam cannot reach: a body that is **not parseable JSON** sets no `input.value`
+  at all, and a body **over the cap** is truncated with the marker rather than stored whole.
+- **A non-JSON content type is never read.** Assert a `multipart/form-data` upload produces
+  no `input.value` — not "a short one". This is what keeps a 10 MB PDF out of the trace store.
+- **Seeding is idempotent and refuses non-`.test` addresses.** Build the app twice with the
+  same `DEV_ACCOUNT_*` and assert one account with an unchanged id. Then with
+  `dev@example.com` and assert nothing is created and one warning is logged. Then with only
+  one of the two variables set, same.
+- **`session.id` is absent, not empty, on a route with no chat id.** `GET /v1/documents`
+  sets no `session.id`. An empty string would group every non-chat request into one session
+  in Phoenix's Sessions tab, which looks like a feature working.
 
 Plus whatever `make test typecheck lint contract` requires. All four must pass.
 
@@ -183,6 +221,126 @@ request is silently overridden and criterion 10 is unreachable from the stack.
 `make up` in this repo must come up green with the two new services, unattended, from an
 empty volume.
 
+### 8. One request draws one HTTP span — AMENDED
+
+`evidence/trace-has-asgi-send-receive-spans.png` is what this fixes. A single
+`POST /v1/threads/{thread_id}/messages` drew five spans: the root, one
+`... http receive`, and three `... http send`. The four extras are ASGI protocol events.
+Nobody debugs them, and they bury the LangGraph subtree that is the reason to open the
+trace at all.
+
+```python
+FastAPIInstrumentor.instrument_app(app, ..., exclude_spans=["receive", "send"])
+```
+
+Supported by the `opentelemetry-instrumentation-asgi` version already in your lockfile
+(0.65b0) and passed straight through by `instrument_app`. **Do not** achieve this with a
+sampler or a span processor that drops them after the fact — that pays to create them
+first, and a future reader cannot tell a filtered span from one that never existed.
+
+**This changes nothing about the graph's nesting.** `route_query`, `answer`, `model` and
+the rest stay exactly as they are; criteria 5 and 6 still assert them.
+
+### 9. The root span says who asked, and what they asked — AMENDED
+
+The screenshot is the complaint: thirteen attributes, all `net.*` and `http.*`, and no way
+to tell which account made the call or what they sent. Three attributes fix it, and they
+use the **OpenInference** names rather than invented ones — that is what makes Phoenix
+render them as Input and group traces in its Sessions tab instead of listing them as loose
+key/values.
+
+| Attribute | Value | Set where |
+| --- | --- | --- |
+| `user.id` | the account id | see the exception below |
+| `session.id` | the chat id, where the route has one | the composition root, after `call_next` |
+| `input.value` + `input.mime_type` | the request body, redacted | the composition root |
+
+**`user.id` needs one line in `api/dependencies.py`, and that exception is granted.** The
+account id exists nowhere else: it is resolved inside the session dependency, and a
+middleware that wanted it would have to re-resolve the cookie, which means a second copy of
+the auth logic and a second thing to keep correct. So the `CurrentAccount` dependency
+stamps the id on the current span and does nothing else — one statement, no import of
+anything but `opentelemetry.trace`, no branching, no new parameter. Anything larger than
+that is the wrong shape and should come back as a question.
+
+**`session.id` is read from `scope["path_params"]` AFTER `call_next` returns.** The router
+populates it on the same scope dict during routing, so it is not there before. A request to
+a route with no `thread_id` sets nothing rather than setting an empty string — absent is a
+fact, `""` is a lie.
+
+**The body is captured by a small pure-ASGI middleware that wraps `receive`.** Two ways of
+doing this are wrong and both are the obvious first attempt:
+
+- **`await request.body()` in a `BaseHTTPMiddleware`.** Starlette caches the body on the
+  request INSTANCE, and the route builds its own instance over the same exhausted `receive`.
+  The route then hangs or sees an empty body.
+- **`client_request_hook` on the instrumentor.** It is the natural home and it is
+  unreachable here: with `exclude_spans=["receive"]` the ASGI instrumentation returns the
+  raw `receive` before any hook runs — `opentelemetry/instrumentation/asgi/__init__.py:884`.
+  §8 and this section would silently cancel each other out.
+
+So: wrap `receive`, accumulate `body` chunks as the app consumes them, and set the attribute
+when the request completes. Installed inside the OTel middleware and outside the guards, so
+the current span is the HTTP root.
+
+**Three limits on what is captured, all of them load-bearing:**
+
+- **JSON request bodies only.** Content type outside `application/json` is skipped
+  entirely — never read a `multipart/form-data` body, or a 10 MB PDF upload goes onto a span
+  and into the trace store.
+- **Capped**, around 4 KB, with a marker when truncated. A span attribute is not a place to
+  put an unbounded string.
+- **Redacted before it is ever set** — the next section, and it is not optional.
+
+#### Credentials must never reach a span
+
+This is criterion 10, it is asserted across the WHOLE project rather than one trace, and it
+is the reason capturing a body needs care rather than enthusiasm. `POST /v1/auth/login` and
+`POST /v1/auth/register` carry a password and a signup code. Phoenix has a UI, a REST API
+and a persistent database; a password written there is a password disclosed, and no status
+code reveals it.
+
+**Reuse the redactor `api/errors.py` already has.** It exists because a `422` was echoing a
+rejected password back to the caller, which is the same defect through a different pipe.
+One redaction rule with two callers, not two rules that will drift.
+
+Redact by key name over the parsed JSON — `password`, `signup_code`, and anything matching
+the password-ish set `errors.py` already recognises. Not by route: a redactor that keys off
+the path silently stops covering an endpoint the day somebody adds one. **If the body cannot
+be parsed as JSON, set nothing at all** rather than attaching the raw string — an
+unparseable body is exactly where a credential would survive a key-based filter.
+
+### 10. A standing dev account — AMENDED, new
+
+Signing in by hand currently means registering a throwaway account every time. Seed one at
+startup instead, from the lifespan, before the app serves.
+
+```
+DEV_ACCOUNT_EMAIL       unset by default
+DEV_ACCOUNT_PASSWORD    unset by default
+```
+
+- **Both set, or nothing happens.** One of the two alone is a misconfiguration, not a
+  half-request: log one warning naming which is missing, and seed nothing.
+- **Idempotent.** An account that already exists is left alone — its password is not reset
+  and its id does not change, so a `make down`-less restart does not invalidate a session
+  somebody is holding. Seeding must not fail when the row is there.
+- **Refuse any address outside a `.test` TLD.** `dev@auth.test` is fine; anything else logs
+  a warning and seeds nothing. `.test` is RFC 2606 reserved and can never be a real mailbox,
+  so a stray copy of these variables in a deployed environment creates nothing rather than
+  creating a known-password account on it. This is the whole safety argument for shipping a
+  committed password — do not weaken it to "only when `APP_ENV=dev`", which is a variable
+  somebody will set wrongly one day.
+- **It goes through the same password policy and the same hashing as a registration**, and
+  it does NOT need the signup code — it is not a registration, it is a seed. A password that
+  fails the policy must fail loudly at startup rather than being silently accepted, or the
+  credentials in `stack/dev.env` will not work and nobody will know why.
+- The values live in the control repo's `stack/dev.env`. Your `docker-compose.yml` passes
+  them through with `${DEV_ACCOUNT_EMAIL-}` / `${DEV_ACCOUNT_PASSWORD-}` — the bare `-`,
+  so an explicitly empty value stays empty, exactly as `OTEL_EXPORTER_OTLP_ENDPOINT` does.
+  **Do not put a default email or password in the compose file.** Unset must mean unset, or
+  every environment that merely forgets to set them gets an account.
+
 ## Contract
 
 Vendored at the freeze SHA and read-only. Two things in it apply:
@@ -209,6 +367,11 @@ every `langchain-*` package already is, and bumped as a set.
   LangGraph run traced into a trace of its own fails, and so does an app instrumented
   without the FastAPI root. `POST /v1/chat` is asserted the same way, because
   instrumentation attached to one router passes everything else.
+  The amendment adds eight more steps: the trace has no `http receive`/`http send` children,
+  the root span carries `user.id`, `session.id` and the message text, the dev account signs
+  in with the values committed in `stack/dev.env`, and **no password or signup code appears
+  anywhere in the whole project**. That last one is asserted after a real sign-in, so an
+  empty store cannot satisfy it.
 - Out of band: `make phoenix-durability` in the control repo restarts Phoenix and asks for
   the trace again.
 
@@ -222,10 +385,16 @@ node, and the metrics-with-no-reader choice needs its reason on the record besid
 ## Out of scope for this slice
 
 - Any change to `graph/`, `threads/`, `knowledge/`, `auth/` or `db/` beyond the one timing
-  call in `main.py`'s `build_replier`.
-- Sampling, redaction or PII scrubbing of span content. OpenInference records prompts and
+  call in `main.py`'s `build_replier` — and, **added by the amendment**, the one line in
+  `api/dependencies.py` that stamps `user.id` on the current span, plus the lifespan hook
+  that seeds the dev account. Nothing else moves. Those two are named exceptions with
+  reasons in §9 and §10; they are not permission to instrument from inside the app.
+- Sampling, and PII scrubbing of MODEL content. OpenInference records prompts and
   completions; that is accepted for a local stack and is a real decision before a deployed
-  one. Not here.
+  one. **Credential redaction is no longer out of scope** — the amendment captures request
+  bodies, so §9's redaction requirement arrives with it and is mandatory.
+- Response bodies. `input.value` only, no `output.value`: capturing a response means
+  buffering it, and the answer is already on the LangGraph spans.
 - Any metrics exporter, collector or scrape endpoint. Adding one is the failure mode of this
   slice, not an improvement to it.
 - Anything in `infra/`. There is nothing there yet.
