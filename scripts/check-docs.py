@@ -644,6 +644,44 @@ def report_readme_divergence() -> None:
              f"not a warning to act on today.")
 
 
+# --- 15. the stack's services are all dumpable and all attributable ------------------
+# 0004 added `opensearch` and `minio` to stack/compose.yml and updated neither list that
+# names services: stack.sh's SERVICES, which decides what `dump` writes on a failure, and
+# failure-brief.py's SERVICES, which decides which container logs an agent is shown. So
+# changes/0005-observability-phoenix/runs/20260901T111656Z/attempt-1/ carries six
+# .container.log files for a nine-service stack, and a knowledge-base failure would have
+# been briefed with no OpenSearch log at all. Both lists are hand-kept; this is what keeps
+# them honest. Scope is stack/compose.yml, the file this repo owns and where the
+# agentapp.owner labels are declared — a service that exists only in an included file is
+# out of reach here and has no owner label either.
+def check_stack_services() -> None:
+    compose = os.path.join(ROOT, "stack", "compose.yml")
+    if not os.path.exists(compose):
+        return
+    services = set((yaml.safe_load(open(compose)) or {}).get("services") or {})
+    if not services:
+        return
+
+    stack_sh = open(os.path.join(ROOT, "scripts", "stack.sh")).read()
+    m = re.search(r"^SERVICES=\((.*?)\)", stack_sh, re.M)
+    dumped = set((m.group(1) if m else "").split())
+    for missing in sorted(services - dumped):
+        fail("stack-services",
+             f"stack/compose.yml declares service {missing!r} and scripts/stack.sh's "
+             f"SERVICES does not list it — `stack.sh dump` writes no log for it, so a run "
+             f"that failed because of it leaves no evidence. Add it to SERVICES.")
+
+    brief = open(os.path.join(ROOT, "scripts", "failure-brief.py")).read()
+    block = re.search(r"^SERVICES = \{(.*?)^\}", brief, re.M | re.S)
+    attributed = set(re.findall(r'"([a-z0-9_.-]+)"', block.group(1) if block else ""))
+    for missing in sorted(services - attributed):
+        fail("stack-services",
+             f"stack/compose.yml declares service {missing!r} and no repo claims it in "
+             f"scripts/failure-brief.py's SERVICES map — its log is never put in front of "
+             f"a repair agent. Add it as `primary` or `supporting` for whoever owns it.")
+
+
+# --- 16. the local stack keeps no state across a `down` -------------------------------
 # docs/adr/0011: `down` is a clean slate. A host bind mount for data, or an `external: true`
 # volume, survives `docker compose down -v` — so the stack comes back warm and a run can pass
 # on the previous run's leftovers. That failure is invisible, intermittent, and makes a broken
@@ -701,6 +739,8 @@ def check_clean_slate() -> None:
                      f"it and let Compose own its lifetime.")
 
 
+
+
 def main() -> int:
     ap = argparse.ArgumentParser()
     ap.add_argument("--warnings-are-errors", action="store_true")
@@ -711,7 +751,7 @@ def main() -> int:
               check_vendored_contracts, check_commands,
               check_scripts_are_not_the_entry_point, check_env_layers,
               check_gate_messages, check_loop_calls, check_agent_dispatchers,
-              check_clean_slate,
+              check_stack_services, check_clean_slate,
               report_readme_divergence)
     for fn in checks:
         try:

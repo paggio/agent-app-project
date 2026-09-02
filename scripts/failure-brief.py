@@ -26,8 +26,16 @@ import sys
 # Which containers a repo is answerable for. `primary` logs are always included;
 # `supporting` ones only when they actually complained, because a healthy datastore's
 # boot log is several hundred lines that say nothing and would crowd out the evidence.
+# Kept in step with stack/compose.yml by check-docs.py [stack-services]: opensearch and
+# minio arrived with 0004 and were never added here, so a retrieval failure would have been
+# briefed to the backend agent with no OpenSearch log in it. phoenix and phoenix-db arrived
+# with 0005 and are `supporting` for a reason that is the point of the whole change: the app
+# fails OPEN on telemetry, so a Phoenix that is down must never be the first thing an agent
+# is shown — it is evidence only when it actually complained.
 SERVICES = {
-    "chatbot-backend": {"primary": ["backend"], "supporting": ["postgres", "redis"]},
+    "chatbot-backend": {"primary": ["backend"],
+                        "supporting": ["postgres", "redis", "opensearch", "minio",
+                                       "phoenix", "phoenix-db"]},
     "frontend": {"primary": ["frontend", "proxy"], "supporting": []},
     "infra": {"primary": [], "supporting": []},
 }

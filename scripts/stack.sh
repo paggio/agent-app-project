@@ -21,7 +21,11 @@ ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 . "$ROOT/scripts/dev-env.sh"
 
 COMPOSE=(docker compose -f "$ROOT/stack/compose.yml")
-SERVICES=(backend postgres redis phoenix frontend proxy)
+# Every service in stack/compose.yml, and check-docs.py [stack-services] fails if this
+# list falls behind it — 0004 added opensearch and minio and this line did not move, so
+# every failure dump since has been missing two of the backend's datastores. 0005 added
+# phoenix and phoenix-db; both are here for the same reason and the gate now holds it.
+SERVICES=(backend postgres opensearch minio redis phoenix phoenix-db frontend proxy)
 
 cmd="${1:-}"; shift || true
 

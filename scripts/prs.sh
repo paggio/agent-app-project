@@ -73,11 +73,22 @@ mkdir -p "$RUN_DIR"
 OUT="$RUN_DIR/prs.json"
 : > "$RUN_DIR/.prs.tsv"
 
+# The control repo is a target like any slice, for the reason --list already gives above:
+# a change has a half HERE — the freeze, the brief, the criteria — and leaving it out is
+# how 0002's half sat merged into a dead-end branch for four days. It is added only when
+# this repo is already on feat/<change>, because nothing in the harness creates that branch;
+# when it is not, the loop behaves exactly as it did before and reports on the slices alone.
+TARGETS="$CHANGE_SLICES"
+if [ "$(git rev-parse --abbrev-ref HEAD 2>/dev/null || echo unknown)" = "$BRANCH" ]; then
+  TARGETS=". $TARGETS"
+fi
+
 RC=0
-for r in $CHANGE_SLICES; do
+for r in $TARGETS; do
+  [ "$r" = "." ] && label="agent-app-project (this repo)" || label="$r"
   head_branch="$(git -C "$r" rev-parse --abbrev-ref HEAD 2>/dev/null || echo unknown)"
   if [ "$head_branch" != "$BRANCH" ]; then
-    echo "prs: $r is on $head_branch, not $BRANCH — refusing to open a PR for it" >&2
+    echo "prs: $label is on $head_branch, not $BRANCH — refusing to open a PR for it" >&2
     printf '%s\t%s\t%s\n' "$r" "wrong-branch:$head_branch" "" >> "$RUN_DIR/.prs.tsv"
     RC=1
     continue
@@ -86,13 +97,13 @@ for r in $CHANGE_SLICES; do
   existing="$(cd "$r" && gh pr list --head "$BRANCH" --state open \
                 --json url --jq '.[0].url' 2>/dev/null || true)"
   if [ -n "$existing" ] && [ "$existing" != "null" ]; then
-    echo "prs: $r already has $existing"
+    echo "prs: $label already has $existing"
     printf '%s\t%s\t%s\n' "$r" "existing" "$existing" >> "$RUN_DIR/.prs.tsv"
     continue
   fi
 
   if [ "$DRY" = "1" ]; then
-    echo "prs: [dry-run] $r -> would push $BRANCH and open a PR titled: $TITLE"
+    echo "prs: [dry-run] $label -> would push $BRANCH and open a PR titled: $TITLE"
     printf '%s\t%s\t%s\n' "$r" "dry-run" "" >> "$RUN_DIR/.prs.tsv"
     continue
   fi
@@ -100,20 +111,29 @@ for r in $CHANGE_SLICES; do
   # A commitless branch means the slice changed nothing. Saying so is more useful than an
   # empty PR, and it is the shape of failure a repair pass can act on.
   if [ -z "$(git -C "$r" log --oneline "origin/main..$BRANCH" 2>/dev/null)" ]; then
-    echo "prs: $r has no commits on $BRANCH — nothing to open a PR for" >&2
+    echo "prs: $label has no commits on $BRANCH — nothing to open a PR for" >&2
     printf '%s\t%s\t%s\n' "$r" "no-commits" "" >> "$RUN_DIR/.prs.tsv"
     RC=1
     continue
   fi
 
   if ! git -C "$r" push -u origin "$BRANCH" >/dev/null 2>&1; then
-    echo "prs: $r could not push $BRANCH" >&2
+    echo "prs: $label could not push $BRANCH" >&2
     printf '%s\t%s\t%s\n' "$r" "push-failed" "" >> "$RUN_DIR/.prs.tsv"
     RC=1
     continue
   fi
 
-  body="Slice of \`$CHANGE\` — see the control repo's \`$CHANGE_DIR/\` for the brief, the
+  if [ "$r" = "." ]; then
+    body="The control-repo half of \`$CHANGE\` — the contract freeze, the brief, the
+acceptance criteria as \`$CHANGE_DIR/$CHANGE_SMOKE_FILE\`, and the stack that joins the repos.
+
+Merge order is in \`$CHANGE_DIR/STATUS.md\`: this PR carries the suite that asserts the
+slices, so merging it first leaves \`main\` asserting a backend that has not landed.
+
+Opened by \`scripts/prs.sh\`."
+  else
+    body="Slice of \`$CHANGE\` — see the control repo's \`$CHANGE_DIR/\` for the brief, the
 acceptance criteria as smoke steps, and this slice's instructions in \`$r.md\`.
 
 Verified as part of the joined stack: the repos are brought up together behind one origin
@@ -121,15 +141,16 @@ and \`$CHANGE_DIR/$CHANGE_SMOKE_FILE\` is asserted through it. Merging this alon
 make the change shipped — see the control repo's \`docs/adr/0002\`.
 
 Opened by \`scripts/prs.sh\`."
+  fi
 
   url="$(cd "$r" && gh pr create --base main --head "$BRANCH" \
            --title "$TITLE" --body "$body" 2>&1 | tail -1)"
   case "$url" in
     https://*)
-      echo "prs: $r -> $url"
+      echo "prs: $label -> $url"
       printf '%s\t%s\t%s\n' "$r" "created" "$url" >> "$RUN_DIR/.prs.tsv" ;;
     *)
-      echo "prs: $r could not open a PR: $url" >&2
+      echo "prs: $label could not open a PR: $url" >&2
       printf '%s\t%s\t%s\n' "$r" "create-failed" "" >> "$RUN_DIR/.prs.tsv"
       RC=1 ;;
   esac
@@ -143,7 +164,8 @@ for line in open(tsv):
     if not line.strip():
         continue
     repo, state, url = (line.rstrip("\n").split("\t") + ["", "", ""])[:3]
-    repos[repo] = {"state": state, "url": url or None}
+    # "." is the control repo; name it, so a reader of prs.json sees a repo list.
+    repos["agent-app-project" if repo == "." else repo] = {"state": state, "url": url or None}
 json.dump({
     "change": change,
     "branch": branch,

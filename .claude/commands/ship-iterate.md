@@ -38,8 +38,13 @@ Each is the input to the next. Never start with code, never with a product repo.
 2. **`smoke.yaml`** — the same criteria as steps. Delete what encoded the old requirement,
    add what encodes the new. Criteria and steps drift the moment you edit one alone.
 3. **The slice files** — and say what to **remove**, explicitly. The old implementation is
-   sitting on the branch; a brief that merely stops mentioning it leaves it there. Prune
-   `slices:` in `change.yaml` if a repo has dropped out.
+   sitting on the branch; a brief that merely stops mentioning it leaves it there. A purely
+   additive amendment is a normal shape: say "Nothing is removed" rather than leaving the
+   question unanswered. Then re-read the slice whole, the way the agent does — where the
+   amendment reverses something the old text forbade absolutely, say so at the TOP, before
+   the old text is reached. A later section contradicting an earlier "out of scope" is how
+   an agent gets to choose which one it believes. Prune `slices:` in `change.yaml` if a repo
+   has dropped out.
 4. **`STATUS.md`** — what changed and why. It is the record that this change had a second
    version, and the next reader cannot reconstruct it from a diff.
 
