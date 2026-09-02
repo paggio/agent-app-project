@@ -41,6 +41,14 @@ import httpx
 import yaml
 
 ADDITIVE, BREAKING, INFO = "additive", "BREAKING", "note"
+# A status the served spec lists and the contract does not. NOT additive: this tool reads
+# two specs and never calls the service, so it cannot know the status is reachable. Five
+# such 422s were reported as "safe to promise" from 0003 to 0005 — FastAPI auto-declares
+# one on every operation with a validated path parameter — and the running service answers
+# 404 on all of them. 0003's STATUS.md turned that reading into a standing instruction to
+# promote them at the next /realign, which would have written a promise no request can
+# elicit, against the four-ids-collapse-to-one-404 rule in contracts/README.md.
+DECLARED = "declared"
 
 
 class Finding:
@@ -48,7 +56,7 @@ class Finding:
         self.kind, self.where, self.detail = kind, where, detail
 
     def __str__(self) -> str:
-        mark = {ADDITIVE: "+", BREAKING: "!", INFO: " "}[self.kind]
+        mark = {ADDITIVE: "+", BREAKING: "!", INFO: " ", DECLARED: "?"}[self.kind]
         return f"  {mark} {self.where}\n      {self.detail}"
 
 
@@ -237,7 +245,9 @@ def compare(contract: dict, live: dict) -> list[Finding]:
             c_status = set((c_op.get("responses") or {}))
             l_status = set((l_op.get("responses") or {}))
             for s in sorted(l_status - c_status):
-                out.append(Finding(ADDITIVE, where, f"returns undeclared status {s}"))
+                out.append(Finding(DECLARED, where,
+                                   f"the served spec declares status {s}; the contract "
+                                   f"does not, and nothing here has seen it returned"))
             for s in sorted(c_status - l_status):
                 out.append(Finding(BREAKING, where,
                                    f"declares status {s} that is no longer returned"))
@@ -320,6 +330,7 @@ def main() -> int:
     findings = compare(contract, live)
     breaking = [f for f in findings if f.kind == BREAKING]
     additive = [f for f in findings if f.kind == ADDITIVE]
+    declared = [f for f in findings if f.kind == DECLARED]
 
     print(f"harvest: {args.source}")
     print(f"harvest: against {args.contract}"
@@ -331,6 +342,15 @@ def main() -> int:
         print(f"Additive — safe to promise ({len(additive)}):")
         for f in additive:
             print(f)
+        print()
+    if declared:
+        print(f"Declared by the implementation, never observed ({len(declared)}):")
+        for f in declared:
+            print(f)
+        print()
+        print("  A declaration is not behaviour. Promise one only after seeing the service")
+        print("  return it, and only if contracts/README.md does not already promise")
+        print("  something else for that case.")
         print()
     if breaking:
         print(f"BREAKING — a consumer would break ({len(breaking)}):")
@@ -348,6 +368,7 @@ def main() -> int:
                 "source": args.source, "contract": args.contract,
                 "ok": not breaking,
                 "additive": [{"where": f.where, "detail": f.detail} for f in additive],
+                "declared": [{"where": f.where, "detail": f.detail} for f in declared],
                 "breaking": [{"where": f.where, "detail": f.detail} for f in breaking],
             }, fh, indent=2)
 

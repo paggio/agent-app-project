@@ -94,8 +94,13 @@ chat: ## POST a message through the proxy: make chat MSG="hello"
 # dev-env.sh supplies the variables, so this no longer hand-exports one. That was the
 # pattern stack/dev.env exists to eliminate, and it was in the baseline suite, which every
 # change runs. `remote` steps are excluded because there is no deployed origin here.
+#
+# SMOKE_RUN_ID is the run NONCE the suites namespace identities with — verify.sh passes a
+# timestamp. This passed the constant `make`, so a second `make smoke` against a stack that
+# was not torn down re-registered an account that already existed: 409, and a red baseline
+# that says nothing about the seam. `$$$$` is the shell's pid, one per invocation.
 smoke: ## Run the baseline suite against the running stack
-	@. ./scripts/dev-env.sh && SMOKE_ORIGIN=$(BASE) SMOKE_RUN_ID=make \
+	@. ./scripts/dev-env.sh && SMOKE_ORIGIN=$(BASE) SMOKE_RUN_ID=make-$$$$ \
 		./scripts/smoke.py smoke/baseline.yaml \
 		--base $(BASE) --contract contracts/openapi.yaml --exclude-tag remote
 
