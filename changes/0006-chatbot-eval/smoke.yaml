@@ -146,20 +146,40 @@ steps:
 
   # ────────────────────────────────────────────────── the experiment, and its metadata
 
-  - name: the-run-produced-an-experiment-in-its-own-project
+  - name: the-run-produced-an-experiment
     owner: chatbot-eval
     GET: /v1/datasets/${eval_dataset_id}/experiments
     base: ${PHOENIX_BASE}
     contract: false
     tags: [local]
-    # Criterion 13. The eval's OWN project — docs/adr/0013 §3. An eval exporting under
-    # Phoenix's `default`, or under the backend's project, fails here rather than quietly
-    # putting synthetic traffic in the project a person opens to debug real requests.
+    # An experiment exists on the dataset, and it ran over examples rather than existing
+    # empty. This step used to also assert `"project_name": "chatbot-eval"` and it passed
+    # for the WRONG reason: Phoenix names an experiment's project ITSELF, as
+    # `Experiment-<hash>`, so the regex was matching the project_name the eval copies into
+    # its own metadata rather than the experiment's project. Measured on 2026-09-03 against
+    # a live run. Criterion 13 moved to the next step, where it is about a project.
     expect:
       status: 200
-      body_matches: '"project_name":\s*"${EVAL_PHOENIX_PROJECT_NAME}"'
+      body_matches: '"example_count":\s*[1-9]'
     capture:
       eval_experiment_id: data.0.id
+
+  - name: the-eval-files-its-own-spans-under-its-own-project
+    owner: chatbot-eval
+    GET: /v1/projects/${EVAL_PHOENIX_PROJECT_NAME}/spans?limit=50
+    base: ${PHOENIX_BASE}
+    contract: false
+    tags: [local]
+    retry: {attempts: 10, delay: 2.0}
+    # Criterion 13, asserted where it is actually true — docs/adr/0013 §3. A project by this
+    # name exists and holds at least one span the eval exported. An eval exporting under
+    # Phoenix's `default`, or under the BACKEND's project, gets a 404 or an empty list here
+    # rather than quietly putting synthetic traffic in the project a person opens to debug
+    # real requests. `"span_id"` rather than a name, because the span's name belongs to the
+    # eval and this repo should not freeze it.
+    expect:
+      status: 200
+      body_matches: '"span_id"'
 
   - name: the-experiment-records-the-build-it-evaluated
     owner: chatbot-eval
@@ -242,6 +262,27 @@ steps:
       body_matches: '"data":\s*\[\s*\]'
 
   # ─────────────────────────────────────── one trace, two projects (criterion 19)
+
+  - name: the-run-records-the-backends-own-trace-id
+    owner: chatbot-eval
+    GET: /v1/experiments/${eval_experiment_id}/runs
+    base: ${PHOENIX_BASE}
+    contract: false
+    tags: [local]
+    retry: {attempts: 10, delay: 2.0}
+    # Criterion 20, and it is the assertion that CANNOT race. Two fields of one response:
+    # the trace id Phoenix assigned this run — captured above, from the eval's own task span
+    # — must equal the `X-Trace-Id` the backend handed back for the same request, which the
+    # eval records in the run's output. They are equal only if the two services were in ONE
+    # trace, which is exactly what propagating W3C trace context means.
+    #
+    # No project appears in it, and that is the point. The two steps below read a project,
+    # and WHICH project holds a shared trace is decided by whichever exporter's span created
+    # the trace row first — a race, under batch export. So this is the deterministic
+    # statement of criterion 19 and those two are the readable ones.
+    expect:
+      status: 200
+      body_matches: '"backend_trace_id":\s*"${eval_run_trace}"'
 
   - name: the-backend-half-of-the-eval-trace-exists
     owner: chatbot-eval

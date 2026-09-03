@@ -106,8 +106,12 @@ needed and `docs/adr/0014` decides.
 
 **The experiment**
 
-- [ ] 13. An experiment exists on that dataset, filed under project
-      `${EVAL_PHOENIX_PROJECT_NAME}` — the eval's own, not the backend's.
+- [ ] 13. A Phoenix project named `${EVAL_PHOENIX_PROJECT_NAME}` exists and holds spans the
+      eval exported — its own project, not the backend's, and not Phoenix's `default`.
+      **Corrected 2026-09-03:** this was originally asserted as `project_name` on the
+      *experiment*, and it passed for the wrong reason — Phoenix names an experiment's
+      project itself, as `Experiment-<hash>`, so the step was matching the `project_name`
+      the eval copies into its own metadata. Measured against a live run.
 - [ ] 14. Its metadata carries `image_tag` equal to what the backend reported. The run
       records what it evaluated by READING it, never by being told.
 - [ ] 15. Its metadata carries a 64-hex `fixture_hash`, so two runs over different corpora
@@ -120,8 +124,15 @@ needed and `docs/adr/0014` decides.
       `retrieval_recall`, `groundedness`, `answer_correctness`. This is the four-evaluator
       criterion, asserted through Phoenix's own `incomplete-evaluations` endpoint so an
       empty answer is the pass and a missing evaluator is named in the failure.
-- [ ] 19. **Trace context propagated.** The trace id Phoenix recorded for an experiment run
-      also resolves in the BACKEND's project, and the backend's
+- [ ] 20. **One trace, asserted without a project.** The trace id Phoenix assigned an
+      experiment run equals the `X-Trace-Id` the backend returned for that request, which the
+      eval records as `backend_trace_id` in the run's output. Two fields of one response, so
+      no export race can affect it — and that equality is exactly what "the two services were
+      in one trace" means. **Added 2026-09-03**, because criterion 19 turned out to depend on
+      which project a shared trace is filed under, and measurement showed that is decided by
+      whichever exporter's span created the trace row first.
+- [ ] 19. **Trace context propagated, read from a project.** The trace id Phoenix recorded for
+      an experiment run also resolves in the BACKEND's project, and the backend's
       `POST /v1/threads/{thread_id}/messages` span there has a NON-null parent — because the
       eval's task span is its parent. Note this is the opposite of 0005 criterion 4, which
       requires a null parent: these are different traces, and an ordinary request with no

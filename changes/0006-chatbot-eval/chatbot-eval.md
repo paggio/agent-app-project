@@ -230,6 +230,11 @@ are the evidence two of the four evaluators are built on.
 The task's output is what the evaluators read, so put all of it there: the answer, the
 retrieval decision, the citations, and the trace id.
 
+**Name the trace id field `backend_trace_id`.** The control repo's suite asserts that it
+equals the trace id Phoenix assigned the run, which is the one assertion of trace propagation
+that cannot race — see §10. Record the header's value verbatim, and record nothing when the
+header is absent rather than inventing one.
+
 `experiment_metadata` — and the suite asserts four of these:
 
 ```
@@ -320,6 +325,26 @@ Two of those are the whole point and are easy to get wrong:
   on, so a completely broken backend otherwise yields ten errors, zero applicable examples,
   and a green aggregate. That is the vacuous pass `docs/adr/0003` exists to forbid.
 - **Zero examples ran is exit 2, not 0.** A pass over nothing is a refusal, not a pass.
+
+**And the PRECEDENCE between them is load-bearing**, which the first version of this brief
+failed to say. Two of these can be true at once and they mean opposite things: a backend that
+answers 500 to every turn leaves every evaluator with nothing to average, so it is
+simultaneously "everything errored" and "the threshold compared against nothing". Decide in
+this order:
+
+1. **Zero examples ran** → refuse (2). Nothing was measured.
+2. **Anything errored** → **1**, and decide this BEFORE any threshold check. An errored
+   example is a fact about the thing under test, and the errors *explain* the empty
+   aggregate rather than being a separate missing precondition. Reporting a broken backend
+   as this process declining to judge sends the failure to the wrong repo — the control
+   repo's jobs stage reads exit 2 as "a precondition was missing".
+3. **Only then**, with nothing errored, a configured threshold that still compared against
+   nothing → refuse (2). That is reachable with no error at all — a question set where every
+   example is not-applicable for one evaluator whose threshold is set — and it is a gate over
+   nothing.
+
+A refusal should still print the summary table. The message says why this process would not
+judge; the table says what it saw when it decided.
 
 ## 7. Contract entries this depends on
 
