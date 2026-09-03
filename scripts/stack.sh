@@ -8,6 +8,7 @@
 #   ./scripts/stack.sh down              tear down, including volumes
 #   ./scripts/stack.sh logs [svc...]     follow logs
 #   ./scripts/stack.sh dump <dir>        write per-service logs into <dir> (used on failure)
+#   ./scripts/stack.sh run <svc> [K=V…]  run a ONE-SHOT service to completion, --rm
 #   ./scripts/stack.sh rebuild <svc>     rebuild one service without touching the rest
 #   ./scripts/stack.sh restart <svc>     stop and start one service, keeping its volumes
 #   ./scripts/stack.sh ps                what is running
@@ -25,7 +26,15 @@ COMPOSE=(docker compose -f "$ROOT/stack/compose.yml")
 # list falls behind it — 0004 added opensearch and minio and this line did not move, so
 # every failure dump since has been missing two of the backend's datastores. 0005 added
 # phoenix and phoenix-db; both are here for the same reason and the gate now holds it.
-SERVICES=(backend postgres opensearch minio redis phoenix phoenix-db frontend proxy)
+# 0006 adds `eval`, a one-shot service in a manual profile rather than something `up`
+# brings up — `logs` for it is usually empty, and that is correct. It is listed because
+# [stack-services] requires every service stack/compose.yml declares to be dumpable,
+# and because a run that DID leave a container behind is exactly the case where a
+# reader wants its log.
+# ONE LINE, and it has to stay one: check-docs.py [stack-services] reads this with a
+# line-anchored regex, so a wrapped array parses as almost empty and every service
+# reads as missing. That is how this comment got written.
+SERVICES=(backend postgres opensearch minio redis phoenix phoenix-db frontend proxy eval)
 
 cmd="${1:-}"; shift || true
 
@@ -52,6 +61,25 @@ case "$cmd" in
       "${COMPOSE[@]}" logs --no-color --tail 400 "$s" > "$dir/$s.container.log" 2>&1 || true
     done
     "${COMPOSE[@]}" ps --format json > "$dir/ps.json" 2>&1 || true
+    ;;
+  run)
+    # A one-shot service, run to completion, with its exit code passed straight back to the
+    # caller — that code is the assertion. `--rm` so a job leaves no container behind, and
+    # `-T` because there is no terminal in the loop: without it compose allocates one and
+    # interleaves control characters into the log a repair agent has to read.
+    #
+    # Environment arrives as bare KEY=VALUE words and is translated here rather than taken
+    # as raw compose flags, so a caller cannot smuggle in `--entrypoint` or `-v`. A job may
+    # override a threshold; it may not redefine the service.
+    svc="${1:?usage: stack.sh run <service> [KEY=VALUE ...]}"; shift
+    RUN_ENV=()
+    for pair in "$@"; do
+      case "$pair" in
+        [A-Za-z_]*=*) RUN_ENV+=(-e "$pair") ;;
+        *) echo "stack.sh run: '$pair' is not KEY=VALUE" >&2; exit 2 ;;
+      esac
+    done
+    "${COMPOSE[@]}" run --rm -T ${RUN_ENV[@]+"${RUN_ENV[@]}"} "$svc"
     ;;
   rebuild)
     svc="${1:?usage: stack.sh rebuild <service>}"
@@ -86,7 +114,7 @@ for line in sys.stdin:
 
     ;;
   *)
-    sed -n '2,13p' "${BASH_SOURCE[0]}" >&2
+    sed -n '2,14p' "${BASH_SOURCE[0]}" >&2
     exit 2
     ;;
 esac

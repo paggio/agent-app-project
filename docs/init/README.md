@@ -7,9 +7,10 @@ document is the *how*: ordered steps, the decisions that must be made before sta
 and the checks that prove the result actually works. Where the two disagree, this one
 is the operational truth — it reflects what was really run.
 
-**Produced by this playbook:** four repositories (one control, three product), each
-private, each self-describing, with the agent-facing structure in place and no
-technology chosen yet.
+**Produced by this playbook:** one control repository plus a product repository per
+tier, each private, each self-describing, with the agent-facing structure in place and
+no technology chosen yet. It started at three product repos; `chatbot-eval` was
+attached later by the same steps — see § Attaching a product repo after the fact.
 
 ---
 
@@ -20,6 +21,7 @@ Each is cheap now and expensive later.
 | Decision | Default | Why it matters |
 | --- | --- | --- |
 | Repo names | `<project>`, `<project>-backend`, `frontend`, `infra` | They appear in every clone URL, CI config and vendored-contract check. |
+| How many product repos | one per tier that deploys on its own cadence | Each one is a fourth copy of every hand-kept repo list in `scripts/`. Cheap to add, never free — see `docs/adr/0013`'s accepted costs. |
 | Submodule paths | match the remote names | Scripts loop over these, and a path that differs from its remote name is a permanent small tax on every reader. Keep them identical unless there is a reason not to. |
 | Visibility | private | Public is a one-way door for anything already pushed. |
 | Default branch | `main` | Must match across all four, or CI and fan-out branch logic diverge. |
@@ -83,7 +85,7 @@ scripts/            manifest.py --validate is the ship gate; iterate.sh is the l
                     verify.sh is the oracle; smoke.py asserts; prs.sh opens the PRs;
                     lock.sh pins. `--help` on any of them. None is an entry point —
                     the commands below are.
-repos.lock          the SHA triple known to work together
+repos.lock          the submodule SHAs known to work together
 docs/adr/           decisions and their accepted costs
 docs/infra-interface.md   what this repo requires of infra/
 docs/init/          this playbook
@@ -147,6 +149,60 @@ agent is missing context, the split is wrong — fix the product repo, not the c
 repo.
 
 ---
+
+## 2b. Attaching a product repo after the fact
+
+Steps 1-5 assume a clean start. Attaching a repo to a system that is already running is the
+same work in a different order, and `chatbot-eval` is the worked example — `docs/adr/0013`
+is the decision, this is the procedure.
+
+The thing that makes it awkward is that **the control session may not write inside a
+submodule**, so the scaffold cannot be authored at its final path. Scaffold it somewhere
+else, push it, and only then attach it.
+
+```bash
+gh repo create <owner>/<name> --private --description "<one line>"
+
+# Scaffold OUTSIDE the submodule tree — the deny rules and the PreToolUse hook both key on
+# the submodule paths, and a half-written repo at its final path is unattachable anyway.
+# Same template as step 2: CLAUDE.md, .claude/{settings.json,hooks/}, docs/architecture.md,
+# docs/adr/, contracts/, .github/workflows/ci.yml, README.md, .gitignore.
+#
+# contracts/ MUST carry the vendored specs from the start: vendor-contracts.sh only
+# refreshes a file the repo ALREADY has (`[ -f "$dst" ] || continue`), so a repo that ships
+# without them never receives a frozen contract and its CI verifies against nothing.
+cd <somewhere outside this tree> && git init -b main && git push -u origin main
+
+git submodule add https://github.com/<owner>/<name>.git <path>
+./scripts/lock.sh
+```
+
+Then teach the harness. Every list below is hand-kept, and **only `test-hooks.py` fails when
+one is missed** — so work down the list rather than trusting a grep:
+
+| Where | What |
+| --- | --- |
+| `.claude/settings.json` | `Edit(./<path>/**)` and `Write(./<path>/**)` deny rules |
+| `.claude/hooks/no-subrepo-edits.sh` | the `SUB` alternation |
+| `scripts/test-hooks.py` | a BLOCK case and an ALLOW case for the new path — this is the probe that holds the two above honest |
+| `scripts/manifest.py` | `REPOS`, so it may be a slice |
+| `scripts/check-docs.py` | `SUBMODULES`, for the vendored-contract comparison |
+| `scripts/lock.sh` · `prs.sh` · `vendor-contracts.sh` · `retro-evidence.sh` · `verify.sh` | their repo lists |
+| `scripts/failure-brief.py` | `SERVICES` — which containers it is answerable for |
+| `Makefile` | `REPOS` |
+| `.claude/commands/realign.md` | the two loops over the repos |
+| `stack/compose.yml` | an `include:` for its compose file, and an `agentapp.owner` label for each service it ships |
+| `scripts/stack.sh` | `SERVICES`, for the failure dump |
+| `CLAUDE.md` · `README.md` · `concept.md` | the repo table and the "never edit inside" rule |
+
+`./scripts/check-docs.py`, `./scripts/test-hooks.py` and `make check` are what confirm it,
+and the write guard must be **probed in both directions** before the session goes on: a
+guard that blocks ordinary work is one the next agent routes around.
+
+Finally, the feature itself is a change like any other. The scaffold is structure; the
+toolchain, the image and the implementation arrive through `/ship`, in a session started
+inside the new repo. Attaching the repo and implementing it in one session would put the
+implementation outside that repo's own gates, which is the whole thing the split protects.
 
 ## 3. Where each new document goes
 

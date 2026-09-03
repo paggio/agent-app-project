@@ -20,7 +20,7 @@ set -euo pipefail
 ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 cd "$ROOT"
 
-REPOS="chatbot-backend frontend infra"
+REPOS="chatbot-backend chatbot-eval frontend infra"
 MODE=""; CHANGE=""; RUN_DIR=""; DRY=0
 while [ $# -gt 0 ]; do
   case "$1" in

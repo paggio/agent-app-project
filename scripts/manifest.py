@@ -13,6 +13,7 @@ same idea applied to the change itself.
 
   manifest.py <change-dir> --shell            eval-able assignments for bash
   manifest.py <change-dir> --get deploy.infra dotted lookup, one value on stdout
+  manifest.py <change-dir> --jobs             one TSV line per one-shot job
   manifest.py <change-dir> --validate         the ship gate; exit 2 on problems
 
 --validate is the ONE gate that decides whether a change is shippable. It used to check
@@ -36,7 +37,7 @@ import sys
 
 import yaml
 
-REPOS = ("chatbot-backend", "frontend", "infra")
+REPOS = ("chatbot-backend", "chatbot-eval", "frontend", "infra")
 
 # Environments iterate.sh and verify.sh may deploy to. `prod` is deliberately absent:
 # adding it is a reviewed commit in this repo, not a change author's decision, and an
@@ -84,14 +85,16 @@ def validate(doc: dict, change_dir: str) -> list[str]:
         repo = entry[:-3]
         if repo not in slices:
             hint = ""
-            if repo == "backend":
-                hint = " — did you mean chatbot-backend.md? (that is the submodule path)"
+            if repo in ("backend", "eval"):
+                hint = (f" — did you mean chatbot-{repo}.md? (that is the submodule path; "
+                        f"'{repo}' is the compose SERVICE name, which is a different thing)")
             problems.append(f"{entry} exists but is not listed in slices:{hint}")
 
     problems += validate_freeze(doc)
     problems += validate_deploy(doc, slices)
     problems += validate_prose(change_dir)
     problems += validate_smoke(doc, change_dir, slices)
+    problems += validate_jobs(doc, slices)
     return problems
 
 
@@ -282,8 +285,9 @@ def validate_smoke(doc: dict, change_dir: str, slices: list) -> list[str]:
             continue
         owned.add(owner)
         if owner not in slices:
-            hint = " — did you mean chatbot-backend? (that is the submodule path)" \
-                   if owner == "backend" else ""
+            hint = (f" — did you mean chatbot-{owner}? (that is the submodule path; "
+                    f"'{owner}' is the compose service name)"
+                    if owner in ("backend", "eval") else "")
             problems.append(
                 f"{label}: owner {owner!r} is not a slice of this change "
                 f"(slices: {', '.join(slices)}){hint}")
@@ -304,6 +308,111 @@ def validate_smoke(doc: dict, change_dir: str, slices: list) -> list[str]:
     return problems
 
 
+# A job's `service` must be a service stack/compose.yml declares. That file is also where
+# the agentapp.owner label lives, so the two facts a failing job needs — how to start it and
+# who is answerable — are declared in one place. A typo would otherwise surface as compose's
+# "no such service", mid-run, with no owner.
+def stack_services() -> set[str]:
+    path = os.path.join(HERE, os.pardir, "stack", "compose.yml")
+    try:
+        doc = yaml.safe_load(open(path)) or {}
+    except (OSError, yaml.YAMLError):
+        return set()
+    return set((doc.get("services") or {}))
+
+
+def validate_jobs(doc: dict, slices: list) -> list[str]:
+    """One-shot containers the loop runs inside the joined stack, and their exit codes.
+
+    A job exists for a criterion whose oracle is a PROCESS rather than a request: the eval
+    run of 0006 produces its evidence by running, and "it exits non-zero when a threshold
+    is breached" is not a thing any HTTP client can ask. See docs/adr/0014.
+
+    Typed as strictly as deploy.* is, and for the reason docs/adr/0003 gives: a job whose
+    `expect_exit` parses as None would compare against nothing, and a stage that cannot
+    fail is the whole class of defect this harness was rebuilt to remove.
+    """
+    problems: list[str] = []
+    if "jobs" not in doc:
+        return problems
+
+    jobs = doc["jobs"]
+    if jobs is None:
+        return ["jobs: is present but empty. Delete the key, or write `jobs: []` — a null "
+                "parses as falsy and would skip the stage silently, which is the shape "
+                "docs/adr/0003 forbids"]
+    if not isinstance(jobs, list):
+        return [f"jobs: must be a list, got {type(jobs).__name__}"]
+
+    services = stack_services()
+    seen: set[str] = set()
+    for i, job in enumerate(jobs, 1):
+        if not isinstance(job, dict):
+            problems.append(f"jobs[{i}]: must be a mapping, got {type(job).__name__}")
+            continue
+        name = job.get("name")
+        label = f"jobs[{i}]" + (f" ({name!r})" if name else "")
+        if not name or not isinstance(name, str):
+            problems.append(f"{label}: no name — it names the log file and the failing "
+                            f"stage a reader is sent to")
+        elif name in seen:
+            problems.append(f"{label}: duplicate name — two jobs would write one log")
+        else:
+            seen.add(name)
+
+        service = job.get("service")
+        if not service or not isinstance(service, str):
+            problems.append(f"{label}: no service — a job is a one-shot run of a service "
+                            f"in the joined stack")
+        elif services and service not in services:
+            problems.append(
+                f"{label}: service {service!r} is not declared in stack/compose.yml "
+                f"(declared: {', '.join(sorted(services))}). Declare it there — that is "
+                f"also where its agentapp.owner label goes, so a failure is attributable")
+
+        owner = job.get("owner")
+        if not owner:
+            problems.append(f"{label}: no owner — owner routes the repair to one repo, "
+                            f"exactly as it does for a smoke step; set it to one of: "
+                            f"{', '.join(slices)}")
+        elif owner not in slices:
+            problems.append(f"{label}: owner {owner!r} is not a slice of this change "
+                            f"(slices: {', '.join(slices)})")
+
+        code = job.get("expect_exit", 0)
+        if code is True or code is False or not isinstance(code, int):
+            problems.append(f"{label}: expect_exit must be an integer, got {code!r} — a "
+                            f"null or quoted value compares against nothing")
+        elif not 0 <= code <= 125:
+            problems.append(f"{label}: expect_exit {code} is outside 0-125; 126 and above "
+                            f"are the shell's own codes and cannot be a claim about the job")
+
+        timeout = job.get("timeout_s", 900)
+        if timeout is True or timeout is False or not isinstance(timeout, int) or timeout <= 0:
+            problems.append(f"{label}: timeout_s must be a positive integer, got {timeout!r}")
+
+        env = job.get("env") or {}
+        if not isinstance(env, dict):
+            problems.append(f"{label}: env must be a mapping, got {type(env).__name__}")
+        else:
+            for k, v in env.items():
+                if not isinstance(k, str) or not k.replace("_", "").isalnum():
+                    problems.append(f"{label}: env key {k!r} is not a variable name")
+                text = "" if v is None else str(v)
+                # Passed to the runner as one whitespace-separated K=V field, so a value
+                # with a space in it would split into two. Refused rather than quoted:
+                # a job env is a threshold or a switch, and one that needs a space wants
+                # a compose file entry instead.
+                if text != text.strip() or any(c.isspace() for c in text):
+                    problems.append(f"{label}: env {k} has whitespace in its value; the "
+                                    f"runner passes these as space-separated K=V pairs")
+
+    if jobs and doc.get("deploy", {}).get("local", True) is not True:
+        problems.append("jobs are declared but deploy.local is not true — a job runs inside "
+                        "the joined local stack, so there would be nothing to run it in")
+    return problems
+
+
 def dig(doc: dict, path: str):
     cur = doc
     for part in path.split("."):
@@ -319,6 +428,7 @@ def main() -> int:
     ap.add_argument("--shell", action="store_true")
     ap.add_argument("--get")
     ap.add_argument("--validate", action="store_true")
+    ap.add_argument("--jobs", action="store_true")
     args = ap.parse_args()
 
     change_dir = args.change_dir.rstrip("/")
@@ -340,6 +450,21 @@ def main() -> int:
         if args.validate:
             print(f"manifest: {os.path.join(change_dir, 'change.yaml')} is valid")
             return 0
+
+    if args.jobs:
+        # TSV, like fanout.sh's results: shell reads it with `while IFS=$\'\\t\' read`.
+        # Validation forbids whitespace inside an env value, so the last field is safely
+        # space-separated.
+        for job in doc.get("jobs") or []:
+            env = " ".join(f"{k}={'' if v is None else v}"
+                           for k, v in (job.get("env") or {}).items())
+            print("\t".join((str(job.get("name") or ""),
+                             str(job.get("service") or ""),
+                             str(job.get("owner") or ""),
+                             str(job.get("expect_exit", 0)),
+                             str(job.get("timeout_s", 900)),
+                             env)))
+        return 0
 
     if args.get:
         value = dig(doc, args.get)
@@ -373,6 +498,10 @@ def main() -> int:
             "CHANGE_SMOKE_BASE": smoke.get("base") or "http://localhost:8080",
             "CHANGE_SMOKE_TIMEOUT": str(smoke.get("timeout_s") or 120),
             "CHANGE_SMOKE_E2E": "1" if smoke.get("e2e", False) is True else "0",
+            # A count rather than the jobs themselves: verify.sh reads them with --jobs.
+            # It is here so the loop can record the stage as "skipped: none declared"
+            # rather than leaving a silence a reader has to interpret.
+            "CHANGE_JOBS_COUNT": str(len(doc.get("jobs") or [])),
         }
         for k, v in out.items():
             print(f"{k}={shlex.quote(str(v))}")

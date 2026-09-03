@@ -1,5 +1,5 @@
-# The joined local stack: backend, its datastores, the frontend, and the Caddy proxy that
-# fronts both — one compose project, therefore one network.
+# The joined local stack: backend, its datastores, the frontend, the Caddy proxy that
+# fronts both, and the one-shot eval runner — one compose project, therefore one network.
 #
 # Lives here because neither product repo may own it: the frontend cannot name a service it
 # does not ship, and the backend has no business knowing a proxy exists.
@@ -12,6 +12,7 @@ name: agentapp-stack
 include:
   - path: ../chatbot-backend/docker-compose.yml
   - path: ../frontend/docker-compose.yml
+  - path: ../chatbot-eval/docker-compose.yml
 
 services:
   backend:
@@ -29,6 +30,11 @@ services:
       # 10 MB, matching the backend's own default. stack/dev.env records why this stopped
       # being an override.
       DOCUMENT_MAX_BYTES: ${DOCUMENT_MAX_BYTES:-10485760}
+      # Build identity, reported by GET /v1/version and recorded by the eval in every
+      # experiment. Supplied from outside the image on purpose: an application that
+      # invents its own image tag is not reporting one. scripts/publish.sh tags with
+      # the submodule SHA; locally this is `dev`.
+      IMAGE_TAG: ${BACKEND_IMAGE_TAG:-dev}
 
   postgres:
     labels:
@@ -72,6 +78,69 @@ services:
   phoenix-db:
     labels:
       agentapp.owner: chatbot-backend
+
+
+  # The eval runner: a ONE-SHOT container that black-box tests the running backend and files
+  # the result in Phoenix. Defined in chatbot-eval's own compose file — that is where its
+  # image, its build context and its `manual` profile live — so `up --wait` never blocks on a
+  # container whose whole job is to exit. The loop runs it with `stack.sh run eval`, and
+  # `change.yaml`'s `jobs:` says what its exit code has to be. See docs/adr/0013 and 0014.
+  #
+  # THE COUPLING IS THE SERVICE NAME, as it is for opensearch, minio and phoenix above:
+  # `eval` must be what chatbot-eval calls it, or compose reads this as a new service with
+  # no image and refuses to start anything. Loud, and ahead of the submodule until 0006's
+  # slice lands.
+  eval:
+    labels:
+      agentapp.owner: chatbot-eval
+    # Waited on here rather than in chatbot-eval's own compose file, which cannot name a
+    # service it does not ship. `stack.sh run` starts these if they are not already up,
+    # which is what makes `make eval` work without a separate `make up` first.
+    depends_on:
+      backend:
+        condition: service_healthy
+      proxy:
+        condition: service_healthy
+      phoenix:
+        condition: service_healthy
+    environment:
+      # THROUGH THE PROXY, not `backend:8000`. The eval measures the origin a client
+      # actually uses, and stripping /api is part of what is being measured — see
+      # contracts/README.md § "The /api/ prefix is an asserted invariant". A run against
+      # the backend directly would pass while the deployed edge was misconfigured.
+      EVAL_BACKEND_BASE_URL: ${EVAL_BACKEND_BASE_URL:-http://proxy:8080/api}
+      # Phoenix on this network. Not the host port: the eval is a container.
+      EVAL_PHOENIX_BASE_URL: ${EVAL_PHOENIX_BASE_URL:-http://phoenix:6006}
+      # The eval's OWN project. The backend keeps exporting to its own — a service's
+      # project is that service's configuration, and a client that could choose where its
+      # traces are filed would be a way to write into somebody else's store. So one eval
+      # example produces one trace with halves in two projects, joined by the trace id.
+      EVAL_PHOENIX_PROJECT_NAME: ${EVAL_PHOENIX_PROJECT_NAME:-chatbot-eval}
+      EVAL_DATASET_NAME: ${EVAL_DATASET_NAME:-chatbot-eval}
+      # The eval's own account IS its dedicated collection: the knowledge base is scoped by
+      # account, so it can see nobody else's documents. The bare `-` and no default: unset
+      # must mean unset, and the eval refuses to run rather than inventing an identity.
+      EVAL_ACCOUNT_EMAIL: ${EVAL_ACCOUNT_EMAIL-}
+      EVAL_ACCOUNT_PASSWORD: ${EVAL_ACCOUNT_PASSWORD-}
+      # Registration is gated, and the eval registers itself on a cold stack.
+      SIGNUP_CODE: ${SIGNUP_CODE:-}
+      # The marker every document the eval uploads carries in its filename, and the ONLY
+      # documents it will ever delete. An EVAL_ACCOUNT_EMAIL pointed at a real account by
+      # mistake therefore costs nothing.
+      EVAL_DOCUMENT_PREFIX: ${EVAL_DOCUMENT_PREFIX:-eval__}
+      # heuristic needs no credentials and no network, which is the whole reason it is the
+      # default — the same argument as CHAT_MODEL=echo and RETRIEVAL_ROUTER=heuristic in the
+      # backend. It produces a real, deterministic, POOR score: it proves the mechanism,
+      # never the quality. `EVAL_JUDGE=bedrock make eval` is the real judge.
+      EVAL_JUDGE: ${EVAL_JUDGE:-heuristic}
+      EVAL_JUDGE_MODEL_ID: ${EVAL_JUDGE_MODEL_ID:-}
+      EVAL_JUDGE_PROMPT_VERSION: ${EVAL_JUDGE_PROMPT_VERSION:-}
+      # The gate. Aggregate below threshold means exit 1. The two judge-based thresholds
+      # are 0 in stack/dev.env and that is deliberate — read the comment there.
+      EVAL_THRESHOLD_ROUTING_ACCURACY: ${EVAL_THRESHOLD_ROUTING_ACCURACY:-}
+      EVAL_THRESHOLD_RETRIEVAL_RECALL: ${EVAL_THRESHOLD_RETRIEVAL_RECALL:-}
+      EVAL_THRESHOLD_GROUNDEDNESS: ${EVAL_THRESHOLD_GROUNDEDNESS:-}
+      EVAL_THRESHOLD_ANSWER_CORRECTNESS: ${EVAL_THRESHOLD_ANSWER_CORRECTNESS:-}
 
   frontend:
     labels:

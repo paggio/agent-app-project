@@ -8,6 +8,9 @@ a test on purpose and confirm the gate blocks" applied to the hook itself. The f
 half matters as much as the true-positive half: the first version of this hook fired on
 `echo "never write into chatbot-backend/"`, and a guard that blocks ordinary work is a guard
 the agent learns to route around.
+
+BLOCK carries one case per submodule. The guard's alternation is hand-kept in one regex,
+and this is the list that fails when a repo is attached and the regex is not extended.
 """
 import json
 import subprocess
@@ -26,6 +29,12 @@ BLOCK = [
     "git apply /tmp/p.diff && mv chatbot-backend/a chatbot-backend/b",
     'python3 -c "x" ; touch infra/main.tf',
     "chmod +x chatbot-backend/scripts/x.sh",
+    # One case per submodule, on purpose: the hook's alternation is hand-kept, and
+    # this list is what notices a fourth repo being attached without it being
+    # extended. Writing these two cases is itself blocked by the guard when the patch
+    # is piped through a shell, which is the guard working.
+    "cp /tmp/e.py chatbot-eval/src/eval/run.py",
+    "rm -rf chatbot-eval/evalset/corpus",
 ]
 
 ALLOW = [
@@ -34,7 +43,7 @@ ALLOW = [
     "git -C frontend switch main",
     "git -C frontend switch -c feat/0002-x",
     "grep -rn foo chatbot-backend/src",
-    "cat > CLAUDE.md <<'EOF'\nNEVER edit inside chatbot-backend/, frontend/, infra/ from here.\nEOF",
+    "cat > CLAUDE.md <<'EOF'\nNEVER edit inside chatbot-backend/, chatbot-eval/, frontend/, infra/ from here.\nEOF",
     "rm -rf changes/0002/runs",
     'echo "do not write into chatbot-backend/"',
     'sed -i "" s/a/b/ CLAUDE.md',
@@ -43,6 +52,8 @@ ALLOW = [
     "./scripts/lock.sh",
     "docker compose -f stack/compose.yml config",
     "wc -l chatbot-backend/CLAUDE.md frontend/CLAUDE.md infra/CLAUDE.md",
+    "git -C chatbot-eval switch -c feat/0006-chatbot-eval",
+    "cat chatbot-eval/evalset/questions.yaml",
 ]
 
 

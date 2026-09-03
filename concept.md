@@ -21,20 +21,21 @@ the mechanism wins, and the mechanism is never quoted here.
 | `frontend` | web client | per merge |
 | `infra` | IaC | reviewed, gated |
 
-The three product repos are vendored here as git submodules.
+The product repos — `chatbot-backend`, `chatbot-eval`, `frontend`, `infra` — are
+vendored here as git submodules.
 
 **Why split at all.** Each product repo keeps its own git history, CI pipeline, deploy
 cadence, secret scope and observability. A shared pipeline couples deploy risk across tiers
 with very different review requirements — infra is gated, the app repos are per-merge.
 
-**Why a control repo.** Three agents working in three repos will each re-derive the
+**Why a control repo.** Agents working in separate repos will each re-derive the
 interface between them if allowed to, and they will disagree in small ways that surface in
 production rather than in review. Prose cannot prevent that, because **instruction text
 cannot fail a build**. A contract can. The control repo exists to hold the one thing that
 cannot live inside any single product repo.
 
 **The accepted costs**, stated because an argument that lists only benefits is a sales
-pitch: a feature spanning all three repos produces three pull requests and three CI runs
+pitch: a feature spanning every repo produces a pull request and a CI run in each
 and cannot merge atomically; version skew is a permanent tax, paid via expand-contract
 migrations and feature flags; and submodules are a sharp edge (§6). The fallback, if the
 three-PR overhead ever becomes the dominant friction, is to merge backend + frontend +
@@ -68,7 +69,7 @@ removals in a later change once every consumer is updated.
 ## 3. Verification is what makes any of it true
 
 A contract says what the interface *should* be. It says nothing about whether the interface
-is honoured at runtime, and for a while nothing filled that gap: three repos could each be
+is honoured at runtime, and for a while nothing filled that gap: the repos could each be
 internally green while the seam between them was broken, and nobody found out until someone
 ran the whole thing by hand. The frontend's tests passed against mock clients; the backend's
 passed against itself; the proxy could not resolve the backend at all.
@@ -190,7 +191,7 @@ claude
 
 which brings the submodule to its merged `main`, re-checks the contract against what the
 service now actually serves, re-runs the baseline suite through the joined origin, and pins
-the triple in `repos.lock` — one commit containing the pointers and the lock and nothing
+the SHAs in `repos.lock` — one commit containing the pointers and the lock and nothing
 else. A single-repo deploy still needs this lane, because a product repo's own CI can only
 ever prove that repo is consistent with itself.
 

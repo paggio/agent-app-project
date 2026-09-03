@@ -18,11 +18,11 @@ MSG          ?= hello
 SVC          ?=
 CHANGE       ?=
 
-REPOS := chatbot-backend frontend infra
+REPOS := chatbot-backend chatbot-eval frontend infra
 
 .DEFAULT_GOAL := help
 .PHONY: help up down restart ps logs rebuild config urls open health chat smoke verify iterate \
-        e2e phoenix-durability repos lock prs check check-docs init clean
+        e2e eval phoenix-durability repos lock prs check check-docs init clean
 
 help: ## Show this list
 	@echo "The full local stack — backend, datastores, frontend, proxy — on one origin."
@@ -67,6 +67,8 @@ urls: ## Print the endpoints worth knowing
 	@echo "  API          $(BASE)/api/          (proxied; the backend sees it without /api)"
 	@echo "  backend      $(BACKEND_BASE)/      (direct, bypassing the proxy)"
 	@echo "  phoenix      $(PHOENIX_BASE)/      (traces; not proxied, and not part of the API)"
+	@echo
+	@echo "  make eval     one eval run against this stack (one-shot container)"
 	@echo
 	@echo "  make health   check them      make chat MSG=\"hi\"   talk to the backend"
 	@echo "  make smoke    run assertions  make logs SVC=backend  watch one service"
@@ -121,6 +123,17 @@ iterate: ## What /ship phase 4 runs, by hand: make iterate CHANGE=0001-auth
 # the only oracle for "the UI calls the real endpoint" reports green by not running.
 e2e: ## Run the frontend's Playwright suite against the joined origin
 	@. ./scripts/dev-env.sh && cd frontend && PLAYWRIGHT_BASE_URL=$(BASE) npx playwright test
+
+# One eval run against the stack, exactly as the loop runs it — `stack.sh run` is the same
+# entry point `changes/*/change.yaml`'s `jobs:` uses, so a run by hand and a run in the
+# loop cannot drift apart. Exit 0 = every threshold met, 1 = a breach or an errored
+# example, 2 = the eval refused to judge. Override anything for one run:
+#   make eval JUDGE=bedrock
+#   make eval THRESHOLDS='EVAL_THRESHOLD_RETRIEVAL_RECALL=0.99'
+JUDGE      ?=
+THRESHOLDS ?=
+eval: ## One eval run against the running stack: make eval [JUDGE=bedrock]
+	@./scripts/stack.sh run eval $(if $(JUDGE),EVAL_JUDGE=$(JUDGE),) $(THRESHOLDS)
 
 # The two criteria of 0005 the seam cannot see: a trace outliving a Phoenix restart, and
 # the backend's log lines carrying the id its response returned. smoke.py speaks HTTP against

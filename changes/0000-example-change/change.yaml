@@ -24,6 +24,30 @@ deploy:
   # A real deploy. Requires an infra slice.
   infra: false
 
+# ONE-SHOT JOBS, optional. A container the loop runs to completion inside the joined
+# stack, whose EXIT CODE is the assertion. For a criterion whose oracle is a process rather
+# than a request — smoke.py speaks HTTP against a stack somebody else brought up, so it can
+# never start one. See docs/adr/0014. Delete this block if the change has none.
+#
+#   name         unique; names the log (runs/<ts>/job-<name>.log) and the failing stage
+#   service      a service stack/compose.yml declares. Put it in a `manual` profile so
+#                `up --wait` never blocks on a container that is supposed to exit.
+#   owner        the repo answerable. ROUTES THE REPAIR, exactly as a smoke step's does,
+#                and must be a slice of this change.
+#   expect_exit  the code that means this job did its job. 0-125.
+#   timeout_s    kill it after this long and fail (default 900)
+#   env          KEY: VALUE overrides for this run only. No whitespace in a value — they
+#                are passed as space-separated pairs. This is how one job proves the
+#                happy path and a second proves the refusal.
+#
+# Jobs run BEFORE smoke, because a job produces the state the suite then asserts.
+# jobs:
+#   - name: <what this run proves>
+#     service: <service>
+#     owner: chatbot-eval
+#     expect_exit: 0
+#     timeout_s: 900
+
 smoke:
   file: smoke.yaml
   # The single origin a browser uses: app at /, API at /api/. Not the backend's own port —

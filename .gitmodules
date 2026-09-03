@@ -7,3 +7,6 @@
 [submodule "infra"]
 	path = infra
 	url = https://github.com/Paggio/infra.git
+[submodule "chatbot-eval"]
+	path = chatbot-eval
+	url = https://github.com/Paggio/chatbot-eval.git

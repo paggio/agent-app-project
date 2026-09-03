@@ -31,7 +31,7 @@ import sys
 import yaml
 
 ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
-SUBMODULES = ("chatbot-backend", "frontend", "infra")
+SUBMODULES = ("chatbot-backend", "chatbot-eval", "frontend", "infra")
 
 problems: list[str] = []
 warnings: list[str] = []
@@ -802,6 +802,31 @@ def check_stack_services() -> None:
              f"stack/compose.yml declares service {missing!r} and scripts/stack.sh's "
              f"SERVICES does not list it — `stack.sh dump` writes no log for it, so a run "
              f"that failed because of it leaves no evidence. Add it to SERVICES.")
+
+    # A job routes its failure by its own `owner`, and the service it runs routes a
+    # stack failure by its `agentapp.owner` label. Two fields, one question — and when they
+    # disagree the same container sends two different repos after the same problem. Neither
+    # file can see the other, so this is the only place the pair is checkable.
+    labels = {name: ((svc or {}).get("labels") or {}).get("agentapp.owner")
+              for name, svc in ((yaml.safe_load(open(compose)) or {})
+                                .get("services") or {}).items()}
+    for path in sorted(glob.glob(os.path.join(ROOT, "changes", "*", "change.yaml"))):
+        try:
+            doc = yaml.safe_load(open(path)) or {}
+        except yaml.YAMLError:
+            continue  # manifest.py --validate is what reports an unparseable manifest
+        for job in doc.get("jobs") or []:
+            if not isinstance(job, dict):
+                continue
+            svc, owner = job.get("service"), job.get("owner")
+            declared = labels.get(svc)
+            if svc and owner and declared and declared != owner:
+                fail("stack-services",
+                     f"{rel(path)}: job {job.get('name')!r} runs service {svc!r} with "
+                     f"owner: {owner!r}, and stack/compose.yml labels that service "
+                     f"agentapp.owner: {declared!r}. One container, two answerable repos — "
+                     f"a failing job and a failing stack would be routed to different "
+                     f"agents. Make them agree.")
 
     brief = open(os.path.join(ROOT, "scripts", "failure-brief.py")).read()
     block = re.search(r"^SERVICES = \{(.*?)^\}", brief, re.M | re.S)

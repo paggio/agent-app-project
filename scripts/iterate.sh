@@ -205,6 +205,12 @@ d = json.load(open(sys.argv[1]))
 a = d.get("assertions") or {}
 print(f"- assertions: {a.get('passed', 0)} passed, {a.get('failed', 0)} failed "
       f"({a.get('from_change_suite', 0)} from {a.get('change_suite', 'the change suite')})")
+# A one-shot run is a different kind of evidence from an HTTP assertion, and a reader has
+# to be able to tell them apart — a change whose central criterion is "this process exits
+# non-zero on a breach" has all of its weight here and none of it in the suite.
+j = d.get("jobs") or {}
+if j.get("ran"):
+    print(f"- one-shot jobs: {j.get('passed', 0)} of {j.get('ran', 0)} exited as declared")
 st = d.get("stages") or {}
 skipped = [f"{k} ({v})" for k, v in st.items() if str(v).startswith("skipped")]
 if skipped:

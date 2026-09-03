@@ -18,6 +18,7 @@ an agent into a wrong fix.
 from __future__ import annotations
 
 import argparse
+import glob
 import json
 import os
 import re
@@ -38,6 +39,16 @@ SERVICES = {
                                        "phoenix", "phoenix-db"]},
     "frontend": {"primary": ["frontend", "proxy"], "supporting": []},
     "infra": {"primary": [], "supporting": []},
+    # The eval is a CLIENT of the backend, so `backend` is supporting here as well as
+    # primary above: an eval run that fails because the API refused it is unreadable
+    # without the API's own log, and the eval agent cannot fix the backend but can say
+    # what it was told. phoenix is supporting for the reason it is supporting for the
+    # backend — the eval fails CLOSED on Phoenix, so a Phoenix that is down is a real
+    # cause here rather than a fail-open one, but it is still evidence only when it
+    # actually complained.
+    "chatbot-eval": {"primary": ["eval"],
+                     "supporting": ["backend", "phoenix", "phoenix-db", "opensearch",
+                                    "minio", "proxy"]},
 }
 
 # Health probes run every few seconds against every container, so by the time anything
@@ -179,6 +190,29 @@ def main() -> int:
             out.append("")
             out.append("```")
             out.append(body[:4000])
+            out.append("```")
+            out.append("")
+
+    # A job's own output. This is the whole of the evidence when the failing stage is a
+    # one-shot run: there is no request and no response to show, the exit code IS the
+    # assertion, and what the process printed on its way to that code is the only thing
+    # that says why. Included whenever a job log exists for this repo, not only on a
+    # job-stage failure — a job that passed while a later assertion failed is still
+    # context, and it is short.
+    jobs = sorted(glob.glob(os.path.join(rd, "job-*.log")))
+    if jobs:
+        out.append("## One-shot runs in this pass")
+        out.append("")
+        out.append("_Each of these is a container the loop ran to completion inside the "
+                   "joined stack. Its exit code is the assertion; `change.yaml` declares "
+                   "what it had to be._")
+        out.append("")
+        for path in jobs:
+            name = os.path.basename(path)[len("job-"):-len(".log")]
+            out.append(f"### job `{name}`")
+            out.append("")
+            out.append("```")
+            out.append(tail(path, args.log_lines, drop_noise=False) or "(no output)")
             out.append("```")
             out.append("")
 

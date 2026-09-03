@@ -1,6 +1,6 @@
 # Control repo — agent-app-project
 
-Three INDEPENDENT projects vendored as submodules, each with its own git history, CI,
+Four INDEPENDENT projects vendored as submodules, each with its own git history, CI,
 deploy cadence and CLAUDE.md. This file is additive context — never assume a sub-repo
 session can see it.
 
@@ -18,8 +18,8 @@ Never run two lanes in one session.
 
 ## Hard rules
 
-- NEVER edit inside `chatbot-backend/`, `frontend/`, `infra/` from here. Implementation
-  happens in a session started inside that repo, or via the dispatch `/ship` runs.
+- NEVER edit inside a submodule from here (`chatbot-backend/`, `chatbot-eval/`, `frontend/`,
+  `infra/`). Implementation happens in a session inside that repo, or via `/ship`'s dispatch.
 - `contracts/` is owned here and only here. Product repos vendor it and verify against it;
   they never edit it.
 - Smoke assertions are owned here too. A failing assertion means fix the cause, or change
@@ -35,9 +35,8 @@ Never run two lanes in one session.
 - Every variable a smoke suite interpolates is declared in `stack/dev.env`. Never export
   one by hand.
 - Exit 1 = the thing under test failed. Exit 2 = the harness refused. See `docs/adr/0003`.
-- NEVER run `docker compose config` on `stack/compose.yml`, or paste its output. It inlines
-  `env_file`, so it prints the real AWS credentials in `chatbot-backend/.env`. Use
-  `make config`, which redacts.
+- NEVER run `docker compose config` on `stack/compose.yml` or paste its output — it inlines
+  `env_file` and prints the real AWS credentials in `chatbot-backend/.env`. Use `make config`.
 - Ignore `TODO.md` — it is a personal ideas dump, not something you must maintain/populate/read into.
 - Concise EVERYWHERE — comments, docs, briefs, commit messages. Verbosity is the failure,
   not the fix; if I want depth I will ask. One exception: the step-schema header in
@@ -46,13 +45,14 @@ Never run two lanes in one session.
 ## Layout
 
 - `contracts/`  the interfaces, plus the normative prose `README.md` neither spec can hold
-- `changes/NNNN-*/`  `change.yaml` is the machine half; `smoke.yaml` is the criteria as
+- `changes/NNNN-*/`  `change.yaml` is the machine half — slices, freeze, and `jobs:` for a
+                     criterion whose oracle is a process; `smoke.yaml` is the criteria as
                      steps, each `owner`ed — that field routes a failure
 - `stack/`  the joined local stack; `dev.env` is one source for it and the suites
 - `smoke/baseline.yaml`  the cross-repo regression suite
 - `docs/adr/`  decisions and their accepted costs — read before proposing a redesign
 - `docs/infra-interface.md`  what this repo requires of `infra/`
-- `repos.lock`  the SHA triple known to work together
+- `repos.lock`  the submodule SHAs known to work together
 
 ## Commands
 
