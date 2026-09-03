@@ -1,0 +1,432 @@
+# 0006 — chatbot-eval slice
+
+Your repo is a **scaffold**: `CLAUDE.md`, `.claude/` (settings, Stop hook, format hook),
+`docs/architecture.md`, `docs/adr/0000-template.md`, `contracts/` (vendored, read-only),
+`README.md`, `.gitignore`, `.github/workflows/ci.yml`. There is no toolchain, no image and
+no code. This slice builds all of it.
+
+**Read `docs/architecture.md` first.** It carries the decisions that are already made and
+must not be re-derived — the black-box constraint, the account-as-collection, the two Phoenix
+projects, the two judges. `CLAUDE.md` is the working agreement. Where this file and
+`docs/architecture.md` agree, they agree on purpose; where you think they disagree, say so
+rather than picking one.
+
+---
+
+## 1. The toolchain
+
+Python 3.13, managed with `uv`. Mirror `chatbot-backend`'s shape, because the two repos are
+read by the same people: `pyproject.toml` with `ruff` and `mypy --strict`, `pytest` with a
+`provider` marker excluded by default, a `Makefile` where every command a person needs is a
+target, a `Dockerfile`, a `docker-compose.yml`.
+
+Pin `arize-phoenix` and every `openinference-*` package **exactly**, and say in `CLAUDE.md`
+that they are bumped as a set. This repo's whole output is Phoenix API calls; a floating
+minor there is a run that stops working for a reason nobody will look for.
+
+`make help` must list, at minimum: `test`, `typecheck`, `lint`, `contract`, `build`, `run`.
+`make run` is one eval run against the configured backend.
+
+### The Makefile's `contract` target
+
+`make contract` proves every path this repo calls is declared in `contracts/openapi.yaml`.
+Keep it simple and keep it honest: collect the request paths the code can issue — a module
+of path constants is the easy way — and check each against the vendored spec's `paths`,
+allowing for `{param}` templating. It is not a schema check; it is the check that this repo
+never calls surface the backend has not promised. A path that is not there is a contract
+change in the control repo, not a change here.
+
+---
+
+## 2. The image, and the compose service
+
+`Dockerfile`: a slim Python 3.13 base, `uv sync --frozen`, **`evalset/` copied in**. The test
+bed ships inside the image as one unit with the code — that is what makes a `fixture_hash`
+mean something.
+
+`docker-compose.yml` declares **one service named `eval`**, and the name is load-bearing:
+the control repo's `stack/compose.yml` labels it, waits on the backend and Phoenix for it,
+and runs it by that name. Requirements:
+
+- **`profiles: ["manual"]`**. Non-negotiable. Without it `docker compose up --wait` waits
+  forever for a container whose job is to exit, and the joined stack never comes up.
+- `build: {context: .}` and a pinned local image name, like the backend's `chatbot-eval:dev`.
+- **No `depends_on`** on `backend`, `proxy` or `phoenix`. Your compose file cannot name
+  services it does not ship — that is what makes it valid standalone — and the control repo's
+  `stack/compose.yml` adds those waits. This is the same rule the backend follows for the
+  proxy.
+- **No host bind mount for data, and no `external: true` volume.** `docs/adr/0011` in the
+  control repo makes `down` a clean slate, and its `check-docs.py` reads your compose file
+  and fails on either. A read-only config mount is fine; state is not.
+- `env_file: {path: .env, required: false}` for AWS credentials, exactly as the backend does
+  it — optional, so a fresh clone and CI come up with no `.env` at all. Ship a `.env.example`
+  listing what a real judge needs, and never a real value.
+- Every other input comes from `environment:` with a **default that fails closed**, and it
+  reads them from the process environment only. No `env_file` for configuration.
+
+Read `stack/compose.yml`'s `eval:` block (it is on your `--add-dir`): it is the authority on
+what the joined stack passes you, and the defaults there are the ones to agree with.
+
+---
+
+## 3. Configuration
+
+Every input is an environment variable. **No `APP_ENV` branch anywhere**, ever — the same
+image runs locally and as a k8s Job, and only these move.
+
+| Variable | Required | Meaning |
+| --- | --- | --- |
+| `EVAL_BACKEND_BASE_URL` | **yes** | e.g. `http://proxy:8080/api`. Includes the `/api` prefix; every path is appended to it. |
+| `EVAL_PHOENIX_BASE_URL` | **yes** | e.g. `http://phoenix:6006`. The OTLP traces path is built from it, not assumed. |
+| `EVAL_PHOENIX_PROJECT_NAME` | yes | the project your OWN spans go to |
+| `EVAL_DATASET_NAME` | yes | the Phoenix dataset the question set is upserted into |
+| `EVAL_ACCOUNT_EMAIL` · `EVAL_ACCOUNT_PASSWORD` | **yes** | the eval's own account |
+| `SIGNUP_CODE` | no | needed only to register on a cold stack |
+| `EVAL_DOCUMENT_PREFIX` | yes | the filename marker; default `eval__` |
+| `EVAL_JUDGE` | yes | `heuristic` or `bedrock`; default `heuristic` |
+| `EVAL_JUDGE_MODEL_ID` | no | recorded in metadata even when unused |
+| `EVAL_JUDGE_PROMPT_VERSION` | no | bumped by hand when the judge prompt changes |
+| `EVAL_THRESHOLD_ROUTING_ACCURACY` · `_RETRIEVAL_RECALL` · `_GROUNDEDNESS` · `_ANSWER_CORRECTNESS` | no | floats. Absent means that evaluator does not gate. |
+
+**Required means the process refuses — exit 2 — with the name of the variable.** Not a
+default, not a guess. An eval that invented a backend URL would measure the wrong thing and
+report a number.
+
+**Thresholds are NOT range-validated.** `1.01` must be accepted and compared, because
+breaching a threshold on purpose is how the exit code is proved — see §9 and the second job
+in `change.yaml`. A validator that refused it would turn that assertion into a refusal.
+
+---
+
+## 4. The evaluation set
+
+```
+evalset/
+  README.md
+  corpus/<fixture-id>.md
+  questions.yaml
+```
+
+**`evalset/README.md` is the deliverable here, not an afterthought.** It is the one place
+that explains what the set is and how to extend it: how to add a document, how to add a
+question, what each field means, what makes a good question and what makes a useless one.
+Your Stop hook refuses a change to `corpus/` or `questions.yaml` that does not touch it.
+
+### The corpus
+
+`corpus/<fixture-id>.md` — the filename stem IS the fixture id, so there is no second
+manifest file to drift out of step with the directory. Markdown and plain text; a PDF is
+possible later and is not needed now.
+
+**Write invented content**, and this matters more than it looks. A question the base model
+can answer from its own training measures nothing about retrieval: the reply is right whether
+or not the document was found. So the corpus is a small self-consistent fictional world —
+`chatbot-backend`'s own tests use "The Quillhaven Charter" and that is the right instinct.
+Eight to twelve documents, a few hundred words each, each about a distinct subject so that
+lexical routing has something to decide on.
+
+### The questions
+
+`questions.yaml`:
+
+```yaml
+questions:
+  - id: q-charter-quorum
+    input: "What quorum does the Quillhaven Charter require?"
+    reference_answer: "Two thirds of seated delegates."
+    expected_doc_ids: [quillhaven-charter]
+    should_retrieve: true
+    notes: single-document lookup; the answer is one clause
+```
+
+- `expected_doc_ids` name **corpus entries by fixture id**, resolved to server-assigned
+  document ids at seed time.
+- `should_retrieve: false` for questions that must NOT trigger retrieval — general knowledge,
+  small talk, arithmetic. **Include several.** Routing accuracy over a set where the answer
+  is always "yes" is not a measurement, and the router is the component most likely to
+  regress.
+- Cover: single-document lookup, a question whose answer spans two documents, a question
+  about something the corpus does not contain (`should_retrieve: true`, `expected_doc_ids:
+  []` — the router should look and find nothing, which is a different fact from not looking),
+  and the `should_retrieve: false` cases.
+- 12–20 questions. Enough to make a mean mean something, small enough that a run is quick.
+
+---
+
+## 5. The run flow
+
+Idempotent, in this order. Every step is HTTP.
+
+### 5.1 Read the configuration, then read the backend
+
+`GET {backend}/v1/version` **after signing in** — it is session-required. Take `image_tag`,
+`chat_model`, `chat_model_id`, `embedding_model` and `retrieval_router` from it. **Never take
+any of them from your own environment or from a flag.** A run told its own image tag records
+what the caller believed; a run that reads it records what is serving. The control repo's
+suite asserts that the tag in your experiment metadata equals the one the backend reported.
+
+### 5.2 Sign in, or register
+
+`POST /v1/auth/login` with `EVAL_ACCOUNT_EMAIL` / `EVAL_ACCOUNT_PASSWORD`. On 401,
+`POST /v1/auth/register` with those plus `SIGNUP_CODE`, then proceed. Both paths must work,
+because the joined stack forgets everything on `down` — a cold stack needs the register path
+and a warm one needs the login path, from the same two committed values.
+
+The session is an `httpOnly` cookie. Keep a cookie jar for the whole run.
+
+### 5.3 Seed the account's knowledge base
+
+**The eval's account IS its dedicated collection.** There is no collection concept in the
+backend and you must not invent one. What that means concretely:
+
+1. `GET /v1/documents`.
+2. Partition on the filename prefix. **Documents without `EVAL_DOCUMENT_PREFIX` are ignored
+   entirely and never deleted.** This is the safety rail: an `EVAL_ACCOUNT_EMAIL` pointed at
+   a real account by mistake must cost nothing.
+3. For the marked ones, `GET /v1/documents/{id}/content` and hash the bytes. If the set of
+   (fixture id, content hash) matches `corpus/` exactly, **upload nothing** — that is the
+   idempotent path and a second run in the same stack must take it.
+4. On any mismatch — a missing document, an extra one, changed content — `DELETE` every
+   marked document and upload the whole corpus fresh. Partial repair is not worth the
+   complexity and a half-seeded collection is worse than a re-seeded one.
+5. Upload with `POST /v1/documents`, `filename` = `{prefix}{fixture-id}.md`.
+6. Keep the fixture-id → document-id map. `expected_doc_ids` are resolved through it.
+7. **Then assert the invariant and refuse if it does not hold** (exit 2): after seeding, the
+   account's marked documents are exactly the fixture, one document per fixture id, no
+   duplicates. The control repo's suite cannot check this — a regex cannot count duplicate
+   filenames — so it is yours, and `BRIEF.md` § "A gap in the oracle" records that it is
+   yours.
+
+`fixture_hash` = sha256 over the sorted `(fixture-id, bytes)` pairs of `corpus/`. Corpus
+only, not the questions: Phoenix versions the question set and that is its job. Hash
+`questions.yaml` separately as `questions_hash` and record both — Phoenix's version id is
+opaque, and two runs should be comparable without opening Phoenix to find out.
+
+### 5.4 Upsert the dataset
+
+Upsert by **name** (`EVAL_DATASET_NAME`), so two runs leave ONE dataset and Phoenix adds a
+version. The suite asserts exactly that: a create-instead-of-upsert leaves two datasets with
+the same name and fails.
+
+Each example: `input` holds the question, `output` holds the `reference_answer`, and
+`metadata` holds `expected_doc_ids`, `should_retrieve` and the question `id`.
+
+### 5.5 Run the experiment
+
+`run_experiment` against that dataset. The task, per example:
+
+1. `POST /v1/threads` → a fresh chat. **One chat per example**, so no example sees another's
+   history — `HISTORY_MAX_MESSAGES` is 20 and a shared chat would make later examples depend
+   on earlier ones.
+2. `POST /v1/threads/{thread_id}/messages` with the question, **with W3C trace context
+   injected into the request headers** so the backend's spans nest under your task span.
+3. Record from the response: the assistant `Message`'s `content`, its `retrieval_consulted`,
+   its `citations`, and the `X-Trace-Id` response header.
+
+**It must be this endpoint, not `POST /v1/chat`.** `/v1/chat` returns only `reply`;
+`retrieval_consulted` and `citations` are on the `Message` in `SendMessageResponse`, and they
+are the evidence two of the four evaluators are built on.
+
+The task's output is what the evaluators read, so put all of it there: the answer, the
+retrieval decision, the citations, and the trace id.
+
+`experiment_metadata` — and the suite asserts four of these:
+
+```
+image_tag, git_sha, chat_model, chat_model_id, embedding_model, retrieval_router,
+fixture_hash, questions_hash, judge, judge_model, judge_prompt_version
+```
+
+`judge` is `heuristic` or `bedrock`. Everything from §5.1 is copied through unchanged.
+
+Your own tracer provider exports to `EVAL_PHOENIX_PROJECT_NAME`. **Do not try to make the
+backend export to your project** — a service's project is its own configuration, and a client
+that could choose one would be a way to write into anybody's store. One example draws one
+trace whose halves live in two projects; the trace id is the join.
+
+### 5.6 The four evaluators
+
+Names are **exact**. The control repo's suite queries Phoenix by these strings:
+
+`routing_accuracy` · `retrieval_recall` · `groundedness` · `answer_correctness`
+
+| Name | Kind | Score | Applies to |
+| --- | --- | --- | --- |
+| `routing_accuracy` | CODE | 1.0 when `retrieval_consulted` equals `should_retrieve`, else 0.0 | every example |
+| `retrieval_recall` | CODE | \|cited ∩ expected\| / \|expected\| over `citations[].document_id` vs the resolved `expected_doc_ids` | examples with a non-empty `expected_doc_ids` |
+| `groundedness` | LLM | is the answer supported by the cited documents | examples with a non-empty `citations` |
+| `answer_correctness` | LLM | does the answer match `reference_answer` | every example |
+
+Three things to get right:
+
+- **`retrieval_consulted` may be ABSENT.** The contract says absence means "not applicable",
+  not false. On a turn produced by a backend that answered from a version before knowledge
+  bases existed there is no field. Treat absent as **no score**, not as a wrong answer.
+- **An evaluator that does not apply records NO score for that example** — not a zero.
+  Scoring a `should_retrieve: false` question as ungrounded would make the aggregate a
+  measurement of the question set rather than of the backend. Phoenix's evaluation body takes
+  either a result or an error; a not-applicable example simply gets no evaluation... **except**
+  that the control repo asserts through `incomplete-evaluations` that no run is *missing* any
+  of the four. So record a result with `score: null` and an `explanation` saying it did not
+  apply. That is present-but-unscored, which is what the aggregate needs and what that
+  endpoint needs.
+- **Groundedness reads the WHOLE cited document**, fetched with
+  `GET /v1/documents/{id}/content` — not `citations[].snippet`. The contract says the snippet
+  is "truncated for display", so judging against it invents hallucinations that did not
+  happen. The claim you are making is "supported by the cited documents", and that is the one
+  the evidence supports.
+
+### 5.7 The two judges
+
+`EVAL_JUDGE` selects, one branch, no `APP_ENV` check — the same seam as the backend's
+`CHAT_MODEL` and `RETRIEVAL_ROUTER`.
+
+- **`heuristic`** — no credentials, no network, deterministic. Something honest and simple:
+  content-word overlap of the answer against the reference for correctness, and of the answer
+  against the grounding text for groundedness, with stop words removed. It exists so the
+  whole pipeline — the experiment, four score columns, the thresholds, the exit code — runs
+  in the control repo's loop and in CI on a machine with no AWS access. **It proves the
+  mechanism and never the quality**, and the docstring should say so in those words, because
+  the next reader will otherwise take its number seriously.
+- **`bedrock`** — a real LLM judge. Ask for a 0–1 score and a one-line explanation, parse it
+  strictly, and record an evaluation *error* rather than a zero when the response cannot be
+  parsed. A judge that silently scores 0 on a malformed reply turns an outage into a
+  regression.
+
+Bump `EVAL_JUDGE_PROMPT_VERSION` by hand when a judge prompt changes, and say in
+`evalset/README.md` that this is a thing a person has to do.
+
+### 5.8 Aggregate, and exit
+
+Mean per evaluator over the examples it applied to. Compare each against its threshold when
+one is configured. Print a readable summary — per-evaluator mean, the threshold, pass or
+fail, the example count, and the experiment's Phoenix URL — because that summary is the only
+evidence a failing job hands back.
+
+## 6. Exit codes
+
+Load-bearing, and the same convention the control repo uses. `docs/adr/0003` there is the
+reasoning; `CLAUDE.md` here already states them.
+
+| Code | Means |
+| --- | --- |
+| **0** | every configured threshold met |
+| **1** | the thing under test failed: a threshold breached, **or any example errored** |
+| **2** | this process refused to judge: a required variable missing, the backend or Phoenix unreachable, the fixture unreadable, the seed invariant broken, or **zero examples ran** |
+
+Two of those are the whole point and are easy to get wrong:
+
+- **Any errored example is exit 1.** `run_experiment` records a per-example error and carries
+  on, so a completely broken backend otherwise yields ten errors, zero applicable examples,
+  and a green aggregate. That is the vacuous pass `docs/adr/0003` exists to forbid.
+- **Zero examples ran is exit 2, not 0.** A pass over nothing is a refusal, not a pass.
+
+## 7. Contract entries this depends on
+
+- `contracts/openapi.yaml` → `POST /v1/auth/login`, `POST /v1/auth/register`,
+  `POST /v1/auth/logout`
+- `contracts/openapi.yaml` → `GET /v1/version` (**new in this change**) and
+  `components.schemas.VersionResponse`
+- `contracts/openapi.yaml` → `POST /v1/documents`, `GET /v1/documents`,
+  `GET /v1/documents/{document_id}/content`, `DELETE /v1/documents/{document_id}`
+- `contracts/openapi.yaml` → `POST /v1/threads`, `POST /v1/threads/{thread_id}/messages`
+- `contracts/openapi.yaml` → `components.schemas.Message` — specifically
+  `retrieval_consulted` and `citations`, and `components.schemas.Citation.document_id`
+- `contracts/README.md` → § "Trace correlation" (the `X-Trace-Id` header, and that a
+  consumer must tolerate its absence), § "Documents, the knowledge base, and what a citation
+  promises", § "What `GET /v1/version` promises"
+
+The contracts are FROZEN. If this slice appears to require a contract change, STOP and report
+it rather than working around it — `blocked-by-contract`, with the exact entry.
+
+**`X-Trace-Id` may be absent** and the contract says a consumer must tolerate that. Do not
+require it: record it when present, and let the run continue without it. An eval that crashed
+because tracing was off would be unusable in the one environment where tracing is off.
+
+## 8. Out of scope for this slice
+
+- Any datastore client — no `opensearchpy`, no `boto3` for S3, no postgres driver. Your Stop
+  hook refuses the import. `boto3`/`langchain-aws` for **Bedrock** is fine: that is the judge,
+  not the backend's storage.
+- Comparing this run against a previous one. The eval scores one build; "is this worse than
+  last week" is a question about a series, and Phoenix already answers it for a human.
+- Deploying anything. No k8s manifests, no Helm chart. `infra/` can deploy nothing today.
+  Say what an environment must supply — it is the table in §3 — in `docs/`, and stop there.
+- Latency, cost or token evaluators. Additive later against the same experiment.
+
+## 9. Verification
+
+- [ ] `make test`, `make typecheck`, `make lint`, `make contract` all pass
+- [ ] tests for both judges over recorded inputs, with the `bedrock` one behind the
+      `provider` marker so the default run and the gate never call a real model
+- [ ] a test that a missing required variable is **exit 2** and names the variable
+- [ ] a test that an errored example is **exit 1** even when every score is above threshold
+- [ ] a test that **zero examples is exit 2**
+- [ ] a test that a threshold of `1.01` is accepted and breached rather than refused
+- [ ] a test that a not-applicable evaluator records a null score and not a zero, and that
+      the aggregate skips it
+- [ ] a test that seeding ignores an unmarked document and never deletes one
+- [ ] a test that a second seed over an unchanged corpus uploads nothing
+- [ ] `evalset/README.md` explains how to add a document and a question, and what makes a
+      good one
+- [ ] `docs/architecture.md` is current — the run flow, the four evaluators, the exit codes
+- [ ] the repo's own gates pass (`.claude/hooks/gate.sh`)
+
+## 10. Smoke — what this slice is actually judged on
+
+The control repo brings every repo up as one stack, **runs your container twice through
+`change.yaml`'s `jobs:`**, and then runs `smoke.yaml` against one origin. Read both files —
+they are on your `--add-dir`.
+
+**The two jobs are assertions about your exit code**, and they are the two criteria nothing
+else can reach:
+
+- [ ] `eval-run-meets-its-thresholds` — one run, `expect_exit: 0`, with the thresholds in
+      `stack/dev.env`
+- [ ] `a-breached-threshold-exits-non-zero` — the same run with
+      `EVAL_THRESHOLD_ROUTING_ACCURACY=1.01`, `expect_exit: 1`
+
+An exit **2** where 0 was expected is reported separately, as your process refusing to judge
+rather than as a breach. That distinction is deliberate and it is useful to you: it means a
+missing precondition is never diagnosed as a bad score.
+
+The smoke steps whose `owner:` is `chatbot-eval` are yours:
+
+- [ ] `the-question-set-is-a-phoenix-dataset` · `two-runs-produced-one-dataset`
+- [ ] `the-run-produced-an-experiment-in-its-own-project`
+- [ ] `the-experiment-records-the-build-it-evaluated` — the tag equals the one the backend
+      reported, captured from ITS response
+- [ ] `the-experiment-records-the-fixture-it-used` — a 64-hex `fixture_hash`
+- [ ] `the-experiment-records-what-judged-it`
+- [ ] `every-example-ran-without-error-and-has-a-trace`
+- [ ] `all-four-evaluators-scored-every-example` — through Phoenix's
+      `incomplete-evaluations`, so an empty answer is the pass
+- [ ] `the-backend-half-of-the-eval-trace-exists` ·
+      `the-backend-span-is-nested-under-the-eval-task` — trace context propagated
+- [ ] `the-eval-account-signs-in` · `the-eval-account-holds-the-marked-fixture` ·
+      `nothing-unmarked-is-in-the-eval-account` · `logout-the-eval-account`
+
+These run against your code through a reverse proxy, not against your test doubles, and a
+failure comes back to this repo with the request, the response, your container log **and the
+tail of your job output** attached. The assertions belong to the control repo: fix the cause,
+never the assertion.
+
+## 11. Notes
+
+- `CHAT_MODEL=echo` is the default in the joined stack, so the reply is the question echoed
+  back. Routing accuracy and retrieval recall are still real — the router is lexical, the
+  embedder is a local ONNX model, and the ingest summariser is deterministic with no model
+  configured. Groundedness and correctness are near zero and their thresholds are `0.0` in
+  `stack/dev.env` for exactly that reason. Do not "fix" that by softening what those two
+  evaluators measure; the thresholds are where the decision belongs.
+- Retrieval is capped at `retrieval_top_k: 4` and floored at `retrieval_score_floor: 0.15`
+  in the backend, and the contract promises **at most one citation per document** per
+  message. So `expected_doc_ids` longer than four can never reach recall 1.0. Keep them
+  short, and say so in `evalset/README.md`.
+- A first cold run pays for the embedding model and the OpenSearch index. `up --wait` absorbs
+  most of it before your job starts, but the first upload is slower than the rest; the job's
+  budget is 900s.
+- The `.env.example` you ship is read by a person deciding how to run a real judge. Name the
+  AWS variables and say that they reach the container through the Docker daemon and never
+  through a control-repo process — that is `docs/adr/0006` in the control repo, and it is why
+  no credential of yours is ever allowlisted there.
