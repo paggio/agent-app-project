@@ -7,8 +7,8 @@ loop again against them.
 
 `<change>` is the directory under `changes/`. Everything after the colon is the instruction:
 new requirements, dropped ones, a screenshot to match. It is a change of mind, not a bug
-report — for "the criterion was right and the build is wrong", the repair loop already
-covers it and `/ship <change>` resumes.
+report — for "the criteria were right and the result is not", the lane is `/ship-correct`,
+which turns the objection into a failing assertion instead of rewriting the brief.
 
 ## Refuse early, mechanically
 
@@ -16,7 +16,10 @@ Both checks before anything else. `./scripts/prs.sh --list` shows what is open; 
 `runs/<ts>/prs.json` shows what was opened for it.
 
 - **No pull request for a slice yet** — nothing to amend. `/ship <change>` resumes at the
-  phase it reached.
+  phase it reached. This bar is higher than `/ship-correct`'s on purpose: that lane needs
+  only a run that asserted something, because a `failed` run opens no pull request and is
+  the commonest thing to arrive there with. Here there is no built thing to amend *toward*
+  — the brief is still the only description of it, and editing it is just planning.
 - **A pull request already merged** — a URL in `prs.json` that `--list` no longer shows.
   Then this is a NEW change, not an amendment: those criteria describe what is running, and
   rewriting them makes the record lie about what was decided. `docs/adr/0010`.
@@ -45,8 +48,11 @@ Each is the input to the next. Never start with code, never with a product repo.
    the old text is reached. A later section contradicting an earlier "out of scope" is how
    an agent gets to choose which one it believes. Prune `slices:` in `change.yaml` if a repo
    has dropped out.
-4. **`STATUS.md`** — what changed and why. It is the record that this change had a second
-   version, and the next reader cannot reconstruct it from a diff.
+4. **`STATUS.md`** — a section headed exactly `## Amended, <YYYY-MM-DD> — /ship-iterate`,
+   saying what changed and why. It is the record that this change had a second version,
+   and the next reader cannot reconstruct it from a diff. `/ship-correct` writes
+   `## Corrected, …` in the same place; the two spellings are what distinguish an
+   amendment from a repair after the fact.
 
 Keep a friction log from here, as `/ship` does. Phase 5 consumes it.
 

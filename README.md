@@ -18,7 +18,7 @@ git clone --recurse-submodules git@github.com:Paggio/agent-app-project.git
 git submodule update --init --recursive
 ```
 
-## Three ways to work, and only two of them are here
+## Where the work happens
 
 **One repo.** Around 80% of the work, and it costs nothing: no orchestration, no fan-out,
 no contract pass. That repo's CI fails if the work turns out to touch contract surface,
@@ -45,8 +45,22 @@ deployed together with the suite passing, not three PRs existing. See `docs/adr/
 
 Nothing is merged for you. Merging is a human decision, in dependency order.
 
-**Changed your mind before it merged.** The pull requests are open, you have looked at the
-thing, and the requirement itself is what you now want different.
+**Not what you asked for.** Either the loop never went green, or it did, the pull requests
+are open, and you have now looked at the thing. Same objection: something you wanted is not
+true of what was built.
+
+```bash
+> /ship-correct 0004-rag-knowledge-base: citations repeat when two chunks come from one document
+```
+
+You say what is wrong; the lane does the triage. It settles whether the criterion was
+missing or too weak to fail, writes the step that fails against what is already built, and
+routes it to the repo `verify.json` names answerable — then runs the loop against the
+branches that exist. **The objection has to become an assertion**, because a dislike that
+never becomes a criterion is one the next change silently re-breaks. See `docs/adr/0012`.
+
+**Changed your mind before it merged.** Same window, but the requirement itself is what you
+now want different.
 
 ```bash
 > /ship-iterate 0004-rag-knowledge-base: also accept PDFs, and drop the summary column
@@ -69,14 +83,14 @@ Bumps the submodules to their merged `main`, pins the triple in `repos.lock`, re
 promotes the assertions worth keeping forever into `smoke/baseline.yaml`. This is also the
 lane a single-repo deploy needs on its own — it is the only check that can fail on the seam.
 
-**Every lane ends by grading itself.** The last phase of `/ship`, `/ship-iterate` and `/realign`
-dispatches the `harness-retro` agent: a separate session that audits the state the lane left
-behind — submodule pointers, the contract against what is served, the assertions and their
-count, whether anything actually reached a remote environment — and then grades the harness
-itself. Where the instructions misled, where a gate protected nothing, where the effort was
-out of proportion to the risk. If something clears its bar it opens one pull request here,
-on a `harness/` branch, for a human to merge. If nothing does, it says so and opens nothing.
-See `docs/adr/0009`.
+**Every lane ends by grading itself.** The last phase of `/ship`, `/ship-correct`,
+`/ship-iterate` and `/realign` dispatches the `harness-retro` agent: a separate session that
+audits the state the lane left behind — submodule pointers, the contract against what is
+served, the assertions and their count, whether anything actually reached a remote
+environment — and then grades the harness itself. Where the instructions misled, where a
+gate protected nothing, where the effort was out of proportion to the risk. If something
+clears its bar it opens one pull request here, on a `harness/` branch, for a human to merge.
+If nothing does, it says so and opens nothing. See `docs/adr/0009`.
 
 ## Where things live
 

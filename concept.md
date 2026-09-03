@@ -106,24 +106,33 @@ a failure signal rather than from the presence of evidence. `docs/adr/0003`.
 
 ---
 
-## 4. Two commands
+## 4. One lane per state, and the state is a fact
 
 | The work | Lane |
 | --- | --- |
 | One repo, no interface change | none — `cd <repo> && claude` |
 | Two or more repos, or any change to `contracts/` | `/ship` |
+| The result is not what you asked for | `/ship-correct` |
+| You want a different requirement than the one you asked for | `/ship-iterate` |
 | The product PRs are merged and this repo is behind | `/realign` |
 
 `/ship` is plan → freeze → gate → dispatch-and-repair → pull requests, in one invocation.
-`/realign` is bump → re-check the contract against what is served → re-run the baseline →
-pin → promote.
+`/ship-correct` turns an objection into a failing assertion and routes it to the repo
+answerable. `/ship-iterate` amends the brief, the criteria and the slices, then re-runs the
+loop. `/realign` is bump → re-check the contract against what is served → re-run the
+baseline → pin → promote.
 
-**Why one command rather than three.** The invariant that matters is that the freeze commit
-precedes the dispatch and lands alone, and that is machine-enforced. Keeping plan, freeze and
-implementation in separate sessions was a proxy for the same thing, and the proxy cost a
-handoff per change while buying nothing the gate does not. It also produced four competing
-skills describing one activity, which is how the documentation drifted in the first place.
-`docs/adr/0005`.
+**Which one is never a judgement call.** Every boundary between them is a fact something can
+read: whether a pull request exists, whether one has merged, whether the criterion you want
+is already in `smoke.yaml`. Each lane refuses in the states that are not its own and names
+the one that is. `docs/adr/0010`, `docs/adr/0012`.
+
+**Why the phases inside a lane are not lanes of their own.** The invariant that matters is
+that the freeze commit precedes the dispatch and lands alone, and that is machine-enforced.
+Keeping plan, freeze and implementation in separate sessions was a proxy for the same thing,
+and the proxy cost a handoff per change while buying nothing the gate does not. It also
+produced four competing skills describing one activity, which is how the documentation
+drifted in the first place. `docs/adr/0005`.
 
 **Why the control repo dispatches processes rather than spawning subagents.** Each
 dispatched session starts with its working directory inside the real product repo, so it
@@ -137,9 +146,9 @@ The suite decides.
 
 ---
 
-## 5. Two worked examples
+## 5. The lanes, worked
 
-The lane table above is the decision. These are the two lanes actually run, end to end.
+The table above is the decision. This is what each lane is actually like, end to end.
 
 ### 5.1 In one module — the common case, and it costs nothing
 
@@ -232,91 +241,57 @@ is backward compatible on its own goes first. Nothing here merges for you. After
 which promotes the assertions worth keeping forever out of the change's `smoke.yaml` and
 into `smoke/baseline.yaml`, so the next change cannot silently break this one.
 
-### 5.3 When it does not go cleanly
+### 5.3 It is not what you asked for
 
-Three outcomes you will actually meet, and what each means:
+Two versions of this, and they turn out to be one problem:
 
-- **`contract-gap`** — a slice reported it cannot be built against the frozen contract, and
-  named the gap. Do not patch around it: go back to phase 2, re-freeze, re-run. This is the
-  mechanism working, not failing.
-- **`failed`** — read `runs/<ts>/attempt-*/failure-*.md`; that is exactly what the agents
-  were given. Then decide the question the harness cannot: is the implementation wrong, or
-  is the assertion wrong? An assertion is fixed **here**, on purpose, never in a product
-  repo.
-- **`unattributable`** — check `verify.json`'s `fault`. `harness` means it is this repo's
-  bug and there is nothing for a product-repo agent to do.
+- **the loop never went green** — `failed`, `contract-gap`, `unattributable`. `/ship`
+  reports the outcome with the table that says what each one means, so it is not restated
+  here.
+- **the loop went green, the pull requests are open, and you have now actually looked at
+  the thing.** The most common state of all, and the one with the least written about it.
 
-The stack is left running after a verify, so the fast loop is `make ps`,
-`make logs SVC=backend` and `./scripts/stack.sh rebuild backend` — one service, not a full
-cycle.
-
-### 5.4 It went green and you still do not like it
-
-The most common state, and the one with the least written about it. The suite passed, the
-pull requests are open, nothing is merged — and you have now actually looked at the thing
-and something is wrong. **The lane is not over and you do not start a new change.** `/ship`
-takes a change directory as well as a sentence, and resumes at the phase that change has
-reached:
+The second is the first arriving later: something you wanted is not true of what was built,
+and this time **no assertion was watching**. So one lane covers both, and **the lane is not
+over — you do not start a new change**:
 
 ```bash
-> /ship 0004-rag-knowledge-base
+> /ship-correct 0004-rag-knowledge-base: citations repeat when two chunks come from one document
 ```
 
-What it costs depends entirely on which of three things you dislike, and picking wrong is
-what turns a small objection into an afternoon.
+You say what is wrong. The lane decides the rest — whether the criterion was missing or
+present and too weak to fail, and which repo is answerable — because those are answers
+already sitting in `smoke.yaml` and in `verify.json`'s `owners_failing`, not preferences
+you should be asked about. What it costs then follows from the answer rather than from
+guessing: one repo answerable is one dispatched session, and only a wrong *interface* costs
+a re-freeze and rebuilds every slice.
 
-**a. The behaviour is wrong and no assertion caught it.** Then the missing thing is a
-criterion, and it is missing *here*. Write the step in `changes/<change>/smoke.yaml` first
-and watch it fail against what is already built:
+**The objection has to become an assertion, and that assertion has to fail before anything
+is rebuilt.** A dislike that never becomes a criterion is one the next change silently
+re-breaks, and the criteria are supposed to outlive the conversation that produced them.
+`make verify CHANGE=<change>` is what makes that cheap: it asserts what is checked out and
+dispatches nothing.
 
-```bash
-make verify CHANGE=0004-rag-knowledge-base    # asserts what is checked out; dispatches nothing
-```
+Three things bite.
 
-Do this before touching any implementation. A dislike that never becomes an assertion is
-one the next change re-breaks silently, and the whole point of the suite is that the
-criteria outlive the conversation that produced them. `make verify` is strict about the
-branch: it refuses unless each slice repo is on `feat/<change>`, because asserting against
-code this change did not write is a pass that means nothing.
-
-**b. The behaviour is wrong, in one repo, and the interface does not move.** The cheapest
-path by a wide margin, and the submodule is already on the right branch:
-
-```bash
-cd chatbot-backend      # already on feat/0004-…; do NOT switch to main
-claude
-```
-
-That repo's own gates and Stop hook apply, and pushing updates the open pull request in
-place. Then come back and re-assert with `make verify` above. **Do not reach for the full
-loop for this.** `./scripts/iterate.sh` re-dispatches *every* slice on its first attempt —
-there is no `--only` — so a one-line frontend fix buys you a fresh backend session too.
-
-**c. The interface itself is wrong.** Then it is phase 2 again, and the freeze has to move
-with it: edit `contracts/`, commit it **alone**, put that commit's SHA in `change.yaml` as
-`freeze_sha`, and re-run the whole loop so both slices are rebuilt against the new tree.
-
-```bash
-./scripts/iterate.sh 0004-rag-knowledge-base
-```
-
-This is the expensive one and it is supposed to be. A contract change costs two consumer
-pull requests, which is the question to ask before making it.
-
-**Three things that bite.**
-
-- `make verify` and `--verify-only` assert what is **checked out**, uncommitted work
-  included. That is what makes them the fast loop, and it is also why a green verify is not
-  evidence about what a reviewer will see unless the submodule trees are clean.
+- `make verify` asserts what is **checked out**, uncommitted work included. That is what
+  makes it the fast loop, and it is also why a green verify is not evidence about what a
+  reviewer will see unless the submodule trees are clean. It refuses unless each slice repo
+  is on `feat/<change>`, because asserting against code this change did not write is a pass
+  that means nothing.
 - **Do not merge in order to fix.** Merging ends this lane; `/realign` is the after-merge
-  lane and it will not reopen it. Iterate while the pull requests are still open.
-- If a smoke assertion is what you disagree with, change it **here, on purpose** — never in
+  lane and it will not reopen it. Correct while the pull requests are still open.
+- If a smoke assertion is what you disagree with, it changes **here, on purpose** — never in
   a product repo, and never by weakening it to match what was built. That is the one edit
   this whole structure exists to prevent.
 
-### 5.5 You changed your mind about the requirement
+The stack is left running after a verify, so underneath all of it the loop is `make ps`,
+`make logs SVC=backend` and `./scripts/stack.sh rebuild backend` — one service, not a full
+cycle.
 
-Different from 5.4, and the difference decides the lane: there the criterion was right and
+### 5.4 You changed your mind about the requirement
+
+Different from 5.3, and the difference decides the lane: there the criterion was right and
 the build was wrong. Here the build may be fine and **the criterion is what you no longer
 want.**
 
@@ -329,9 +304,9 @@ the input to the next and starting at the code produces a change whose record no
 matches it — re-freezes if the interface moved, re-gates, and runs the loop against the
 branches that already exist, so the open pull requests update rather than multiply.
 
-**Merge is the boundary.** It refuses once anything has merged, because at that point the
-criteria describe what is running and rewriting them destroys the record of what was decided
-and when. Then it is a new change. `docs/adr/0010`.
+**Merge is the boundary.** Both this lane and 5.3 refuse once anything has merged, because
+at that point the criteria describe what is running and rewriting them destroys the record
+of what was decided and when. Then it is a new change. `docs/adr/0010`, `docs/adr/0012`.
 
 Two things worth knowing before you invoke it:
 

@@ -1,9 +1,10 @@
 # Running and inspecting the WHOLE system by hand. Nothing here reimplements the scripts;
 # it is a memorable surface over them.
 #
-# This is NOT the way work gets done. Cross-repo work is `/ship`, and coming back into line
-# after a merge is `/realign`. Everything below is for looking at the running system, and
-# for the gates those two commands call.
+# This is NOT the way work gets done. Cross-repo work is `/ship`; correcting or amending it
+# before a merge is `/ship-correct` and `/ship-iterate`; coming back into line after a
+# merge is `/realign`. Everything below is for looking at the running system, and for the
+# gates those lanes call.
 #
 # The product repos each have their own `make up`, which brings up THAT repo in isolation.
 # This one brings them up together, on one network, behind one origin — the only
@@ -26,8 +27,8 @@ REPOS := chatbot-backend frontend infra
 help: ## Show this list
 	@echo "The full local stack — backend, datastores, frontend, proxy — on one origin."
 	@echo
-	@echo "  Cross-repo work is /ship. After a merge it is /realign. These are the"
-	@echo "  hand tools underneath them."
+	@echo "  Cross-repo work is /ship, then /ship-correct or /ship-iterate before a"
+	@echo "  merge, then /realign after one. These are the hand tools underneath them."
 	@echo
 	@grep -hE '^[a-zA-Z0-9_-]+:.*?## ' $(MAKEFILE_LIST) \
 		| awk -F':.*?## ' '{printf "  \033[1m%-12s\033[0m %s\n", $$1, $$2}'

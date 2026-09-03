@@ -88,9 +88,9 @@ docs/adr/           decisions and their accepted costs
 docs/infra-interface.md   what this repo requires of infra/
 docs/init/          this playbook
 .github/workflows/  check-docs.py and manifest.py --validate over every change
-.claude/commands/   ship.md and realign.md — one per thing this repo does, and the
+.claude/commands/   one per lane — ship, ship-correct, ship-iterate, realign — and the
                     whole agent-facing surface. No skills: see docs/adr/0005.
-.claude/agents/     harness-retro.md — the retrospective both lanes end with. It proposes
+.claude/agents/     harness-retro.md — the retrospective every lane ends with. It proposes
                     harness fixes as a pull request; it never applies them. docs/adr/0009.
 retros/             what each retrospective found, so the next one has a memory
 .claude/hooks/no-subrepo-edits.sh   PreToolUse guard on Bash, probed by test-hooks.py

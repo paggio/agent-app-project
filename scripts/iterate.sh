@@ -18,6 +18,15 @@
 #                       change deploys infra — see below)
 #     --no-repair       fan out and verify once, then stop and report
 #     --verify-only     skip dispatching entirely; just deploy and check what is on disk
+#     --only a,b        dispatch only these slices on the FIRST attempt. Repair passes
+#                       follow `owners_failing` wherever it leads, because by then the
+#                       evidence names the answerable repo and it outranks the caller's
+#                       guess. Every verify still asserts the whole suite. /ship-correct
+#                       uses it: a correction one repo is answerable for should not buy a
+#                       fresh session in the other two. With --no-repair, or a budget of
+#                       1 — which is the DEFAULT when this change deploys infra, below —
+#                       there is no repair pass, so a wrong --only is never corrected and
+#                       the run reports `failed` having dispatched the wrong repo.
 #     --keep-up         leave the stack running after the final attempt
 #     --e2e             also run Playwright on each verify
 #     --no-build        reuse existing images
@@ -41,9 +50,17 @@ ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 cd "$ROOT"
 
 CHANGE=""; MAX_ATTEMPTS=""; REPAIR=1; VERIFY_ONLY=0; KEEP_UP=0; E2E=0; NO_BUILD=""
-NO_INFRA=0; PLAN_ONLY=0; ALLOW_DESTROY=0
+NO_INFRA=0; PLAN_ONLY=0; ALLOW_DESTROY=0; ONLY=""
 while [ $# -gt 0 ]; do
   case "$1" in
+    --only)
+      # A flag with no value is the harness refusing. Bare "$2" under `set -u` exits 1,
+      # which docs/adr/0003 reserves for the thing under test having failed. An empty
+      # value is the same mistake with a worse ending: it falls through ${ONLY:-…} to
+      # every slice, and the report then does not say it was ever narrowed.
+      { [ $# -ge 2 ] && [ -n "${2:-}" ]; } || {
+        echo "iterate: --only needs a comma-separated list of slices" >&2; exit 2; }
+      ONLY="$(echo "$2" | tr ',' ' ')"; shift ;;
     --max-attempts) MAX_ATTEMPTS="$2"; shift ;;
     --no-repair) REPAIR=0 ;;
     --verify-only) VERIFY_ONLY=1 ;;
@@ -53,7 +70,7 @@ while [ $# -gt 0 ]; do
     --no-infra) NO_INFRA=1 ;;
     --plan-only) PLAN_ONLY=1 ;;
     --allow-destroy) ALLOW_DESTROY=1 ;;
-    -h|--help) sed -n '2,38p' "${BASH_SOURCE[0]}"; exit 0 ;;
+    -h|--help) sed -n '2,46p' "${BASH_SOURCE[0]}"; exit 0 ;;
     -*) echo "iterate: unknown option $1" >&2; exit 2 ;;
     *) CHANGE="$1" ;;
   esac
@@ -67,6 +84,37 @@ CHANGE_DIR="changes/$CHANGE"
 eval "$(./scripts/manifest.py "$CHANGE_DIR" --shell)"
 [ "${MANIFEST_OK:-0}" = "1" ] || {
   echo "iterate: change.yaml has problems (above) — fix them first" >&2; exit 2; }
+
+# --only is validated here, before a run directory or a lock exists: a name that is not a
+# slice is the harness refusing, not a result about the change, and dispatching nothing on
+# a typo would report `failed` for the change. Exit 2 — see docs/adr/0003.
+if [ -n "$ONLY" ]; then
+  if [ "$VERIFY_ONLY" = "1" ]; then
+    echo "iterate: --only and --verify-only contradict each other — --verify-only" >&2
+    echo "iterate: dispatches nothing at all. Pick one." >&2
+    exit 2
+  fi
+  KEPT=""
+  for r in $ONLY; do
+    case " $CHANGE_SLICES " in
+      # Deduplicated: `--only frontend,frontend` would otherwise dispatch two concurrent
+      # sessions into one repo on one branch.
+      *" $r "*) case " $KEPT " in *" $r "*) ;; *) KEPT="$KEPT $r" ;; esac ;;
+      *) echo "iterate: --only names $r, which is not a slice of $CHANGE." >&2
+         echo "iterate: slices are: $CHANGE_SLICES" >&2
+         exit 2 ;;
+    esac
+  done
+  ONLY="${KEPT# }"
+  # `--only ,` and `--only " "` pass the -n guard above, then word-split to zero words, so
+  # the loop never runs and KEPT is empty — and ${ONLY:-…} below would read that as "every
+  # slice" with nothing in the report saying it had been narrowed. The caller asked for a
+  # subset; an empty one is a refusal, not the whole set.
+  [ -n "$ONLY" ] || {
+    echo "iterate: --only matched no slices — it was given separators or blanks only" >&2
+    echo "iterate: slices are: $CHANGE_SLICES" >&2
+    exit 2; }
+fi
 
 # A repair attempt against a real environment costs an apply, so the budget is 1 unless
 # the human says otherwise.
@@ -108,7 +156,7 @@ banner() {
   echo "════════════════════════════════════════════════════════════════"
 }
 
-TARGETS="$CHANGE_SLICES"
+TARGETS="${ONLY:-$CHANGE_SLICES}"
 ATTEMPT=1
 # One run per change per working tree. docs/adr/0004 gave infra an atomic lock because two
 # runs cannot share one environment; a LOCAL run shares just as much — the change dir, the
@@ -142,6 +190,11 @@ write_report() {
     echo "- outcome: **$OUTCOME**"
     echo "- attempts used: $((ATTEMPT > MAX_ATTEMPTS ? MAX_ATTEMPTS : ATTEMPT)) of $MAX_ATTEMPTS"
     echo "- slices: $CHANGE_SLICES"
+    # Which slices were dispatched is not cosmetic: a reader who does not know the first
+    # attempt was narrowed reads a green suite as evidence about all three.
+    if [ -n "$ONLY" ]; then
+      echo "- first dispatch restricted to (\`--only\`): $ONLY"
+    fi
     echo "- infra deploy: $([ "$REMOTE_RUN" = "1" ] && echo "yes ($CHANGE_DEPLOY_ENVIRONMENT)" || echo no)"
     # The assertion count, so a report can never say `verified` above an empty one.
     LAST_VERIFY="$(ls -1d "$RUN_ROOT"/attempt-*/verify.json 2>/dev/null | tail -1 || true)"
@@ -214,10 +267,10 @@ ASSERTPY
 update_status() {
   STATUS_FILE="$CHANGE_DIR/STATUS.md"
   [ -f "$STATUS_FILE" ] || return 0
-  python3 - "$STATUS_FILE" "$OUTCOME" "$RUN_ROOT" "$TS" "$REPORT" "$ATTEMPT" <<'STATUSPY'
+  python3 - "$STATUS_FILE" "$OUTCOME" "$RUN_ROOT" "$TS" "$REPORT" "$ATTEMPT" "$ONLY" <<'STATUSPY'
 import json, os, re, sys
 
-path, outcome, run_root, ts, report, attempt = sys.argv[1:7]
+path, outcome, run_root, ts, report, attempt, only = sys.argv[1:8]
 text = open(path).read()
 if "<!-- iterate:begin -->" not in text:
     raise SystemExit(0)
@@ -234,6 +287,11 @@ except Exception:
     pass
 
 lines = [f"- **{outcome}** \u2014 {ts}, {used} attempt(s)"]
+# The same argument as the report's: this file is the one place that knows the state of
+# every slice at once, so an outcome here reads as evidence about all of them. It is not,
+# if the first dispatch was narrowed.
+if only.strip():
+    lines.append(f"- first dispatch: {only.strip()} (`--only`)")
 if outcome not in ("verified", "verified-local"):
     if stage:
         lines.append(f"- failed at: `{stage}`")
