@@ -160,11 +160,12 @@ finish() {
   python3 - "$RUN_DIR/verify.json" "$STATUS" "$FAILED_STAGE" "$OWNERS" "$CHANGE" "$BASE" \
            "$FAULT" "$ASSERT_PASSED" "$ASSERT_FAILED" "$ASSERT_FROM_CHANGE" "$CHANGE_SUITE" \
            "$STAGE_LOG" "${CHANGE_DEPLOY_ENVIRONMENT:-}" "$REMOTE_SKIPPED" \
-           "$JOBS_RAN" "$JOBS_PASSED" "$JOBS_FAILED" <<'PY'
+           "$JOBS_RAN" "$JOBS_PASSED" "$JOBS_FAILED" "${CHANGE_JOBS_COUNT:-0}" <<'PY'
 import json, sys
 (out, status, stage, owners, change, base,
  fault, passed, failed, from_change, change_suite, stage_log,
- environment, remote_skipped, jobs_ran, jobs_passed, jobs_failed) = sys.argv[1:18]
+ environment, remote_skipped, jobs_ran, jobs_passed, jobs_failed,
+ jobs_declared) = sys.argv[1:19]
 json.dump({
     "change": change, "status": status, "failed_stage": stage or None,
     "owners_failing": [o for o in owners.split() if o], "base": base,
@@ -181,15 +182,17 @@ json.dump({
     # One-shot runs declared by this change. `ran` is what makes a green line readable:
     # a change that declared two jobs and ran none means something different from one
     # that declared none, and the totals above cannot tell them apart.
-    "jobs": {"ran": int(jobs_ran), "passed": int(jobs_passed),
-             "failed": int(jobs_failed)},
+    # `declared` beside `ran`, because the two disagreeing IS the defect this stage shipped
+    # with: a reader of "ran: 1, passed: 1" cannot tell it from a one-job change.
+    "jobs": {"declared": int(jobs_declared), "ran": int(jobs_ran),
+             "passed": int(jobs_passed), "failed": int(jobs_failed)},
 }, open(out, "w"), indent=2)
 PY
   echo
   if [ "$STATUS" = "pass" ]; then
     note "PASS — $CHANGE verified against $BASE"
     note "$ASSERT_PASSED assertion(s) passed, $ASSERT_FROM_CHANGE of them from $CHANGE_SUITE"
-    [ "$JOBS_RAN" != "0" ] && note "$JOBS_PASSED of $JOBS_RAN one-shot job(s) exited as declared"
+    [ "$JOBS_RAN" != "0" ] && note "$JOBS_PASSED of $JOBS_RAN one-shot job(s) exited as declared (of ${CHANGE_JOBS_COUNT:-0} declared)"
   else
     note "FAIL — $CHANGE failed at: $FAILED_STAGE"
     [ -n "$OWNERS" ] && note "answerable repo(s): $OWNERS"
@@ -407,6 +410,11 @@ fi
 if [ "$CHANGE_DEPLOY_LOCAL" = "1" ] && [ "${CHANGE_JOBS_COUNT:-0}" != "0" ]; then
   stage "jobs: $CHANGE_JOBS_COUNT one-shot run(s) in the joined stack"
   JOB_TAB="$(printf '\t')"
+  # Collected to a file before the loop rather than piped in from a process substitution.
+  # Belt to the `< /dev/null` brace below: the list is then somewhere the loop body cannot
+  # reach even if a future runner forgets to close its stdin.
+  ./scripts/manifest.py "$CHANGE_DIR" --jobs > "$RUN_DIR/jobs.tsv" || \
+    fail_stage "jobs: could not read the job list from change.yaml" "" harness
   while IFS="$JOB_TAB" read -r j_name j_service j_owner j_expect j_timeout j_env; do
     [ -n "$j_name" ] || continue
     j_log="$RUN_DIR/job-$j_name.log"
@@ -415,8 +423,15 @@ if [ "$CHANGE_DEPLOY_LOCAL" = "1" ] && [ "${CHANGE_JOBS_COUNT:-0}" != "0" ]; the
 
     # $j_env is deliberately unquoted — it is a space-separated list of KEY=VALUE words,
     # and manifest.py refuses a value containing whitespace so the split is safe.
+    #
+    # `< /dev/null` IS NOT TIDINESS. `docker compose run -T` still attaches stdin, and this
+    # loop reads its job list from stdin — so without it the first job's container consumed
+    # the second job's line, the loop ended after one iteration, and the stage reported
+    # "1 of 1 job(s) exited as declared" for a two-job change. A pass that silently skipped
+    # an assertion, and self-concealing: the counter and the loss had the same cause. The
+    # count check after the loop is what makes it impossible rather than merely fixed.
     set +e
-    ./scripts/stack.sh run "$j_service" $j_env > "$j_log" 2>&1 &
+    ./scripts/stack.sh run "$j_service" $j_env < /dev/null > "$j_log" 2>&1 &
     j_pid=$!
     # No timeout(1) on macOS, so a watchdog per job — the same shape fanout.sh uses and for
     # the same reason: one hung run must not hold the loop open forever. The marker is
@@ -453,9 +468,20 @@ if [ "$CHANGE_DEPLOY_LOCAL" = "1" ] && [ "${CHANGE_JOBS_COUNT:-0}" != "0" ]; the
                  "$j_owner" slice
     fi
     fail_stage "jobs: '$j_name' exited $j_rc, expected $j_expect" "$j_owner" slice
-  done < <(./scripts/manifest.py "$CHANGE_DIR" --jobs)
+  done < "$RUN_DIR/jobs.tsv"
+
+  # THE COUNTED-EVIDENCE GATE FOR JOBS. A stage that runs a subset of what the change
+  # declared and reports a pass is exactly what docs/adr/0003 forbids, and this stage did
+  # it on its first outing. `fault: harness`, because a job that never started is not a
+  # product repo's failure and must not be sent to one as a repair brief.
+  if [ "$JOBS_RAN" != "$CHANGE_JOBS_COUNT" ]; then
+    note "change.yaml declares $CHANGE_JOBS_COUNT job(s) and only $JOBS_RAN ran."
+    note "The missing one asserted nothing, and this stage would otherwise have reported"
+    note "a pass over the subset that did run."
+    fail_stage "jobs: $JOBS_RAN of $CHANGE_JOBS_COUNT declared job(s) ran" "" harness
+  fi
   record_stage jobs pass
-  note "$JOBS_PASSED of $JOBS_RAN job(s) exited as declared"
+  note "$JOBS_PASSED of $JOBS_RAN declared job(s) exited as declared"
 elif [ "$CHANGE_DEPLOY_LOCAL" = "1" ]; then
   record_stage jobs "skipped: change declares none"
 else
@@ -657,7 +683,7 @@ if [ "$ASSERT_FROM_CHANGE" -lt 1 ] && [ "$JOBS_PASSED" -lt 1 ]; then
   fail_stage "verdict: no assertion from the change's own suite or jobs ran" "" harness
 fi
 note "$ASSERT_PASSED assertion(s) evaluated, $ASSERT_FROM_CHANGE from $CHANGE_SUITE"
-[ "$JOBS_RAN" != "0" ] && note "$JOBS_PASSED of $JOBS_RAN one-shot job(s) exited as declared"
+[ "$JOBS_RAN" != "0" ] && note "$JOBS_PASSED of $JOBS_RAN one-shot job(s) exited as declared (of ${CHANGE_JOBS_COUNT:-0} declared)"
 
 # The terminal marker. STATUS starts at `incomplete` and only this line makes it a pass,
 # so a death anywhere above reports the stage it died in rather than a PASS.

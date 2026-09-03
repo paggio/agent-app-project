@@ -209,8 +209,11 @@ print(f"- assertions: {a.get('passed', 0)} passed, {a.get('failed', 0)} failed "
 # to be able to tell them apart — a change whose central criterion is "this process exits
 # non-zero on a breach" has all of its weight here and none of it in the suite.
 j = d.get("jobs") or {}
-if j.get("ran"):
-    print(f"- one-shot jobs: {j.get('passed', 0)} of {j.get('ran', 0)} exited as declared")
+if j.get("declared") or j.get("ran"):
+    # BOTH numbers, always. This line said "1 of 1" for a two-job change whose stage had
+    # silently run one of them, and "1 of 1" is unfalsifiable without the denominator.
+    print(f"- one-shot jobs: {j.get('passed', 0)} of {j.get('ran', 0)} ran exited as "
+          f"declared; {j.get('declared', '?')} declared in change.yaml")
 st = d.get("stages") or {}
 skipped = [f"{k} ({v})" for k, v in st.items() if str(v).startswith("skipped")]
 if skipped:
