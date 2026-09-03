@@ -35,6 +35,12 @@ pr: <url> | none
 - **Judgement:** <against the bar in §4>
 - **Disposition:** proposed | recorded | rejected — <why>
 
+## Recorded, not proposed
+- **R1 — <one-line defect>.** <evidence, and why it did not clear the bar>
+
+## Rejected
+- **<one line>** <why>
+
 ## Not verified
 <what could not be checked from here, and what it would take>
 ```
@@ -45,14 +51,20 @@ able to say which evidence was in front of it.
 
 ## What the next retrospective actually reads
 
-**The headings, not the bodies.** `retro-evidence.sh` § 7 emits a ledger — each file's
-frontmatter and every one of its finding headings — and that is what the next
-retrospective is given. It opens a whole file only to cite one specific finding.
+**The leads, not the bodies.** `retro-evidence.sh` § 7 emits a ledger — each file's
+frontmatter and every one of its finding leads — and that is what the next retrospective
+is given. It opens a whole file only to cite one specific finding.
 
-So: **write each finding heading so it stands alone.** `### F1 — the failure dump has
-covered six of nine services since 0004` is a heading the next lane can act on; `### F1 —
-a logging gap` is one it has to open the file to understand, which is the cost this
-directory is otherwise paying on every lane forever.
+A lead is a `###` heading, or the bolded opening of a top-level bullet: both forms above
+are read by `scripts/retro_findings.py`, which the ledger prints from and `check-docs.py`
+[retro-ledger] holds every file here to. A finding written any other way is invisible to
+the next lane — which is what happened to 24 recorded findings across three files before
+the gate existed.
+
+So: **write each lead so it stands alone.** `### F1 — the failure dump has covered six of
+nine services since 0004` is a lead the next lane can act on; `### F1 — a logging gap` is
+one it has to open the file to understand, which is the cost this directory is otherwise
+paying on every lane forever.
 
 The body below the heading is for the human reading the pull request. Nothing loads it by
 default, and nothing should: this is history, and one lane's worth of it is longer than

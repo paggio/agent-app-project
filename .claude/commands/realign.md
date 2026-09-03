@@ -26,6 +26,26 @@ authoritative. The same argument forbids `git add`ing a submodule path early, an
 So: confirm the PRs are merged before doing anything here. `./scripts/prs.sh --list` shows
 them.
 
+## 0 — Is there anything to realign?
+
+```
+make repos
+```
+
+If all three submodules already **match** `repos.lock` and no change was named, nothing
+product-side moved: this is what a merged harness pull request leaves behind, and by
+`docs/adr/0009` that is the most frequent merge this repo sees. Steps 1, 4 and 5 then have
+no input — there is nothing to bump, nothing to pin, no change directory to promote from.
+Say so and go to step 7. Do not create a branch, do not commit, do not open a pull
+request: an empty bump commit names the same triple the lock already names.
+
+Steps 2 and 3 are the seam check and they are not optional on that basis alone. Run them
+unless you can show a diff proving nothing the stack, the baseline or `contracts/` reads
+has moved — `git diff --stat <last realign>..HEAD -- contracts/ smoke/ stack/ repos.lock
+chatbot-backend frontend infra changes/` empty is that proof. Then their result is
+**`not verified`, with that diff quoted**, and never a pass. The last lane that asserted
+the seam is the last one that ran them; say which it was.
+
 And from here on, keep a running note of anything that does not go smoothly — step 7 consumes
 it, and by then you will have stopped noticing.
 

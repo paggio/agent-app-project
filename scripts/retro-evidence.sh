@@ -326,7 +326,7 @@ say ""
 say "## 7. What the harness has already been told"
 say ""
 say '```'
-say "previous retros — the LEDGER, not the retros. Frontmatter and finding headings only."
+say "previous retros — the LEDGER, not the retros. Frontmatter and finding leads only."
 say "The bodies are history: a lane's worth of them is over a thousand lines and none of it"
 say "is evidence about this run. Open one whole ONLY to cite a specific finding, which is"
 say "what the second-occurrence rule needs — and then just that one."
@@ -347,7 +347,7 @@ RETRO_LIST="$( { ls -1 retros/*.md 2>/dev/null | grep -v '/README\.md$' | sed 's
 } | awk -F'\t' '!seen[$1]++' )"
 # The program comes from the heredoc, so the list arrives in the environment: a pipe into
 # `python3 -` would be swallowed by the heredoc and the section would silently list nothing.
-RETRO_LIST="$RETRO_LIST" LEDGER_MAX=8 python3 - <<'LEDGERPY'
+RETRO_LIST="$RETRO_LIST" RETRO_ROOT="$ROOT" LEDGER_MAX=8 python3 - <<'LEDGERPY'
 """One line of identity and one line per finding, per retro.
 
 retros/ is the harness's memory and it grows by one 250-line file per lane. The agent that
@@ -359,7 +359,10 @@ under them is for the human reading the pull request.
 An unparseable retro is reported as unparseable, in the bundle. A silence here reads as
 "nothing was ever recorded", which is the one answer that switches the rule off.
 """
-import os, re, subprocess
+import os, re, subprocess, sys
+
+sys.path.insert(0, os.path.join(os.environ.get("RETRO_ROOT", "."), "scripts"))
+import retro_findings
 
 MAX = int(os.environ.get("LEDGER_MAX", "8"))
 rows = []
@@ -384,7 +387,6 @@ if omitted:
     print(f"  {omitted} older retro(s) not listed; {len(rows)} exist. Newest {MAX} follow.")
     print("")
 
-HEAD = re.compile(r"^#{2,3}\s+(.*)$")
 KEEP = ("lane", "change", "date", "verdict", "findings", "pr")
 
 for path, ref in rows[-MAX:]:
@@ -413,23 +415,17 @@ for path, ref in rows[-MAX:]:
     else:
         print("    (no parseable frontmatter — retros/README.md specifies it)")
 
-    section, n = "", 0
-    for fl in text.splitlines():
-        m = HEAD.match(fl)
-        if not m:
-            continue
-        title = m.group(1).strip()
-        if fl.startswith("## "):
-            section = title
-            continue
-        if section.lower().startswith(("state audit", "not verified")):
-            continue
+    # Both shapes retros/README.md allows, via the module check-docs.py also uses: a
+    # `###` heading under `## Findings`, and a `- **R2 — …**` lead under `## Recorded, not
+    # proposed`. Reading only headings showed 3 of this file's 18 findings, and the ones
+    # it dropped were exactly the recorded set the second-occurrence rule is written for.
+    found = retro_findings.leads(text)
+    for section, title in found:
         # Announced, like cap() does: a heading that stops mid-token reads as a malformed
         # retro rather than a long one.
         shown = title if len(title) <= 110 else title[:110] + " …"
         print(f"    [{section or '?'}] {shown}")
-        n += 1
-    if not n:
+    if not found:
         print("    (no finding headings — either a clean bill, or a shape README.md forbids)")
 LEDGERPY
 say ""

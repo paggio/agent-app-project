@@ -30,6 +30,11 @@ import sys
 
 import yaml
 
+# Same module the § 7 ledger prints from, so the gate and the printer cannot disagree
+# about what counts as a finding.
+sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
+import retro_findings  # noqa: E402
+
 ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 SUBMODULES = ("chatbot-backend", "frontend", "infra")
 
@@ -438,6 +443,39 @@ STATUS_HEADINGS = {
     "ship-correct": "## Corrected, <YYYY-MM-DD> — /ship-correct",
     "ship-iterate": "## Amended, <YYYY-MM-DD> — /ship-iterate",
 }
+
+
+# --- 19. every finding a retro recorded is visible in the ledger ----------------------
+# retros/README.md says § 7 emits "every one of its finding headings" and that the ledger IS
+# the second-occurrence mechanism. The printer matched markdown headings only, so the three
+# retros that wrote their recorded findings as `- **R2 — …**` bullets showed 3 of 18, 2 of
+# 12 and 3 of 12 — and the set it dropped was precisely the recorded one the rule operates
+# on. The 20260903 realign retro had to grep five bodies to answer "was this recorded
+# before", which is the cost the ledger was built to remove.
+#
+# Counted against the file's own frontmatter rather than against a shape: the two forms in
+# retros/ are both legible, and a schema fight would rewrite history to satisfy a gate.
+def check_retro_ledger() -> None:
+    for path in sorted(glob.glob(os.path.join(ROOT, "retros", "*.md"))):
+        if os.path.basename(path) == "README.md":
+            continue
+        text = open(path).read()
+        want = retro_findings.declared(text)
+        if want is None:
+            fail("retro-ledger",
+                 f"{rel(path)} declares no `findings: <n> proposed, <n> recorded, "
+                 f"<n> rejected` in its frontmatter, so nothing can tell whether the "
+                 f"ledger sees all of them. retros/README.md specifies it.")
+            continue
+        need = want.get("proposed", 0) + want.get("recorded", 0)
+        got = len(retro_findings.leads(text))
+        if got < need:
+            fail("retro-ledger",
+                 f"{rel(path)} declares {need} proposed+recorded finding(s) and "
+                 f"scripts/retro_findings.py can see {got}. The § 7 ledger is what the "
+                 f"next retrospective reads, so the difference is findings recorded here "
+                 f"and invisible to the second-occurrence rule. Lead each one with "
+                 f"`### F1 — …` or `- **R1 — …**`.")
 
 
 def check_status_headings() -> None:
@@ -884,7 +922,7 @@ def main() -> int:
               check_scripts_are_not_the_entry_point, check_env_layers,
               check_gate_messages, check_loop_calls, check_agent_dispatchers,
               check_stack_services, check_clean_slate, check_lane_coverage,
-              check_lane_vocabulary, check_status_headings,
+              check_lane_vocabulary, check_status_headings, check_retro_ledger,
               report_readme_divergence)
     for fn in checks:
         try:
