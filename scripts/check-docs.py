@@ -898,6 +898,102 @@ def check_clean_slate() -> None:
 
 
 
+# --- 17. every image carries a hand-bumped local version -----------------------------
+# docs/adr/0015. `BACKEND_IMAGE_TAG=dev` honoured the rule that a build identity is supplied
+# from outside the image, and was the same string for every build — so every experiment in
+# Phoenix recorded `image_tag: "dev"` in the one field meant to distinguish builds. The rule
+# held and the field was useless, which reads as working.
+#
+# Two checks. The shape always runs. The bump needs `origin/main` to compare against and
+# SKIPS when there is none — a fresh clone or a shallow CI checkout — because a gate that
+# cannot see the baseline must not invent one. That is a real weakening and is why
+# changes/0006's suite asserts the shape at the seam independently.
+IMAGE_TAG_SHAPE = re.compile(r"^local-\d+\.\d+\.\d+$")
+
+# Which repo's changes oblige which tag. A repo absent from this map is NOT gated, on
+# purpose: `frontend` ships an image but nothing reads a frontend build identity today, and
+# a gate over a value nobody consumes is the speculative check this file's own doctrine
+# rejects. `infra` ships no image. Adding one is a line here.
+IMAGE_TAG_OWNERS = {
+    "chatbot-backend": "BACKEND_IMAGE_TAG",
+    "chatbot-eval": "EVAL_IMAGE_TAG",
+}
+
+
+def _dev_env_values(text: str) -> dict[str, str]:
+    out: dict[str, str] = {}
+    for line in text.splitlines():
+        line = line.strip()
+        if not line or line.startswith("#") or "=" not in line:
+            continue
+        key, value = line.split("=", 1)
+        out[key.strip()] = value.strip()
+    return out
+
+
+def check_image_tags() -> None:
+    dev_env = os.path.join(ROOT, "stack", "dev.env")
+    try:
+        current = _dev_env_values(open(dev_env).read())
+    except OSError:
+        return  # check_suite_vars already reports a missing dev.env
+
+    declared = {k: v for k, v in current.items() if k.endswith("_IMAGE_TAG")}
+    for name, value in sorted(declared.items()):
+        if not IMAGE_TAG_SHAPE.match(value):
+            fail("image-tags",
+                 f"stack/dev.env: {name}={value!r} is not `local-<major>.<minor>.<patch>`. "
+                 f"A tag that carries no version cannot distinguish two builds, which is the "
+                 f"whole reason the field exists — `dev` satisfied every other check for a "
+                 f"month. See docs/adr/0015.")
+
+    for repo, name in sorted(IMAGE_TAG_OWNERS.items()):
+        if name not in declared:
+            fail("image-tags",
+                 f"IMAGE_TAG_OWNERS maps {repo} to {name} and stack/dev.env does not declare "
+                 f"it. Declare it, or drop the mapping — an unmapped repo is simply not "
+                 f"gated, and that is a decision rather than an omission.")
+
+    # The bump. Only for a change IN FLIGHT — one whose directory is not on origin/main.
+    # A merged change's tag is already history and must not be re-litigated.
+    # The ref is overridable so this half can be PROBED. It cannot fire against real
+    # origin/main until the variables exist there, and an unprobed gate is worse than none
+    # (docs/init/README.md). Defaults to origin/main; nothing in the harness sets it.
+    baseline_ref = os.environ.get("CHECK_DOCS_BASELINE_REF", "origin/main")
+    p = subprocess.run(("git", "show", f"{baseline_ref}:stack/dev.env"),
+                       capture_output=True, text=True, cwd=ROOT)
+    if p.returncode != 0:
+        return  # no origin/main here; the shape check above still ran
+    baseline = _dev_env_values(p.stdout)
+
+    for path in sorted(glob.glob(os.path.join(ROOT, "changes", "*", "change.yaml"))):
+        change_dir = os.path.basename(os.path.dirname(path))
+        if change_dir == "0000-example-change":
+            continue
+        on_main = subprocess.run(
+            ("git", "cat-file", "-e",
+             f"{baseline_ref}:changes/{change_dir}/change.yaml"),
+            capture_output=True, cwd=ROOT).returncode == 0
+        if on_main:
+            continue  # merged, or at least already on main: its tags are history
+        try:
+            doc = yaml.safe_load(open(path)) or {}
+        except yaml.YAMLError:
+            continue  # manifest.py --validate owns unparseable manifests
+        for repo in doc.get("slices") or []:
+            name = IMAGE_TAG_OWNERS.get(repo)
+            if not name:
+                continue
+            was, now = baseline.get(name), declared.get(name)
+            if was is not None and was == now:
+                fail("image-tags",
+                     f"changes/{change_dir} has a {repo} slice and stack/dev.env still has "
+                     f"{name}={now!r}, the same value as on {baseline_ref}. A change that "
+                     f"touches a product repo must bump its image tag, or every experiment "
+                     f"and every deployed environment records this build as the previous "
+                     f"one. See docs/adr/0015.")
+
+
 def main() -> int:
     ap = argparse.ArgumentParser()
     ap.add_argument("--warnings-are-errors", action="store_true")
@@ -910,6 +1006,7 @@ def main() -> int:
               check_gate_messages, check_loop_calls, check_agent_dispatchers,
               check_stack_services, check_clean_slate, check_lane_coverage,
               check_lane_vocabulary, check_status_headings,
+              check_image_tags,
               report_readme_divergence)
     for fn in checks:
         try:

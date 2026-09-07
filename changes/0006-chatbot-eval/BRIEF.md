@@ -21,6 +21,34 @@ client, no S3 client, no import of graph code. That is what makes the same run v
 the local stack and against a deployed environment, and it is enforced by a gate in that
 repo rather than by good intentions.
 
+## Amended, 2026-09-07 — `/ship-iterate`
+
+Nothing has merged, so this supersedes rather than adds. Four questions were asked of the
+first version; two were answered by measurement and needed no change, and two are real gaps.
+
+**Measured before changing anything**, against the stack the green run left up:
+
+| Asked | Found |
+| --- | --- |
+| does a re-run clean up the documents it sent? | **Yes.** 9 documents, no duplicate filenames, after four runs. The hash-compare seed works. |
+| …and the conversations? | **No.** **36 threads** in the eval account — 2 runs × 18 examples — and nothing has ever deleted one. `GET /v1/threads` is capped at 200 by contract, so around the eleventh run the list truncates and the account becomes a junk drawer. |
+| does anything report the exact model? | **`chat_model_id` already does**, and it is already in every experiment's metadata: `eu.anthropic.claude-haiku-4-5-20251001-v1:0`. What does NOT report it is the run's own printed summary, which names the JUDGE's model and never the model that produced the answers. |
+| should the eval image be versioned too? | It is not. `image_tag` was `dev` for the backend and the eval image had no tag at all in the metadata. |
+
+| Was | Is | Why |
+| --- | --- | --- |
+| threads accumulate forever | the eval **titles** each thread with a marker at creation and **purges its own marked threads at the start of every run** | a re-run must leave the account as it found it, and the document seed already sets that pattern. `CreateThreadRequest.title` is settable at create and `deleteThread` exists, so this needs no contract change |
+| `BACKEND_IMAGE_TAG=dev` | `local-0.0.1`, hand-bumped, and a gate fails a change that touches a product repo without bumping it | `dev` is the same string forever, so two experiments a month apart are indistinguishable in the one field that is supposed to identify the build |
+| the eval image was untagged | `EVAL_IMAGE_TAG`, in the experiment metadata | the evaluator code is as much a factor in a score as the fixture is. Two runs over the same corpus with different evaluators are not comparable, and nothing said so |
+| the summary named only the judge's model | it names the backend's `chat_model` and `chat_model_id` too | the summary is the only evidence a failing job hands back, and it did not say what produced the answers |
+| the metadata's `chat_model_id` was unasserted | a step asserts it equals what `/v1/version` reported | it was there by the slice's good judgement rather than by requirement, which is not the same thing |
+
+**No re-freeze. `c0ff827` stands.** Reasserted because "we changed our minds, therefore
+re-freeze" is the reflex: every one of these is implementable against the frozen tree.
+`CreateThreadRequest.title`, `PATCH`/`DELETE /v1/threads/{thread_id}` and `chat_model_id`
+are all already promised, and a second freeze with an identical `contracts/` tree would
+make the record say an interface moved when it did not.
+
 ## What we are NOT building, and it is the important half
 
 **This change asserts the MECHANISM, never the QUALITY.** Every criterion below is of the
@@ -56,9 +84,9 @@ The eval repo's Stop hook refuses a change to the set that does not touch its `R
 
 ## Acceptance criteria (these are the oracle)
 
-1–5 and 8–19 are `smoke.yaml` steps. **6 and 7 are `jobs:` in `change.yaml`** — a one-shot
-container whose exit code is the assertion, which is the harness capability this change
-needed and `docs/adr/0014` decides.
+1–5, 8–20 and 21–25 are `smoke.yaml` steps. **6 and 7 are `jobs:` in `change.yaml`** — a
+one-shot container whose exit code is the assertion, which is the harness capability this
+change needed and `docs/adr/0014` decides. **New in this amendment: 21–25.**
 
 **The version endpoint — the one contract change**
 
@@ -138,6 +166,33 @@ needed and `docs/adr/0014` decides.
       requires a null parent: these are different traces, and an ordinary request with no
       inbound `traceparent` is still rooted at the HTTP span.
 
+
+**A re-run leaves the account as it found it — new in this amendment**
+
+- [ ] 21. **Every thread in the eval account carries `${EVAL_THREAD_PREFIX}` in its title.**
+      The marker is what makes the purge safe to have: it is the only thing the eval will
+      ever delete, so an `EVAL_ACCOUNT_EMAIL` pointed at a real account loses no
+      conversation. Exactly the rail `${EVAL_DOCUMENT_PREFIX}` already is for documents.
+- [ ] 22. **Two runs leave one run's threads, not two.** After the two jobs, the canary
+      question's thread title appears **exactly once**. Anchored on one reserved question id
+      (`q-charter-quorum`) because a regex cannot count duplicates across a list — the same
+      reason `two-runs-produced-one-dataset` is written the way it is. The eval owns the
+      stronger invariant and refuses if the account holds a thread it did not create.
+
+**What identifies a comparable run — new in this amendment**
+
+- [ ] 23. **The backend's image tag is a version, not a word.** `image_tag` matches
+      `local-<major>.<minor>.<patch>`. `dev` was the same string forever, which made the one
+      field meant to identify the build unable to.
+- [ ] 24. **The experiment records the eval image's own version.** Its metadata carries
+      `eval_image_tag` equal to `${EVAL_IMAGE_TAG}`, and the eval never invents it — null
+      when nothing supplied one, the same rule `image_tag` has. Evaluator code is a factor
+      in a score exactly as the fixture is.
+- [ ] 25. **The experiment records the exact model that produced the answers**, not just the
+      selector: its metadata carries `chat_model_id` equal to what `/v1/version` reported.
+      Captured from the backend's own response, so an eval that took the id from its own
+      environment fails.
+
 ## A gap in the oracle
 
 Two things are real and not seam-visible, and saying so is part of the plan.
@@ -149,6 +204,12 @@ Two things are real and not seam-visible, and saying so is part of the plan.
   when its account's marked documents are not exactly its fixture after seeding — and the
   jobs stage reports exit 2 distinctly from exit 1, which is what makes that visible rather
   than being read as a threshold breach.
+- **The thread count after a run.** Criterion 22 anchors on one reserved question id
+  because a regex cannot count duplicate titles across a list — the same wall
+  `two-runs-produced-one-dataset` hit. The full invariant is the eval's: after purging and
+  seeding, the account holds exactly one thread per example and none it did not create this
+  run, and it **refuses (exit 2)** otherwise. The seam holds the marker and the canary; the
+  eval holds the count.
 - **The judge, judging.** `EVAL_JUDGE=bedrock` needs credentials the loop must not require.
   Covered by the eval repo's own tests against a recorded judge response, and by the
   metadata criterion 16 — an experiment always says what judged it, so a run with the real
@@ -178,6 +239,21 @@ Two things are real and not seam-visible, and saying so is part of the plan.
 - **Reading routing and retrieval out of the TRACE.** Also asked for, also dropped:
   `Message.retrieval_consulted` and `Message.citations[].document_id` are promised by the
   contract for exactly this purpose, and span attributes explicitly are not contract.
+- **A single `run_signature` over all the comparability factors.** Tempting, and it is the
+  natural generalisation of criteria 15, 24 and 25 — one hash that says "these two
+  experiments are comparable" instead of seven fields a reader compares by eye. Not built:
+  it is a new concept nobody asked for, and every factor is already recorded individually,
+  so the signature is derivable by anyone who wants it. Named here so the omission is a
+  decision.
+- **Deriving the image tag from the git SHA.** `git_sha` already reports that, and it
+  answers a different question — "which commit" rather than "which build a person chose to
+  cut". `docs/adr/0015` records why the hand-bumped version is the one that gates.
+- **A version endpoint on the eval.** It is a one-shot process, not a service; it reads
+  `EVAL_IMAGE_TAG` from its environment and records it. There is nothing to serve.
+- **Deleting the eval's threads at the END of a run.** The purge is at the START, so the
+  most recent run's transcripts survive for a person to read. Deleting on the way out would
+  leave nothing to look at after a failure, and Phoenix's traces are not a substitute for
+  the stored transcript.
 - **Sampling, cost accounting, latency thresholds.** Every one is a later, additive
   evaluator against the same experiment. Named so an agent asked for "eval" does not build
   six.

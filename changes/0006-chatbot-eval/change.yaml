@@ -63,9 +63,10 @@ smoke:
   # The single origin a browser uses. The steps that read Phoenix override `base` per step,
   # because Phoenix is a different service and must not be reachable through /api.
   base: http://localhost:8080
-  # The suite itself is modest — 20 steps, six of which poll Phoenix with a 30s export budget.
-  # The jobs are NOT in this budget; each carries its own timeout_s above.
-  timeout_s: 600
+  # 27 steps after the 2026-09-07 amendment (was 20, then 22), eight of which poll Phoenix
+  # with a 30s export budget. The jobs are NOT in this budget; each carries its own
+  # timeout_s above.
+  timeout_s: 720
   # No browser fact in this change: nothing renders an eval result, and Phoenix's own UI is
   # not ours to assert. BRIEF.md § "A gap in the oracle" says what is checked elsewhere.
   e2e: false

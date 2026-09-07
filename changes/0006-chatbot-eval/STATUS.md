@@ -56,6 +56,51 @@ evidence about any deployment. That is deliberate: `infra/` can deploy nothing, 
 eval's future as a k8s CronJob is named in `BRIEF.md` § Out of scope with that reason rather
 than quietly dropped.
 
+## Amended, 2026-09-07 — /ship-iterate
+
+Four questions on the shipped-but-unmerged change. Two were answered by measurement against
+the stack the green run left up and needed no change; two were real gaps. Nothing merged, so
+this supersedes rather than adds.
+
+**Answered, no change:**
+
+- **Documents are cleaned.** 9 documents, no duplicate filenames, after four runs — the
+  hash-compare seed does what it claims.
+- **The exact model was already recorded.** `chat_model_id` is in `GET /v1/version` and in
+  every experiment's metadata: `eu.anthropic.claude-haiku-4-5-20251001-v1:0`. It was not
+  *asserted*, and the run's printed summary named only the judge's model — both now fixed,
+  but the field itself did not need adding.
+
+**The two gaps:**
+
+- **Threads accumulated forever.** 36 in the eval account over two runs, against a contract
+  cap of 200 on `GET /v1/threads`. The eval now titles each thread with
+  `${EVAL_THREAD_PREFIX}` at creation and purges its own marked threads at the START of every
+  run — start, not end, so the last run's transcripts survive for a person to read.
+  Criteria 21 and 22.
+- **No image carried a version.** `BACKEND_IMAGE_TAG` was `dev` — the same string for every
+  build, in the one field meant to distinguish builds — and the eval image had no tag at all
+  in its metadata. Both are now `local-<major>.<minor>.<patch>` in `stack/dev.env`, the eval
+  records its own as a comparability factor beside `fixture_hash`, and
+  `check-docs.py [image-tags]` refuses a change that touches a product repo without bumping
+  its tag. `docs/adr/0015` is the decision, including why the git SHA is not the answer.
+  Criteria 23, 24 and 25.
+
+**No re-freeze; `c0ff827` stands.** `CreateThreadRequest.title`,
+`DELETE /v1/threads/{thread_id}` and `chat_model_id` are all already promised, so no
+interface moved. Reasserted because "we changed our minds, therefore re-freeze" is the
+reflex, and a second freeze over an identical tree would make the record say otherwise.
+
+**Where the bump rule lives, and why not a product repo's `CLAUDE.md`.** The tag belongs to
+the joined stack: a session inside `chatbot-backend` cannot edit `stack/dev.env`, so a rule
+telling it to bump would be unactionable — the same contradiction `docs/adr/0008` dissolved
+for `contracts/`. So the rule is a gate here plus one paragraph in `/ship` phase 1, and the
+control repo's `CLAUDE.md` is deliberately untouched: it sits at exactly its 60-line budget
+and the last retrospective said the next addition should shorten rather than squeeze.
+
+The `chatbot-backend` slice requires **no change** in this amendment. Its brief says so at
+the top and tells the session to verify and report rather than look for work.
+
 ## Corrected during the run, 2026-09-03
 
 Three defects, all in THIS repo's half. Recorded because a diff of `smoke.yaml` shows a

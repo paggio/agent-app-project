@@ -1,5 +1,30 @@
 # 0006 — chatbot-backend slice
 
+## AMENDED, 2026-09-07 — read this first, then stop
+
+**This amendment requires NO CHANGE in this repo. Nothing is added and nothing is removed.**
+
+Your branch already carries `GET /v1/version` and its pull request is open. Every criterion
+it passed still has to pass. Your six existing smoke steps are unchanged, and one is
+added — `the-backend-image-tag-is-a-version` — which your code already satisfies.
+
+What changed is a **value in the control repo**, not your code: `stack/dev.env` now sets
+`BACKEND_IMAGE_TAG=local-0.0.1` instead of `dev`, and one new step asserts that `image_tag`
+matches `local-<major>.<minor>.<patch>`. You already report `IMAGE_TAG` verbatim from the
+environment with no fallback, which is exactly right and is what makes the new step pass
+without you touching anything. `docs/adr/0015` is the decision.
+
+**So: verify and report. Do not look for work.** Confirm your gates still pass, confirm
+`make contract` is still green, and report `ok`. If you believe a change here IS required —
+if some fallback or default would make the new assertion fail — say what and why in your
+summary and report `failed` rather than guessing; a change to this repo in this amendment
+would be a change nobody asked for.
+
+One thing NOT to do, because it is the tempting reading: do not start deriving `image_tag`
+or `git_sha` from your own version, your git tree or anything else. Null when nothing
+supplied one remains correct and the contract says so.
+
+
 One endpoint. That is the whole slice, and the smallness is the point: the eval is a
 separate repo precisely so that measuring the backend does not mean changing it.
 
@@ -105,6 +130,9 @@ against one origin. The steps whose `owner:` is `chatbot-backend` are yours:
 - [ ] `version-names-the-retrieval-configuration` — `embedding_model` and `retrieval_router`
       are both present and both from their declared sets
 - [ ] `version-leaks-no-credential` — no credential-shaped field name in the body
+- [ ] **new, 2026-09-07** `the-backend-image-tag-is-a-version` — `image_tag` matches
+      `local-<major>.<minor>.<patch>`. It passes because you report `IMAGE_TAG` verbatim;
+      the value comes from `stack/dev.env`, which is the control repo's to set
 
 These run against your code through a reverse proxy, not against your test doubles, and a
 failure comes back to this repo with the request, the response and your container log

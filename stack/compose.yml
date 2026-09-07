@@ -35,6 +35,7 @@ services:
       # invents its own image tag is not reporting one. scripts/publish.sh tags with
       # the submodule SHA; locally this is `dev`.
       IMAGE_TAG: ${BACKEND_IMAGE_TAG:-dev}
+      GIT_SHA: ${BACKEND_GIT_SHA-}
 
   postgres:
     labels:
@@ -128,6 +129,14 @@ services:
       # documents it will ever delete. An EVAL_ACCOUNT_EMAIL pointed at a real account by
       # mistake therefore costs nothing.
       EVAL_DOCUMENT_PREFIX: ${EVAL_DOCUMENT_PREFIX:-eval__}
+      # The thread marker, and the only prefix the eval will ever DELETE. It purges its
+      # own marked threads at the start of every run, so a re-run leaves the account as
+      # it found it — 36 threads had accumulated over two runs before this.
+      EVAL_THREAD_PREFIX: ${EVAL_THREAD_PREFIX:-eval__}
+      # The eval image's OWN version, recorded in every experiment's metadata as a
+      # comparability factor beside fixture_hash. Supplied from outside the image and
+      # never invented — the same rule the backend's IMAGE_TAG has. docs/adr/0015.
+      EVAL_IMAGE_TAG: ${EVAL_IMAGE_TAG-}
       # heuristic needs no credentials and no network, which is the whole reason it is the
       # default — the same argument as CHAT_MODEL=echo and RETRIEVAL_ROUTER=heuristic in the
       # backend. It produces a real, deterministic, POOR score: it proves the mechanism,

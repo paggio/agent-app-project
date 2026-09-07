@@ -1,5 +1,92 @@
 # 0006 — chatbot-eval slice
 
+## AMENDED, 2026-09-07 — read this before the rest
+
+Your branch already carries a working eval and its pull request is open. This amendment
+changes four things. **Where this section and the sections below disagree, this wins.**
+Nothing is removed — every criterion the first version passed still has to pass, and the
+suite grew from 22 steps to 27.
+
+1. **Threads are purged, and marked.** New, and it is the substantial one — §12 below.
+   Measured before asking: the eval account had accumulated **36 threads** over two runs and
+   nothing had ever deleted one, against a contract cap of 200 on `GET /v1/threads`.
+2. **The experiment records the eval image's own version** — `eval_image_tag` from
+   `EVAL_IMAGE_TAG`, §13. New metadata field.
+3. **The printed summary must name the backend's model**, §14. It currently names the
+   JUDGE's model and nothing about what produced the answers.
+4. **`chat_model_id` in the metadata is now a requirement rather than a courtesy.** You
+   already record it and the value is already right; a step now asserts it equals what
+   `/v1/version` reported. No change expected — listed so you do not remove it as
+   redundant.
+
+Two things that are NOT changing, stated because they are the plausible misreadings:
+
+- **No contract change, and no re-freeze.** `c0ff827` stands. `CreateThreadRequest.title`,
+  `DELETE /v1/threads/{thread_id}` and `chat_model_id` are all already promised by the
+  frozen tree. If you think otherwise, report `blocked-by-contract` with the entry.
+- **The corpus and the question set do not change.** In particular `q-charter-quorum` must
+  keep that exact id — see §12.
+
+---
+
+## 12. Threads: purge at the start, mark at creation
+
+The eval creates one chat per example and has never removed one. A re-run must leave the
+account as it found it, exactly as the document seed already does.
+
+**Mark at creation, not afterwards.** `CreateThreadRequest.title` is optional, settable at
+create and capped at 200 characters, so `POST /v1/threads` with
+`{"title": "${EVAL_THREAD_PREFIX}<question-id>"}` costs no extra request. Do NOT rename
+afterwards with `PATCH`; that is 18 avoidable calls.
+
+**Purge at the START of a run**, right beside the document seed and with the same shape:
+
+1. `GET /v1/threads`.
+2. Partition on the title prefix. **Threads whose title does not start with
+   `EVAL_THREAD_PREFIX` are ignored entirely and never deleted.** This is the safety rail,
+   not a convention: an `EVAL_ACCOUNT_EMAIL` pointed at a real account must lose no
+   conversation, and it is the same argument that governs the document prefix.
+3. `DELETE /v1/threads/{thread_id}` for each marked one.
+4. Create this run's threads as the task runs, titled as above.
+5. **Then assert the invariant and refuse (exit 2) if it does not hold**: after the run, the
+   account holds exactly one marked thread per example and none it did not create this run.
+   The seam cannot check this — a regex cannot count duplicate titles across a list — so it
+   is yours, and `BRIEF.md` § "A gap in the oracle" records that it is yours.
+
+**At the START and not the end**, deliberately: the most recent run's transcripts survive
+for a person to read after a failure. Deleting on the way out would leave nothing to look at,
+and a Phoenix trace is not a substitute for the stored transcript.
+
+`q-charter-quorum` is the **canary**: `two-runs-leave-one-runs-threads` asserts that
+`${EVAL_THREAD_PREFIX}q-charter-quorum` appears exactly once in the thread list. Keep that
+question id exactly as it is, and say in `evalset/README.md` that it is load-bearing and why
+— it is the same deliberate coupling the four evaluator names already have.
+
+## 13. The eval image's own version
+
+`EVAL_IMAGE_TAG` from the environment, recorded in `experiment_metadata` as
+`eval_image_tag`. **Never invent it** — null when nothing supplied one, the same rule the
+backend's `image_tag` has and for the same reason: a build identity a process makes up for
+itself is not one. Do not fall back to the package version, the git tree or a constant.
+
+Why it matters, since it is one more string in a metadata blob: the evaluator code is as much
+a factor in a score as the fixture is. Two runs over an identical corpus with a rewritten
+groundedness evaluator are not comparable, and before this nothing recorded which evaluators
+produced a number. `docs/adr/0015` is the decision.
+
+## 14. The summary names what produced the answers
+
+`render()` prints `judge <name> (<judge model id>) prompt v<n>` and says nothing about the
+backend. That summary is the only evidence a failing job hands back, and a reader of it
+cannot currently tell which model wrote the answers being scored — which is the question a
+low `answer_correctness` immediately raises.
+
+Add a line naming the backend's `chat_model` and, when it is not null, `chat_model_id`, and
+the `image_tag` beside it. Keep the judge line: the two are different models and conflating
+them is the confusion this fixes. Read from the `VersionResponse` you already fetch, never
+from your own environment.
+
+
 Your repo is a **scaffold**: `CLAUDE.md`, `.claude/` (settings, Stop hook, format hook),
 `docs/architecture.md`, `docs/adr/0000-template.md`, `contracts/` (vendored, read-only),
 `README.md`, `.gitignore`, `.github/workflows/ci.yml`. There is no toolchain, no image and
@@ -83,6 +170,8 @@ image runs locally and as a k8s Job, and only these move.
 | `EVAL_ACCOUNT_EMAIL` · `EVAL_ACCOUNT_PASSWORD` | **yes** | the eval's own account |
 | `SIGNUP_CODE` | no | needed only to register on a cold stack |
 | `EVAL_DOCUMENT_PREFIX` | yes | the filename marker; default `eval__` |
+| `EVAL_THREAD_PREFIX` | yes | the thread-TITLE marker, and the only prefix it will delete; default `eval__` |
+| `EVAL_IMAGE_TAG` | no | this image's own version. Recorded in the metadata; **never invented** — null when unset |
 | `EVAL_JUDGE` | yes | `heuristic` or `bedrock`; default `heuristic` |
 | `EVAL_JUDGE_MODEL_ID` | no | recorded in metadata even when unused |
 | `EVAL_JUDGE_PROMPT_VERSION` | no | bumped by hand when the judge prompt changes |
@@ -215,9 +304,10 @@ Each example: `input` holds the question, `output` holds the `reference_answer`,
 
 `run_experiment` against that dataset. The task, per example:
 
-1. `POST /v1/threads` → a fresh chat. **One chat per example**, so no example sees another's
-   history — `HISTORY_MAX_MESSAGES` is 20 and a shared chat would make later examples depend
-   on earlier ones.
+1. `POST /v1/threads` → a fresh chat, **titled `${EVAL_THREAD_PREFIX}<question-id>`** (see
+   §12). **One chat per example**, so no example sees another's history —
+   `HISTORY_MAX_MESSAGES` is 20 and a shared chat would make later examples depend on
+   earlier ones.
 2. `POST /v1/threads/{thread_id}/messages` with the question, **with W3C trace context
    injected into the request headers** so the backend's spans nest under your task span.
 3. Record from the response: the assistant `Message`'s `content`, its `retrieval_consulted`,
@@ -239,8 +329,12 @@ header is absent rather than inventing one.
 
 ```
 image_tag, git_sha, chat_model, chat_model_id, embedding_model, retrieval_router,
-fixture_hash, questions_hash, judge, judge_model, judge_prompt_version
+fixture_hash, questions_hash, judge, judge_model, judge_prompt_version,
+eval_image_tag
 ```
+
+`eval_image_tag` is new in the 2026-09-07 amendment (§13) and `chat_model_id` is now
+asserted rather than assumed (§14 of `BRIEF.md`'s criteria: 24 and 25).
 
 `judge` is `heuristic` or `bedrock`. Everything from §5.1 is copied through unchanged.
 
@@ -392,6 +486,12 @@ because tracing was off would be unusable in the one environment where tracing i
       the aggregate skips it
 - [ ] a test that seeding ignores an unmarked document and never deletes one
 - [ ] a test that a second seed over an unchanged corpus uploads nothing
+- [ ] a test that the thread purge ignores an unmarked thread and never deletes one
+- [ ] a test that the post-run thread invariant refuses (exit 2) on a marked thread the
+      run did not create
+- [ ] a test that `eval_image_tag` is null when `EVAL_IMAGE_TAG` is unset, and is the
+      variable's value when set — the null case is what catches a fallback
+- [ ] `evalset/README.md` says `q-charter-quorum` is load-bearing and why
 - [ ] `evalset/README.md` explains how to add a document and a question, and what makes a
       good one
 - [ ] `docs/architecture.md` is current — the run flow, the four evaluators, the exit codes
@@ -430,6 +530,13 @@ The smoke steps whose `owner:` is `chatbot-eval` are yours:
       `the-backend-span-is-nested-under-the-eval-task` — trace context propagated
 - [ ] `the-eval-account-signs-in` · `the-eval-account-holds-the-marked-fixture` ·
       `nothing-unmarked-is-in-the-eval-account` · `logout-the-eval-account`
+- [ ] **new** `the-experiment-records-the-exact-model-that-answered` — `chat_model_id`
+      equals what the backend reported, captured from ITS response
+- [ ] **new** `the-experiment-records-the-eval-images-own-version` — `eval_image_tag`
+      equals `${EVAL_IMAGE_TAG}`
+- [ ] **new** `every-thread-in-the-eval-account-is-marked` — no thread's title lacks the
+      prefix
+- [ ] **new** `two-runs-leave-one-runs-threads` — the canary title appears exactly once
 
 These run against your code through a reverse proxy, not against your test doubles, and a
 failure comes back to this repo with the request, the response, your container log **and the
