@@ -584,12 +584,50 @@ def _referenced_in_scripts(needle: str) -> bool:
 # control repo is the only place all four trees are already present, so it needs no
 # network and does not invert the dependency direction docs/adr/0001 protects.
 readme_divergence: list[str] = []
+mid_change: list[str] = []
+
+
+def _locked_sha(sub: str) -> str | None:
+    """What repos.lock pins for a submodule: the SHA triple believed to work together."""
+    try:
+        with open(os.path.join(ROOT, "repos.lock")) as fh:
+            for line in fh:
+                line = line.strip()
+                if not line or line.startswith("#"):
+                    continue
+                parts = line.split()
+                if len(parts) >= 2 and parts[0] == sub:
+                    return parts[1]
+    except OSError:
+        pass
+    return None
+
+
+def _head_sha(sub: str) -> str | None:
+    p = subprocess.run(("git", "-C", sub, "rev-parse", "HEAD"),
+                       capture_output=True, text=True, cwd=ROOT)
+    return p.stdout.strip() if p.returncode == 0 else None
 
 
 def check_vendored_contracts() -> None:
     for sub in SUBMODULES:
         sub_dir = os.path.join(ROOT, sub, "contracts")
         if not os.path.isdir(sub_dir):
+            continue
+
+        # A submodule NOT on the SHA repos.lock pins is mid-change: /ship, /ship-correct
+        # and /ship-iterate all leave their slices on feature branches, and contracts/ here
+        # is frozen ahead of main until those merge. So the four trees sit on BOTH sides of
+        # one freeze and no branch satisfies a straight comparison — on feat/* the un-sliced
+        # repos are behind, on a main-based branch the sliced ones are ahead. It hard-failed
+        # for the whole window (retro 20260827 R2) and three retrospectives could not
+        # publish, because `make check` was red wherever they stood. verify.sh's preflight
+        # owns that window and owns it better: same two files, every run, per SLICE, routed
+        # to the repo answerable. What stays here is the steady state, which nothing else
+        # checks — a submodule AT its locked SHA carrying a stale copy.
+        head, locked = _head_sha(sub), _locked_sha(sub)
+        if head and locked and head != locked:
+            mid_change.append(f"{sub} ({head[:7]}, lock pins {locked[:7]})")
             continue
         for name in ("openapi.yaml", "infra-outputs.yaml"):
             ours = os.path.join(ROOT, "contracts", name)
@@ -806,6 +844,11 @@ def report_readme_divergence() -> None:
     invocation is how a reader learns to skim warnings, which then hides the actionable
     one. Said once, with what would make it actionable.
     """
+    if mid_change:
+        warn("vendored-contracts",
+             f"not compared, because they are off repos.lock and therefore mid-change: "
+             f"{', '.join(mid_change)}. The vendored copy of a repo whose slice is still "
+             f"on a branch is verify.sh's preflight to check, per run and per slice.")
     if readme_divergence:
         warn("vendored-contracts",
              f"{', '.join(readme_divergence)} carry the short vendored contracts/README.md "

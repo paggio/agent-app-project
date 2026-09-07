@@ -18,10 +18,9 @@
 #                                    non-secret names in SUBMODULE_ENV_ALLOW below.
 #
 # Rules that hold across all of them:
-#   * Only UNSET variables are filled in. `${!k+x}` is indirect expansion with the +x
-#     test: empty when unset, "x" when set to anything including the empty string. An
-#     explicitly empty SIGNUP_CODE therefore stays empty, which is how a deployment asks
-#     for registration to be closed.
+#   * Only UNSET variables are filled in, with the `+x` test: empty when unset, "x" when
+#     set to anything including the empty string. An explicitly empty SIGNUP_CODE therefore
+#     stays empty, which is how a deployment asks for registration to be closed.
 #   * Exported, so `docker compose` interpolation and smoke.py both see them as children.
 #   * Every name filled in is recorded, because "where did this value come from" decides
 #     whether verify.sh may run a remote pass. The two records mean different things and
@@ -39,7 +38,24 @@
 # `export ` prefix. It does not strip quotes, expand `$VAR`, or honour line continuations.
 # Layer 3's file belongs to another repo and we do not get to define a grammar for it.
 
-_dev_env_root="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
+# ${BASH_SOURCE[0]} is EMPTY under zsh, which is the login shell here — so every
+# `. ./scripts/dev-env.sh` typed at a prompt resolved the root to the PARENT of the cwd,
+# found no stack/dev.env there, filled in NOTHING and returned 0. A silent no-op is
+# indistinguishable from a clean environment, and two lanes paid a `bash -c` workaround per
+# probe for it. zsh sets $0 to the file being sourced; bash does not, hence both.
+_dev_env_root="$(cd "$(dirname "${BASH_SOURCE[0]:-$0}")/.." && pwd)"
+_dev_env_file="${DEV_ENV_FILE:-$_dev_env_root/stack/dev.env}"
+
+# Layer 2 is committed, so its absence at the DEFAULT path means the root above is wrong,
+# not that this repo has no variables. Refuse loudly instead of exporting nothing —
+# docs/adr/0003: exit 2 is the harness refusing. An explicit DEV_ENV_FILE that is missing
+# stays not-an-error: a change that needs no variables should not have to invent one.
+if [ -z "${DEV_ENV_FILE-}" ] && [ ! -f "$_dev_env_file" ]; then
+  echo "dev-env.sh: $_dev_env_file does not exist, so nothing was filled in. Source this" >&2
+  echo "  from the control repo root, or point DEV_ENV_FILE at the file to read." >&2
+  unset _dev_env_root _dev_env_file
+  return 2 2>/dev/null || exit 2
+fi
 
 # Layer 3 is restricted to an ALLOWLIST, and it holds only names that (a) the joined stack
 # actually interpolates and (b) are not secrets. This is a fail-closed choice: a denylist
@@ -74,14 +90,18 @@ _dev_env_layer() {
     if [ -n "$_allow" ]; then
       case " $_allow " in *" $_key "*) ;; *) continue ;; esac
     fi
-    if [ -z "${!_key+x}" ]; then
+    # `eval` rather than bash's ${!_key+x}: that is indirect expansion, which zsh rejects
+    # outright ("bad substitution"), and this file is sourced from whatever shell a person
+    # or an agent happens to be in. _key is already restricted to [A-Za-z0-9_] above, so
+    # there is nothing here to inject. Same +x test: unset, not merely empty.
+    if eval "[ -z \"\${$_key+x}\" ]"; then
       export "$_key=$_val"
       eval "$_record=\"\${$_record:+\${$_record} }\$_key\""
     fi
   done < "$_f"
 }
 
-_dev_env_layer "${DEV_ENV_FILE:-$_dev_env_root/stack/dev.env}" DEV_ENV_DEFAULTED ""
+_dev_env_layer "$_dev_env_file" DEV_ENV_DEFAULTED ""
 
 # One named path rather than a loop over three hypothetical ones: frontend/ and infra/
 # have no such file today, and docs/adr/0006 says generalise when the second one exists.
@@ -91,5 +111,5 @@ _dev_env_layer "${SUBMODULE_ENV_FILE:-$_dev_env_root/chatbot-backend/.env}" \
 export DEV_ENV_DEFAULTED="${DEV_ENV_DEFAULTED:-}"
 export SUBMODULE_ENV_DEFAULTED="${SUBMODULE_ENV_DEFAULTED:-}"
 
-unset _dev_env_root
+unset _dev_env_root _dev_env_file
 unset -f _dev_env_layer
