@@ -492,6 +492,12 @@ because tracing was off would be unusable in the one environment where tracing i
 - [ ] a test that `eval_image_tag` is null when `EVAL_IMAGE_TAG` is unset, and is the
       variable's value when set — the null case is what catches a fallback
 - [ ] `evalset/README.md` says `q-charter-quorum` is load-bearing and why
+- [ ] **a test that `chat_model_id` from the VersionResponse is copied into the metadata
+      verbatim**, including the null case. The SEAM cannot assert this: the loop runs
+      `CHAT_MODEL=echo`, where the correct value is null, and `smoke.py` stringifies a
+      captured null so the assertion becomes unsatisfiable. `BRIEF.md` § "A gap in the
+      oracle" names your tests as the oracle for it, so this one is load-bearing rather
+      than routine — construct a `VersionResponse` carrying an id and check it survives.
 - [ ] `evalset/README.md` explains how to add a document and a question, and what makes a
       good one
 - [ ] `docs/architecture.md` is current — the run flow, the four evaluators, the exit codes

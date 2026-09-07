@@ -188,10 +188,14 @@ change needed and `docs/adr/0014` decides. **New in this amendment: 21–25.**
       `eval_image_tag` equal to `${EVAL_IMAGE_TAG}`, and the eval never invents it — null
       when nothing supplied one, the same rule `image_tag` has. Evaluator code is a factor
       in a score exactly as the fixture is.
-- [ ] 25. **The experiment records the exact model that produced the answers**, not just the
-      selector: its metadata carries `chat_model_id` equal to what `/v1/version` reported.
-      Captured from the backend's own response, so an eval that took the id from its own
-      environment fails.
+- [ ] 25. **The experiment records the model that produced the answers**, faithfully and in
+      full. Two halves: the metadata's `chat_model` equals what `/v1/version` reported —
+      captured from the backend's own response, so an eval that took it from its own
+      environment fails — and `chat_model_id` is present and well-formed, `null` exactly
+      where the contract allows it or a non-empty string. **Amended once more, later the
+      same day:** the first spelling asserted `chat_model_id` against a live capture and was
+      *unsatisfiable* under `CHAT_MODEL=echo`, the loop's own default, because a captured
+      null interpolates as the literal `None`. See § "A gap in the oracle".
 
 ## A gap in the oracle
 
@@ -210,6 +214,15 @@ Two things are real and not seam-visible, and saying so is part of the plan.
   seeding, the account holds exactly one thread per example and none it did not create this
   run, and it **refuses (exit 2)** otherwise. The seam holds the marker and the canary; the
   eval holds the count.
+- **`chat_model_id` equal to what the backend reported.** Only meaningful when a model is
+  configured, and the loop runs `CHAT_MODEL=echo`, where the correct value is `null`. The
+  seam asserts the selector against a live capture and the id's presence and shape; the
+  equality is asserted by chatbot-eval's own tests, which construct a `VersionResponse`
+  carrying an id and check it is copied. Worth knowing WHY the seam cannot do it:
+  `smoke.py` stringifies a captured null, so `${var}` bound to null interpolates as the
+  four characters `None` and the assertion becomes unsatisfiable rather than failing
+  honestly. That is a harness defect rather than a property of this change, and it is in
+  the friction log for the retrospective rather than fixed here.
 - **The judge, judging.** `EVAL_JUDGE=bedrock` needs credentials the loop must not require.
   Covered by the eval repo's own tests against a recorded judge response, and by the
   metadata criterion 16 — an experiment always says what judged it, so a run with the real

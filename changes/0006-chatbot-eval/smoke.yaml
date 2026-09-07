@@ -73,7 +73,7 @@ steps:
         image_tag: ${BACKEND_IMAGE_TAG}
     capture:
       eval_image_tag: image_tag
-      eval_chat_model_id: chat_model_id
+      eval_chat_model: chat_model
 
   - name: the-backend-image-tag-is-a-version
     owner: chatbot-backend
@@ -236,21 +236,42 @@ steps:
       status: 200
       body_matches: '"judge":\s*"(heuristic|bedrock)".*"judge_prompt_version"'
 
-  - name: the-experiment-records-the-exact-model-that-answered
+  - name: the-experiment-copies-the-backends-model-selector
     owner: chatbot-eval
     GET: /v1/datasets/${eval_dataset_id}/experiments
     base: ${PHOENIX_BASE}
     contract: false
     tags: [local]
-    # Criterion 25, new in the 2026-09-07 amendment. `chat_model` alone says `bedrock`, which
-    # does not identify anything — two runs a month apart against different Haiku versions
-    # would read identically. The id is asserted against the value the BACKEND reported,
-    # captured from its own response above, so an eval that took the model id from its own
-    # environment or from a flag fails. The first version left this field to the slice's
-    # good judgement, which is not the same thing as a requirement.
+    # Criterion 25, first half. Asserted against the value the BACKEND reported — captured
+    # from its own response above, not written here — so an eval that took the selector from
+    # its own environment or from a flag fails. This is the faithful-copy assertion, and it
+    # holds under every configuration because `chat_model` is a non-nullable enum.
+    #
+    # THIS STEP REPLACES one that asserted `chat_model_id` against a live capture, and that
+    # step was unsatisfiable rather than strict: under CHAT_MODEL=echo — the loop's default —
+    # `chat_model_id` is null, smoke.py stringifies a captured null, and the regex became
+    # `"chat_model_id":\s*"None"`, which nothing can match. See § "A gap in the oracle".
     expect:
       status: 200
-      body_matches: '"chat_model_id":\s*"${eval_chat_model_id}"'
+      body_matches: '"chat_model":\s*"${eval_chat_model}"'
+
+  - name: the-experiment-carries-the-model-id-field
+    owner: chatbot-eval
+    GET: /v1/datasets/${eval_dataset_id}/experiments
+    base: ${PHOENIX_BASE}
+    contract: false
+    tags: [local]
+    # Criterion 25, second half. `chat_model` alone says `bedrock`, which identifies nothing
+    # — two runs a month apart against different Haiku versions would read identically — so
+    # the id has to be in the record. Present and well-formed: `null` exactly as the contract
+    # allows when there is no model, or a non-empty string. An eval that dropped the field,
+    # or wrote an empty string for "I do not know", fails.
+    #
+    # It does NOT assert the id EQUALS what the backend reported. That is only meaningful
+    # when a model is configured, and § "A gap in the oracle" names the oracle for it.
+    expect:
+      status: 200
+      body_matches: '"chat_model_id":\s*(null|"[^"]+")'
 
   - name: the-experiment-records-the-eval-images-own-version
     owner: chatbot-eval

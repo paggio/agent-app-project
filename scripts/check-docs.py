@@ -921,14 +921,55 @@ IMAGE_TAG_OWNERS = {
 
 
 def _dev_env_values(text: str) -> dict[str, str]:
+    """FIRST occurrence wins, because that is what scripts/dev-env.sh does.
+
+    dev-env.sh fills only variables that are still unset, so a name declared twice resolves
+    to its FIRST value. This function used to build a dict and therefore took the LAST —
+    so `[image-tags]` passed on `local-0.0.1` while the stack ran the `dev` declared 18
+    lines earlier. A gate reading a file differently from the loader that consumes it is
+    worse than no gate. `[dev-env-duplicates]` below makes the divergence unreachable;
+    this keeps the two readers honest even so.
+    """
     out: dict[str, str] = {}
     for line in text.splitlines():
         line = line.strip()
         if not line or line.startswith("#") or "=" not in line:
             continue
         key, value = line.split("=", 1)
-        out[key.strip()] = value.strip()
+        out.setdefault(key.strip(), value.strip())
     return out
+
+
+# --- 18. a name is declared once in stack/dev.env ------------------------------------
+# docs/adr/0006 makes stack/dev.env one layer of a precedence chain, and check_env_layers
+# already refuses a name that ALSO appears in chatbot-backend/.env. It never looked for a
+# name declared twice in this file, and that cost a run: BACKEND_IMAGE_TAG was `dev` in one
+# block and `local-0.0.1` in another, dev-env.sh took the first, the gate took the last, and
+# the stack was tested against a value nothing had asserted. Cheap, and it maps to a defect
+# that actually happened.
+def check_dev_env_duplicates() -> None:
+    path = os.path.join(ROOT, "stack", "dev.env")
+    try:
+        lines = open(path).read().splitlines()
+    except OSError:
+        return  # check_suite_vars reports a missing dev.env
+
+    seen: dict[str, int] = {}
+    for n, line in enumerate(lines, 1):
+        line = line.strip()
+        if not line or line.startswith("#") or "=" not in line:
+            continue
+        key = line.split("=", 1)[0].strip()
+        if not re.fullmatch(r"[A-Za-z_][A-Za-z0-9_]*", key):
+            continue
+        if key in seen:
+            fail("dev-env-duplicates",
+                 f"stack/dev.env declares {key} twice, on lines {seen[key]} and {n}. "
+                 f"scripts/dev-env.sh fills only UNSET names, so line {seen[key]} wins and "
+                 f"line {n} is unreachable — the stack runs one value while a reader of the "
+                 f"file sees the other. Delete one.")
+        else:
+            seen[key] = n
 
 
 def check_image_tags() -> None:
@@ -1006,7 +1047,7 @@ def main() -> int:
               check_gate_messages, check_loop_calls, check_agent_dispatchers,
               check_stack_services, check_clean_slate, check_lane_coverage,
               check_lane_vocabulary, check_status_headings,
-              check_image_tags,
+              check_image_tags, check_dev_env_duplicates,
               report_readme_divergence)
     for fn in checks:
         try:

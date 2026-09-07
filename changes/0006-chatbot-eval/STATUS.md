@@ -45,8 +45,10 @@ No frontend or infra PR: neither is a slice. `BRIEF.md` § Out of scope says why
      thing that says they work together. -->
 
 <!-- iterate:begin -->
-- **verified-local** — 20260903T155755Z, 1 attempt(s)
-- report: `changes/0006-chatbot-eval/runs/20260903T155755Z/report.md`
+- **failed** — 20260907T140334Z, 2 attempt(s)
+- failed at: `smoke: assertions failed`
+- answerable: chatbot-backend chatbot-eval
+- report: `changes/0006-chatbot-eval/runs/20260907T140334Z/report.md`
 <!-- iterate:end -->
 
 ## What this change can and cannot reach

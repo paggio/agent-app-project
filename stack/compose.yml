@@ -35,7 +35,6 @@ services:
       # invents its own image tag is not reporting one. scripts/publish.sh tags with
       # the submodule SHA; locally this is `dev`.
       IMAGE_TAG: ${BACKEND_IMAGE_TAG:-dev}
-      GIT_SHA: ${BACKEND_GIT_SHA-}
 
   postgres:
     labels:
