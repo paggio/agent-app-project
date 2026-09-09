@@ -175,7 +175,32 @@ file. Fifth occurrence of the retrospectives' standing R1.
 
 ## Blockers
 
-- None known at dispatch.
+**One, and it needs a human — a two-line edit no dispatched session can make.**
+
+`chatbot-eval/.env.example` is unshipped. That repo's `.claude/settings.json` denies
+`Edit(./.env*)`, which globs onto the template its own `.gitignore` un-ignores with
+`!.env.example`; and editing `settings.json` to narrow the rule is refused by a
+session-level guard on permission settings, which is above this harness. Two dispatches
+reported the same thing, precisely, rather than working around either rule. A third would
+buy a third identical report.
+
+In `chatbot-eval/.claude/settings.json`, replace `"Edit(./.env*)"` with:
+
+```json
+      "Edit(./.env)",
+      "Edit(./.env.local)"
+```
+
+Then `.env.example` can be written. It is a convenience, not the fix — `make eval
+JUDGE=bedrock` works today via `stack/secrets.env` — but `README.md` and
+`docs/architecture.md` in that repo already point at it, so it is a live dangling
+reference until it exists.
+
+The rule came from the scaffold this change wrote for that repo, copied from
+`chatbot-backend`, whose template was already committed before the rule could bite. The
+retrospective of 2026-09-09 found the same trap in **three** repos: `chatbot-eval`,
+`chatbot-backend` and `frontend` all carry the pair. `chatbot-backend` escaped by
+accident; `frontend`'s is waiting for the first change that needs a template there.
 
 ## After merge
 
