@@ -216,6 +216,15 @@ def check_dead_wiring() -> None:
     all_prose = "\n".join(text_by_file.values())
 
     for path, text in text_by_file.items():
+        # A retrospective is HISTORY: it cites the tree it audited, and § 5 of the retro
+        # agent requires it to be written on an `origin/main` branch — where the script or
+        # the ADR the change under audit introduced does not exist yet. Both references
+        # become live the moment that change merges. Recorded as R7/20260902 with the fix
+        # spelled out and "the next retrospective should propose it on sight rather than
+        # degrade its own record again"; degraded twice more since. `retros/` stays in
+        # `all_prose`, so the reverse-direction checks below are unchanged.
+        if rel(path).startswith("retros/"):
+            continue
         for script in set(re.findall(r"scripts/[a-z0-9-]+\.(?:sh|py)", text)):
             if not os.path.exists(os.path.join(ROOT, script)):
                 fail("dead-wiring", f"{rel(path)} references {script}, which does not exist")

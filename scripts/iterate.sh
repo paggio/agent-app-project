@@ -383,6 +383,7 @@ while :; do
 
   # ── dispatch ────────────────────────────────────────────────────────────────
   DISPATCH_OK=1
+  VERIFY_PASSED=0
   if [ "$VERIFY_ONLY" = "1" ]; then
     say "verify-only — dispatching nothing, checking what is on disk"
     record "**Attempt $ATTEMPT — dispatch:** skipped (\`--verify-only\`)"
@@ -446,12 +447,16 @@ except Exception:
       OUTCOME="contract-gap"
       record "**Attempt $ATTEMPT — dispatch:** stopped. ${GAPS} reported a contract gap."
       record ""
-      python3 -c "
+      # `record` appends to SUMMARY, and the last stage of a pipeline is a subshell — so
+      # `… | while read; do record; done` threw away every line it read, and the hard-stop
+      # report named neither the repo nor the gap. A here-string keeps the loop here.
+      GAP_LINES="$(python3 -c "
 import json
 d = json.load(open('$ATT_DIR/fanout.json'))
 for r in (d.get('contract_gaps') or []):
     print('- **' + r + '**: ' + (d['repos'][r].get('contract_gap') or '(no detail)'))
-" 2>/dev/null | while IFS= read -r l; do record "$l"; done
+" 2>/dev/null || true)"
+      while IFS= read -r l; do if [ -n "$l" ]; then record "$l"; fi; done <<< "$GAP_LINES"
       record ""
       record "A frozen contract cannot be worked around in a slice. This needs a new"
       record "contract-freeze pass in the control repo before anything else happens."
@@ -459,7 +464,7 @@ for r in (d.get('contract_gaps') or []):
     fi
 
     if [ -n "$FANOUT_FAILED" ]; then
-      record "**Attempt $ATTEMPT — dispatch:** failed for:${FANOUT_FAILED}"
+      record "**Attempt $ATTEMPT — dispatch:** failed for: ${FANOUT_FAILED}"
     else
       record "**Attempt $ATTEMPT — dispatch:** all slices reported OK"
     fi
@@ -488,9 +493,24 @@ for r in (d.get('contract_gaps') or []):
     # slice — the stack was already fine. Previously this said `verified` directly above a
     # line reading "dispatch: failed for: chatbot-backend frontend".
     if [ "$DISPATCH_OK" = "0" ]; then
-      record "**Attempt $ATTEMPT — verify:** PASS, but${FANOUT_FAILED} never reported a"
+      VERIFY_PASSED=1
+      record "**Attempt $ATTEMPT — verify:** PASS, but ${FANOUT_FAILED} did not report a"
       record "completed slice. Not verified: a passing suite over an unfinished slice"
       record "proves only that the stack still works."
+      record ""
+      # A slice that stops reports WHY, in fanout.json. That reason was reachable only by
+      # opening the log, so a `failed` outcome over a green suite read as "the agent did
+      # nothing" when it had in fact named a blocker.
+      REASONS="$(python3 -c "
+import json
+d = json.load(open('$ATT_DIR/fanout.json'))
+for r, v in (d.get('repos') or {}).items():
+    if v.get('status') != 'ok':
+        print('- **' + r + '** reported \`' + str(v.get('status')) + '\`: '
+              + (v.get('reason') or '(no reason given)'))
+" 2>/dev/null || true)"
+      while IFS= read -r l; do if [ -n "$l" ]; then record "$l"; fi; done <<< "$REASONS"
+      record ""
     else
       REMOTE_ASSERTED="$(python3 -c "
 import json
@@ -541,7 +561,16 @@ except Exception:
   if [ -z "${OWNERS// /}" ]; then
     OWNERS="$(echo "${FANOUT_FAILED:-}" | tr -s ' ')"
   fi
-  record "**Attempt $ATTEMPT — verify:** FAIL at \`$STAGE\`"
+  # Two callers reach here: a verify that failed, and a verify that PASSED over a slice
+  # that stopped. The second printed a third line for the same attempt — `verify: FAIL at
+  # \`unknown\`` — directly under `verify: PASS`, naming a stage that did not fail, because
+  # `failed_stage` is null when nothing failed.
+  if [ "${VERIFY_PASSED:-0}" = "1" ]; then
+    record "**Attempt $ATTEMPT — routing:** no stage failed. What is answerable is the"
+    record "unfinished slice above."
+  else
+    record "**Attempt $ATTEMPT — verify:** FAIL at \`$STAGE\`"
+  fi
   FAULT="$(python3 -c "
 import json
 try:

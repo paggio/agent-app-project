@@ -79,9 +79,22 @@ slice session, so the path resolves and the agent opens it itself. Say in words 
 wrong with it as well; a path with no sentence is a puzzle. That applies whether or not the
 objection is assertable — most of them are, and the screenshot is just how you noticed.
 
-If it cannot be expressed as a step **at all** — it is purely how something looks — the
-evidence file is the whole of the brief, and say so in the report: an unassertable criterion
-is a hole the suite cannot cover, and the next change will not know about it.
+**Assertable, but not by the suite.** Between "write a step" and "no step is possible" sits
+the objection no HTTP client can see — plumbing, layout, a rule about this repo's own files.
+0006's credential defect was one: the loop must run with no credentials, so no step could
+prove the judge reaches AWS, and the criterion was still assertable. **A check in
+`scripts/check-docs.py` is the assertion then** — its doctrine is that every check names a
+defect that actually happened, and a correction is exactly that. Write it before the fix and
+watch it fail with `./scripts/check-docs.py`, the same way a step is watched with
+`make verify`.
+
+Then say in the report **which oracle it was**, because `verify.json`'s assertion count does
+not include a gate, and a reader takes that count for the whole of the evidence.
+
+If it cannot be expressed as a step **at all** — it is purely how something looks, or its
+oracle needs credentials the loop must not require — the evidence file is the whole of the
+brief, and say so in the report: an unassertable criterion is a hole the suite cannot cover,
+and the next change will not know about it.
 
 ## 2 — Re-freeze, only if the interface is what is wrong
 

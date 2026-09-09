@@ -20,10 +20,36 @@ BULLET = re.compile(r"^- \*\*(.+?)\*\*")
 NOT_FINDINGS = ("state audit", "not verified")
 
 
+def _unwrap(text):
+    """Lines, with a bolded bullet lead that wraps across lines joined into one.
+
+    retros/README.md requires a lead that stands alone — "the § 7 ledger hid every recorded
+    finding" rather than "a logging gap" — and a lead that stands alone does not fit an
+    88-column line. The per-line match saw 10 of 15 leads in the first retrospective written
+    to that instruction, so the gate's only remedy was to shorten the leads the same file
+    asks to be self-contained.
+    """
+    out, buf = [], None
+    for line in text.splitlines():
+        if buf is not None:
+            buf += " " + line.strip()
+            if "**" in line:
+                out.append(buf)
+                buf = None
+            continue
+        if line.startswith("- **") and line.count("**") == 1:
+            buf = line.rstrip()
+            continue
+        out.append(line)
+    if buf is not None:
+        out.append(buf)
+    return out
+
+
 def leads(text):
     """[(section, lead)] — one entry per finding recorded in `text`, in file order."""
     out, section = [], ""
-    for line in text.splitlines():
+    for line in _unwrap(text):
         m = HEADING.match(line)
         if m:
             if m.group(1) == "##":

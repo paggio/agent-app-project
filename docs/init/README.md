@@ -67,6 +67,15 @@ from the directory the session starts in. Each product repo therefore needs a
 complete, self-contained file. `CLAUDE.md` does layer; that is why the control repo's
 copy can be additive.
 
+**A `deny` must not glob a file the same repo requires committed.** `deny: Edit(./.env*)`
+matches `.env.example`, which `.gitignore` un-ignores with `!.env.example` on purpose — two
+committed files contradicting each other, with the correct action on the forbidden side. It
+is latent from the first commit and surfaces only when something has to create the template,
+which is a dispatched slice that then cannot: three repos scaffolded from this template carry
+it, and it cost `0006` two dispatches and left the file unshipped. Deny the real files by
+name — `Edit(./.env)`, `Edit(./.env.local)` — and check every `deny` pattern against that
+repo's own `.gitignore` negations before committing either.
+
 Commit and push each repo with its own history before touching the control repo.
 
 ### Step 3 — Scaffold the control repo
