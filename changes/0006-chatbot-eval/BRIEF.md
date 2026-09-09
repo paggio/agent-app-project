@@ -49,6 +49,38 @@ re-freeze" is the reflex: every one of these is implementable against the frozen
 are all already promised, and a second freeze with an identical `contracts/` tree would
 make the record say an interface moved when it did not.
 
+## Corrected, 2026-09-09 — `/ship-correct`
+
+`make eval JUDGE=bedrock` failed on a stack whose credentials were correct. The criterion
+was right and unchanged — the real judge is supposed to work when a person configures it —
+and **nothing asserted it**, because "the judge, judging" sits in § A gap in the oracle: it
+needs credentials the loop must not require, and a criterion in that list is a criterion
+nobody checks.
+
+The cause was configuration, not code. `chatbot-eval/.env` carried three AWS credential
+names and no region; boto3 refuses without one and says so inside a sentence that begins
+"could not load credentials". `chatbot-backend/.env` happened to carry `AWS_REGION`, so one
+consumer of the same stack worked and the other did not.
+
+| Was | Is |
+| --- | --- |
+| credentials copied into each product repo's own `.env` | **`stack/secrets.env`** — one gitignored file for the joined stack, delivered by `env_file:`, with `secrets.env.example` committed as the template. `docs/adr/0016`. |
+| nothing named a region anywhere | the template declares it, and `check-docs.py [provider-credentials]` refuses a template that omits it |
+| no way to ask whether the stack is configured | **`make creds`** — names and provenance, never a value |
+| `stack/dev.env`, 179 lines, mostly prose | grouped by service, comment blocks only where a value would otherwise be a mystery |
+
+The safety property from `docs/adr/0006` is unchanged and is now enforced rather than
+intended: **no control-repo process reads the credentials file**, because this repo writes
+`verify.json`, `smoke.json`, container logs and repair prompts. `dev-env.sh` naming
+`secrets.env` is a gate failure.
+
+**Not seam-assertable, and worth saying plainly.** The objection is a configuration-plumbing
+defect, and no HTTP client can see it: the loop must run with no credentials, so nothing in
+`smoke.yaml` can prove that the bedrock judge reaches AWS. The assertion that captures it is
+a control-repo gate — `[provider-credentials]`, written before the fix and watched failing
+on four counts — plus `make creds` and `make eval JUDGE=bedrock` as the oracles a person
+runs. § A gap in the oracle records that.
+
 ## What we are NOT building, and it is the important half
 
 **This change asserts the MECHANISM, never the QUALITY.** Every criterion below is of the
@@ -224,6 +256,14 @@ Two things are real and not seam-visible, and saying so is part of the plan.
   honestly. That is a harness defect rather than a property of this change, and it is in
   the friction log for the retrospective rather than fixed here.
 - **The judge, judging.** `EVAL_JUDGE=bedrock` needs credentials the loop must not require.
+  **This gap bit on 2026-09-09** and is the reason for that day's correction: a criterion
+  parked here is one nobody checks, and the bedrock path was broken by a missing region for
+  as long as it existed. What is asserted instead is everything *up to* the provider — that
+  the credentials file exists, is gitignored, reaches every provider-calling service, names
+  a region, and is read by no control-repo process (`check-docs.py
+  [provider-credentials]`) — plus an early refusal naming the variable, tested inside
+  chatbot-eval. The last step, that AWS answers, is `make eval JUDGE=bedrock`, and it stays
+  a person's to run.
   Covered by the eval repo's own tests against a recorded judge response, and by the
   metadata criterion 16 — an experiment always says what judged it, so a run with the real
   judge is distinguishable from one without.

@@ -16,6 +16,17 @@ include:
 
 services:
   backend:
+    # The joined stack's shared provider credentials — ONE file for every service that
+    # needs them, rather than a copy per product repo. `required: false` so a fresh clone
+    # and CI come up with none and run credential-free.
+    #
+    # MEASURED, not assumed: compose APPENDS env_file across `include:`, and this
+    # stack-level entry WINS over the submodule's own `.env` on a shared name — so a
+    # developer keeps their per-repo file for `cd <repo> && make up` and the joined stack
+    # takes its values from here. docs/adr/0016.
+    env_file:
+      - path: ./secrets.env
+        required: false
     # Read back by scripts/service-owner.sh to attribute a stack that did not come up. This
     # is the only file that can see both repos, so it is where ownership is declared.
     labels:
@@ -91,6 +102,17 @@ services:
   # no image and refuses to start anything. Loud, and ahead of the submodule until 0006's
   # slice lands.
   eval:
+    # The joined stack's shared provider credentials — ONE file for every service that
+    # needs them, rather than a copy per product repo. `required: false` so a fresh clone
+    # and CI come up with none and run credential-free.
+    #
+    # MEASURED, not assumed: compose APPENDS env_file across `include:`, and this
+    # stack-level entry WINS over the submodule's own `.env` on a shared name — so a
+    # developer keeps their per-repo file for `cd <repo> && make up` and the joined stack
+    # takes its values from here. docs/adr/0016.
+    env_file:
+      - path: ./secrets.env
+        required: false
     labels:
       agentapp.owner: chatbot-eval
     # Waited on here rather than in chatbot-eval's own compose file, which cannot name a

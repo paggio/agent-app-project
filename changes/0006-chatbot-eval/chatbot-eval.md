@@ -1,5 +1,46 @@
 # 0006 — chatbot-eval slice
 
+## CORRECTED, 2026-09-09 — read this first
+
+`make eval JUDGE=bedrock` failed with a message that blamed the credentials:
+
+```
+Could not load credentials to authenticate with AWS client ... You must specify a region.
+```
+
+The credentials were fine. `chatbot-eval/.env` held the three AWS credential names and **no
+region**, boto3 resolves a region from the environment or refuses, and it reports that
+inside a sentence beginning "could not load credentials" — so the message sent its reader
+to look at the wrong thing.
+
+**The control repo has already fixed the cause**: `stack/secrets.env` is now one gitignored
+file holding the whole joined stack's provider credentials, delivered to this service by
+`env_file:` in `stack/compose.yml`, and `docs/adr/0016` is the decision. You do not need to
+change how you read AWS configuration — you still read none of it, boto3 does.
+
+**Two things ARE yours, and neither is large:**
+
+1. **Ship a `.env.example`.** §3 has always required one and this repo has none — which is
+   how a person came to write a credentials file with no region in it. It must name
+   `AWS_REGION`, and it must say that in the joined stack the file to fill in is the control
+   repo's `stack/secrets.env` and this one is only for running this repo standalone.
+
+2. **Refuse EARLY and name the missing variable.** Under `EVAL_JUDGE=bedrock`, check before
+   constructing the client that a region is resolvable — `AWS_REGION` or
+   `AWS_DEFAULT_REGION` in the environment — and if not, refuse (**exit 2**) with a message
+   that names the variable and points at `stack/secrets.env`. A pydantic validation dump is
+   a correct refusal and an unreadable one; §6's exit codes already put this in the
+   "refused to judge" class, so only the message changes.
+
+   Do not go further than that. Do NOT default a region, do NOT read `~/.aws`, and do NOT
+   probe AWS to find out whether the credentials work — a default region is a guess that
+   succeeds in the wrong account, and boto3 remains the only thing here that touches an
+   AWS_* variable.
+
+**Nothing else changes.** No criterion is removed, no evaluator moves, and the corpus and
+question set are untouched. Everything in the amendment of 2026-09-07 below still stands.
+
+
 ## AMENDED, 2026-09-07 — read this before the rest
 
 Your branch already carries a working eval and its pull request is open. This amendment
@@ -172,6 +213,7 @@ image runs locally and as a k8s Job, and only these move.
 | `EVAL_DOCUMENT_PREFIX` | yes | the filename marker; default `eval__` |
 | `EVAL_THREAD_PREFIX` | yes | the thread-TITLE marker, and the only prefix it will delete; default `eval__` |
 | `EVAL_IMAGE_TAG` | no | this image's own version. Recorded in the metadata; **never invented** — null when unset |
+| `AWS_REGION` / `AWS_DEFAULT_REGION` | for `bedrock` | not read by your code — boto3 reads them. Required for the bedrock judge, and their absence is what you now refuse on. From `stack/secrets.env` in the joined stack |
 | `EVAL_JUDGE` | yes | `heuristic` or `bedrock`; default `heuristic` |
 | `EVAL_JUDGE_MODEL_ID` | no | recorded in metadata even when unused |
 | `EVAL_JUDGE_PROMPT_VERSION` | no | bumped by hand when the judge prompt changes |
@@ -492,6 +534,12 @@ because tracing was off would be unusable in the one environment where tracing i
 - [ ] a test that `eval_image_tag` is null when `EVAL_IMAGE_TAG` is unset, and is the
       variable's value when set — the null case is what catches a fallback
 - [ ] `evalset/README.md` says `q-charter-quorum` is load-bearing and why
+- [ ] **a `.env.example` exists, names `AWS_REGION`, and says that the joined stack's
+      credentials live in the control repo's `stack/secrets.env`**
+- [ ] **a test that `EVAL_JUDGE=bedrock` with no resolvable region refuses (exit 2)
+      with a message naming the variable**, and that it refuses BEFORE constructing a
+      client — a refusal that costs a network round trip is a refusal that will be
+      mistaken for an outage
 - [ ] **a test that `chat_model_id` from the VersionResponse is copied into the metadata
       verbatim**, including the null case. The SEAM cannot assert this: the loop runs
       `CHAT_MODEL=echo`, where the correct value is null, and `smoke.py` stringifies a

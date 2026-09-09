@@ -22,7 +22,7 @@ REPOS := chatbot-backend chatbot-eval frontend infra
 
 .DEFAULT_GOAL := help
 .PHONY: help up down restart ps logs rebuild config urls open health chat smoke verify iterate \
-        e2e eval phoenix-durability repos lock prs check check-docs init clean
+        e2e eval creds phoenix-durability repos lock prs check check-docs init clean
 
 help: ## Show this list
 	@echo "The full local stack — backend, datastores, frontend, proxy — on one origin."
@@ -60,6 +60,12 @@ rebuild: ## Rebuild one service without cycling the rest: make rebuild SVC=backe
 
 config: ## Print the rendered compose config, with secrets redacted
 	@./scripts/stack.sh config
+
+# The diagnostic that would have answered "why did make eval JUDGE=bedrock fail" in one
+# line. NAMES ONLY, never values: this prints which provider inputs resolved and from
+# where, and a missing AWS_REGION is the failure it exists to make obvious.
+creds: ## Say whether provider credentials are configured, and from where
+	@./scripts/creds.sh
 
 urls: ## Print the endpoints worth knowing
 	@echo

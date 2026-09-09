@@ -57,6 +57,27 @@ evidence about any deployment. That is deliberate: `infra/` can deploy nothing, 
 eval's future as a k8s CronJob is named in `BRIEF.md` § Out of scope with that reason rather
 than quietly dropped.
 
+## Corrected, 2026-09-09 — /ship-correct
+
+**What was wrong:** `make eval JUDGE=bedrock` failed on a stack whose AWS credentials were
+valid. `chatbot-eval/.env` held the three credential names and no region; boto3 refuses
+without one and reports it inside a message beginning "could not load credentials", so the
+error blamed the credentials. `chatbot-backend/.env` happened to carry `AWS_REGION`, so one
+consumer of the same stack worked and the other did not.
+
+**What the criterion turned out to be:** nothing asserted it. "The judge, judging" was
+parked in `BRIEF.md` § A gap in the oracle because it needs credentials the loop must not
+require — and a criterion in that list is a criterion nobody checks. The correction adds the
+assertion that *can* live in the loop: `check-docs.py [provider-credentials]`, which failed
+on four counts before the fix. Credentials now live once, in `stack/secrets.env`
+(gitignored, `env_file:`-delivered, read by no control-repo process — `docs/adr/0016`),
+`make creds` answers "configured, from where?" without printing a value, and `stack/dev.env`
+is grouped by service instead of 179 lines of prose.
+
+Not seam-assertable, and recorded as such: no HTTP client can see a credential-plumbing
+defect, and the loop must run without credentials. `make eval JUDGE=bedrock` stays a
+person's oracle.
+
 ## Amended, 2026-09-07 — /ship-iterate
 
 Four questions on the shipped-but-unmerged change. Two were answered by measurement against

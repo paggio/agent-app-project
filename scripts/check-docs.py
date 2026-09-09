@@ -1035,6 +1035,148 @@ def check_image_tags() -> None:
                      f"one. See docs/adr/0015.")
 
 
+# --- 19. one home for provider credentials, and no harness process reads it ----------
+# docs/adr/0016. `make eval JUDGE=bedrock` failed with "You must specify a region" because
+# chatbot-eval/.env held three credential names and no region, and nothing anywhere named
+# one — while chatbot-backend/.env happened to carry AWS_REGION, so the backend worked and
+# the eval did not. Credentials were per-repo, so a second consumer meant a second copy and
+# a second chance to omit something.
+#
+# The safety property this must NOT trade away is docs/adr/0006's: a credential never
+# enters a control-repo process, because this repo writes verify.json, smoke.json, container
+# logs and repair prompts. A shared file is safe only while compose's `env_file` is its only
+# reader — hence the dev-env.sh clause, which is the load-bearing one.
+SECRETS_FILE = "secrets.env"
+
+# Services in stack/compose.yml that may call a provider and therefore need the shared file.
+# Hand-kept, like IMAGE_TAG_OWNERS: a service absent from this tuple is simply not gated,
+# which is a decision rather than an omission.
+PROVIDER_SERVICES = ("backend", "eval")
+
+# What the template has to name. AWS_REGION is here because its absence is the whole reason
+# this check exists: boto3 resolves a region from the environment or fails, and nothing in
+# the joined stack named one for the eval.
+REQUIRED_SECRET_NAMES = ("AWS_REGION",)
+
+# Names that must NEVER appear in a committed file or an interpolated `environment:` value.
+# Deliberately NOT CREDENTIAL_SHAPED: that also matches SMOKE_PASSWORD, DEV_ACCOUNT_PASSWORD
+# and EVAL_ACCOUNT_PASSWORD, which are committed ON PURPOSE — they are `.test` identities
+# that guard nothing reachable, docs/adr/0005 and 0006 argue why, and the smoke suites have
+# to interpolate them so stack/dev.env is exactly where they belong. The rule is about a
+# real credential for an external provider, which is a narrower thing.
+PROVIDER_SECRET = re.compile(
+    r"^AWS_(ACCESS_KEY_ID|SECRET_ACCESS_KEY|SESSION_TOKEN|PROFILE)$")
+
+
+def check_provider_credentials() -> None:
+    example = os.path.join(ROOT, "stack", f"{SECRETS_FILE}.example")
+    if not os.path.exists(example):
+        fail("provider-credentials",
+             f"stack/{SECRETS_FILE}.example does not exist. It is the file a person copies "
+             f"to stack/{SECRETS_FILE} to give the whole joined stack its credentials, and "
+             f"without a template the names are folklore — which is how the eval ended up "
+             f"with credentials and no AWS_REGION. See docs/adr/0016.")
+    else:
+        declared = _env_keys(example)
+        for name in REQUIRED_SECRET_NAMES:
+            if name not in declared:
+                fail("provider-credentials",
+                     f"stack/{SECRETS_FILE}.example does not name {name}. boto3 resolves a "
+                     f"region from the environment or refuses, and `make eval JUDGE=bedrock` "
+                     f"died on exactly that. Name it in the template, commented out if it "
+                     f"has no sensible default.")
+
+    # The real file must never be committable.
+    p = subprocess.run(("git", "check-ignore", "-q", f"stack/{SECRETS_FILE}"),
+                       capture_output=True, cwd=ROOT)
+    if p.returncode != 0:
+        fail("provider-credentials",
+             f"stack/{SECRETS_FILE} is not gitignored. It is the one file in this repo that "
+             f"holds real credentials; .gitignore must cover it by name.")
+
+    # THE LOAD-BEARING CLAUSE. docs/adr/0006 keeps credentials out of every control-repo
+    # process. The shared file is safe only because compose's env_file is its only reader.
+    try:
+        dev_env_sh = open(os.path.join(ROOT, "scripts", "dev-env.sh")).read()
+    except OSError:
+        dev_env_sh = ""
+    if SECRETS_FILE in dev_env_sh:
+        fail("provider-credentials",
+             f"scripts/dev-env.sh names {SECRETS_FILE}. It must NOT read it: dev-env.sh "
+             f"exports into the environment of the process that writes verify.json, "
+             f"smoke.json, container logs and repair prompts, and docs/adr/0006 keeps "
+             f"credentials out of exactly that. compose's env_file is the only sanctioned "
+             f"reader.")
+
+    compose = os.path.join(ROOT, "stack", "compose.yml")
+    try:
+        doc = yaml.safe_load(open(compose)) or {}
+    except (OSError, yaml.YAMLError):
+        return  # other checks report an unparseable compose file
+    services = doc.get("services") or {}
+
+    for name in PROVIDER_SERVICES:
+        svc = services.get(name)
+        if svc is None:
+            fail("provider-credentials",
+                 f"PROVIDER_SERVICES names {name!r} and stack/compose.yml declares no such "
+                 f"service. Drop it from the tuple, or declare the service — an ungated "
+                 f"provider service is how a credential goes missing silently.")
+            continue
+        entries = (svc or {}).get("env_file") or []
+        if isinstance(entries, (str, dict)):
+            entries = [entries]
+        paths = [e if isinstance(e, str) else (e or {}).get("path", "") for e in entries]
+        if not any(SECRETS_FILE in str(p) for p in paths):
+            fail("provider-credentials",
+                 f"stack/compose.yml service {name!r} does not read stack/{SECRETS_FILE} "
+                 f"through env_file. It is a provider-calling service, so it needs the "
+                 f"shared credentials — and per-service copies are what left the eval "
+                 f"without a region. See docs/adr/0016.")
+
+    # A credential must never be interpolated into an `environment:` value: `make config`
+    # prints those, and stack/dev.env is committed.
+    for name, svc in sorted(services.items()):
+        for key in ((svc or {}).get("environment") or {}):
+            if PROVIDER_SECRET.match(str(key)):
+                fail("provider-credentials",
+                     f"stack/compose.yml service {name!r} sets {key} under `environment:`. "
+                     f"Credentials reach a container through env_file, read by the Docker "
+                     f"daemon — an `environment:` value is interpolated by compose and "
+                     f"printed by `make config`.")
+
+    for key in _env_keys(os.path.join(ROOT, "stack", "dev.env")):
+        if PROVIDER_SECRET.match(key):
+            fail("provider-credentials",
+                 f"stack/dev.env declares {key}, which is credential-shaped, and that file "
+                 f"is COMMITTED. It belongs in stack/{SECRETS_FILE}.")
+
+
+# --- 20. dev-env.sh does not strip trailing comments ---------------------------------
+# Its parser is `_val="${_line#*=}"` — everything after the first `=`, verbatim. So
+# `SIGNUP_CODE=dev-signup-code  # gates registration` sets the value to
+# `dev-signup-code  # gates registration` and every assertion that interpolates it fails
+# for a reason nobody would look for. This is a live trap precisely because the file was
+# just made terse, and an inline comment is the obvious way to keep it terse.
+def check_dev_env_inline_comments() -> None:
+    path = os.path.join(ROOT, "stack", "dev.env")
+    try:
+        lines = open(path).read().splitlines()
+    except OSError:
+        return
+    for n, line in enumerate(lines, 1):
+        stripped = line.strip()
+        if not stripped or stripped.startswith("#") or "=" not in stripped:
+            continue
+        value = stripped.split("=", 1)[1]
+        if " #" in value:
+            fail("dev-env-inline-comments",
+                 f"stack/dev.env line {n} looks like it has a trailing comment. "
+                 f"scripts/dev-env.sh takes EVERYTHING after the first `=` verbatim — it "
+                 f"does not strip comments or quotes — so the value would include the "
+                 f"comment. Put it on its own line above.")
+
+
 def main() -> int:
     ap = argparse.ArgumentParser()
     ap.add_argument("--warnings-are-errors", action="store_true")
@@ -1048,6 +1190,7 @@ def main() -> int:
               check_stack_services, check_clean_slate, check_lane_coverage,
               check_lane_vocabulary, check_status_headings,
               check_image_tags, check_dev_env_duplicates,
+              check_provider_credentials, check_dev_env_inline_comments,
               report_readme_divergence)
     for fn in checks:
         try:
