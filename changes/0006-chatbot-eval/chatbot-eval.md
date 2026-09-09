@@ -18,6 +18,25 @@ file holding the whole joined stack's provider credentials, delivered to this se
 `env_file:` in `stack/compose.yml`, and `docs/adr/0016` is the decision. You do not need to
 change how you read AWS configuration — you still read none of it, boto3 does.
 
+### The blocker from the 2026-09-09 dispatch, and its resolution
+
+You reported that you cannot create `.env.example` because this repo's committed
+`.claude/settings.json` denies `Edit(./.env*)`, which globs onto the template. **You were
+right to report it rather than work around it, and your second option is the correct one:
+narrow the rule.**
+
+`.gitignore` here already carries `!.env.example`, so this repo has two committed config
+files that contradict each other — the template is *meant* to be committed and the deny
+rule makes it unwritable. That is the shape the control repo's `docs/adr/0008` exists to
+dissolve: when the correct engineering action is the one a stated rule forbids, the rule is
+wrong. **Fix the rule, in the same commit as the template**, and say why in the commit
+message.
+
+Narrow it so real credential files stay protected and the committed template does not:
+replace `Edit(./.env*)` with rules that cover `.env` and `.env.local` and leave
+`.env.example` writable. Do not simply delete the protection, and do not add an allow rule
+that re-permits every `.env*` path.
+
 **Two things ARE yours, and neither is large:**
 
 1. **Ship a `.env.example`.** §3 has always required one and this repo has none — which is
