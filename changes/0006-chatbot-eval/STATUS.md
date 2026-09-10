@@ -57,6 +57,32 @@ evidence about any deployment. That is deliberate: `infra/` can deploy nothing, 
 eval's future as a k8s CronJob is named in `BRIEF.md` § Out of scope with that reason rather
 than quietly dropped.
 
+## Corrected, 2026-09-10 — /ship-correct
+
+**What was wrong:** nothing new. Asked to check overall correctness rather than to fix a
+named defect, and the triage found no missing and no weak criterion — the one outstanding
+item was **already asserted and already failing**: `chatbot-eval.md` requires a
+`.env.example`, the repo has none, and two dispatches reported exactly that. So this run is
+shape three of phase 1's triage, routable as it stood.
+
+**What changed is that the blocker cleared.** The template was unwritable because that repo
+denied `Edit(./.env*)` — which globs onto the committed template its own `.gitignore`
+un-ignores — and narrowing that rule was refused by a session-level guard above this
+harness. A human removed the rule by hand, so the slice can finish. It was removed
+*entirely* rather than narrowed, leaving real `.env` files unprotected and
+`settings.json` uncommitted, so the slice is now told to restore it in the narrow form in
+the same commit as the template.
+
+**Also confirmed working, end to end, in the configured state:** `make eval JUDGE=bedrock`
+with a real backend model and a real judge — 18 examples, 0 errored, exit 0, and the two
+judge-based evaluators produced real numbers for the first time (groundedness 1.000,
+answer_correctness 0.842, against 0.760/0.167 under echo + heuristic). Their thresholds stay
+at `0.0`: the loop must run credential-free, so gating them is a separate decision.
+
+**Two things this lane does not touch, both a person's:** `chatbot-backend/.env` still holds
+a second copy of the AWS credentials the whole point was to keep in one place, and the two
+prose references to `.env.example` in the eval repo are dangling until the slice lands.
+
 ## Corrected, 2026-09-09 — /ship-correct
 
 **What was wrong:** `make eval JUDGE=bedrock` failed on a stack whose AWS credentials were

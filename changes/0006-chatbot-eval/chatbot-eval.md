@@ -18,24 +18,39 @@ file holding the whole joined stack's provider credentials, delivered to this se
 `env_file:` in `stack/compose.yml`, and `docs/adr/0016` is the decision. You do not need to
 change how you read AWS configuration — you still read none of it, boto3 does.
 
-### The blocker from the 2026-09-09 dispatch, and its resolution
+### UNBLOCKED, 2026-09-10 — finish this, and restore what was removed
 
-You reported that you cannot create `.env.example` because this repo's committed
-`.claude/settings.json` denies `Edit(./.env*)`, which globs onto the template. **You were
-right to report it rather than work around it, and your second option is the correct one:
-narrow the rule.**
+Two dispatches reported that `.env.example` could not be created: this repo denied
+`Edit(./.env*)`, which globs onto the template its own `.gitignore` un-ignores, and editing
+`settings.json` to narrow that rule was refused by a session-level guard. **Both blocks are
+gone.** A human removed the deny rule by hand, so the template is writable now.
 
-`.gitignore` here already carries `!.env.example`, so this repo has two committed config
-files that contradict each other — the template is *meant* to be committed and the deny
-rule makes it unwritable. That is the shape the control repo's `docs/adr/0008` exists to
-dissolve: when the correct engineering action is the one a stated rule forbids, the rule is
-wrong. **Fix the rule, in the same commit as the template**, and say why in the commit
-message.
+They removed it **entirely** rather than narrowing it, which is a small step backwards on
+safety: nothing in this repo now stops an agent editing a real `.env`. `.claude/settings.json`
+is sitting UNCOMMITTED on your branch in that state. So three things, in one commit:
 
-Narrow it so real credential files stay protected and the committed template does not:
-replace `Edit(./.env*)` with rules that cover `.env` and `.env.local` and leave
-`.env.example` writable. Do not simply delete the protection, and do not add an allow rule
-that re-permits every `.env*` path.
+1. **Ship `.env.example`.** It must name `AWS_REGION` and `AWS_DEFAULT_REGION` with a
+   working default, empty key placeholders, and a header saying that **in the joined stack
+   this is not the file to fill in** — the control repo's `stack/secrets.env` is, it wins
+   over this file, and `make creds` there reports what resolved. Plain `KEY=VALUE`, no
+   `export` prefix.
+
+2. **Restore the deny rule, narrowed**, and commit `settings.json` in the same commit:
+   `"Edit(./.env)"` and `"Edit(./.env.local)"` in place of the removed `"Edit(./.env*)"`.
+   Real credential files stay protected, the committed template does not. Do not restore
+   the glob, and do not add an allow rule that re-permits every `.env*` path.
+
+3. **The two dangling references are the reason this is not cosmetic.**
+   `README.md:50` and `docs/architecture.md:370` both point at `.env.example` today and the
+   file does not exist. Check them after you create it and fix the wording if it now says
+   something untrue — the joined stack, not this file, is where a person puts credentials.
+
+Say in the commit message why the rule changed: two committed config files contradicted
+each other and the correct action was on the forbidden side, which is the control repo's
+`docs/adr/0008` shape.
+
+**Nothing else changes.** No criterion is removed and no evaluator moves. Everything below
+still stands, including the 2026-09-09 region refusal you already shipped in `21a8590`.
 
 **Two things ARE yours, and neither is large:**
 
