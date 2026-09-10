@@ -38,17 +38,17 @@ Never run two lanes in one session.
 - NEVER run `docker compose config` on `stack/compose.yml` or paste its output — it inlines
   `env_file` and prints the real AWS credentials in `chatbot-backend/.env`. Use `make config`.
 - Ignore `TODO.md` — it is a personal ideas dump, not something you must maintain/populate/read into.
-- Concise EVERYWHERE — comments, docs, briefs, commit messages. Verbosity is the failure,
-  not the fix; if I want depth I will ask. One exception: the step-schema header in
-  `changes/0000-example-change/smoke.yaml`, which `check-docs.py` requires kept complete.
+- Concise EVERYWHERE, and REPLIES TO ME MOST OF ALL: lead with the result, no preamble, no
+  narration, no recap. Same for comments, docs, briefs, commit messages. Verbosity is the
+  failure, not the fix — if I want depth I will ask. One exception: the step-schema header
+  in `changes/0000-example-change/smoke.yaml`, which `check-docs.py` requires kept complete.
 
 ## Layout
 
 - `contracts/`  the interfaces, plus the normative prose `README.md` neither spec can hold
-- `changes/NNNN-*/`  `change.yaml` is the machine half — slices, freeze, and `jobs:` for a
-                     criterion whose oracle is a process; `smoke.yaml` is the criteria as
-                     steps, each `owner`ed — that field routes a failure
-- `stack/`  the joined local stack; `dev.env` is one source for it and the suites
+- `changes/NNNN-*/`  `change.yaml` is the machine half — slices, freeze, `jobs:`;
+                     `smoke.yaml` is the criteria as steps, each `owner`ed — routes a failure
+- `stack/`  the joined local stack; `dev.env` committed config, `secrets.env` the secrets
 - `smoke/baseline.yaml`  the cross-repo regression suite
 - `docs/adr/`  decisions and their accepted costs — read before proposing a redesign
 - `docs/infra-interface.md`  what this repo requires of `infra/`
