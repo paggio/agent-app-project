@@ -61,9 +61,15 @@ than quietly dropped.
 
 **What was wrong:** nothing new. Asked to check overall correctness rather than to fix a
 named defect, and the triage found no missing and no weak criterion — the one outstanding
-item was **already asserted and already failing**: `chatbot-eval.md` requires a
-`.env.example`, the repo has none, and two dispatches reported exactly that. So this run is
-shape three of phase 1's triage, routable as it stood.
+item was already required and already failing: `chatbot-eval.md` requires a
+`.env.example`, the repo has none, and two dispatches reported exactly that.
+
+**Corrected by the retrospective:** this was filed here as "shape three — a step asserts it
+and already fails", and that is false in the lane's own terms. No *step* asserts it —
+`.env.example` lives in the slice brief and in this file, never in `smoke.yaml`, and both
+`make verify` runs returned `owners_failing: []`. It was a slice-brief requirement failing
+through the slice's own report, and `--only chatbot-eval` came from that brief rather than
+from evidence. Phase 1 had no shape for an assessment request; it has one now.
 
 **What changed is that the blocker cleared.** The template was unwritable because that repo
 denied `Edit(./.env*)` — which globs onto the committed template its own `.gitignore`
