@@ -50,6 +50,18 @@ No frontend or infra PR: neither is a slice. `BRIEF.md` § Out of scope says why
 - report: `changes/0006-chatbot-eval/runs/20260910T160833Z/report.md`
 <!-- iterate:end -->
 
+**Settled at merge, 2026-09-11 — the line above is stale and nothing revisits it.**
+That run's `verify.json` records `status: pass`, 91 assertions passed, 0 failed, 28 from
+this change's own suite, 2 of 2 jobs. `failed` was the loop declining to call a passing
+suite verified while one slice reported `failed` — and the item it reported was
+`.env.example`, which a session-level permission guard made impossible for any agent and a
+human then cleared. All three pull requests merged: agent-app-project#19,
+chatbot-backend#9, chatbot-eval#1.
+
+`iterate.sh` writes that block and no lane revisits it after a merge, so a merged and green
+change records `failed` forever. Found by the retrospective of 2026-09-11, which proposes
+the durable fix in `/realign` § 5.
+
 ## What this change can and cannot reach
 
 `deploy.infra: false`, so the best outcome is **`verified-local`** — a full pass, and not
