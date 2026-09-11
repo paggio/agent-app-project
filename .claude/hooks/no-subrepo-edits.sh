@@ -28,9 +28,13 @@ try:
 except Exception:
     cmd = raw   # unparseable payload: scan it whole rather than waving it through
 
-SUB = r"(chatbot-backend|frontend|infra)"
+SUB = r"(chatbot-backend|chatbot-eval|frontend|infra)"
 # A path inside a submodule — `chatbot-backend/x`, `./frontend/x`, `"infra/x` — but not
 # `-C chatbot-backend`, which is how a legitimate read or branch switch is spelled.
+# One alternation, and it is the fourth place the submodule set is written down; the
+# others are .claude/settings.json, the Makefile's REPOS and check-docs.py's
+# SUBMODULES. scripts/test-hooks.py holds this one to reality — it probes a write into
+# every submodule, so a set that falls behind fails a gate rather than going quiet.
 SUBPATH = re.compile(rf"(^|[^\w./-]){SUB}/")
 WRITERS = re.compile(
     r"(^|[^\w./-])"
@@ -58,7 +62,8 @@ PY
 
 if [ "$VERDICT" != "allow" ]; then
   cat >&2 <<'MSG'
-Blocked: this command writes inside a submodule (chatbot-backend/, frontend/, infra/).
+Blocked: this command writes inside a submodule
+(chatbot-backend/, chatbot-eval/, frontend/, infra/).
 
 Implementation never happens from the control session. Either:
   - start a session inside that repo, so it picks up its own CLAUDE.md, settings,

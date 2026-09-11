@@ -19,7 +19,7 @@ with itself.
 `lock.sh` records whatever commit each submodule currently has checked out; run it while a
 submodule is still on a feature branch and `repos.lock` names unmerged commits — and if the
 product repo squash-merged, those SHAs no longer exist on any branch. The lock then pins a
-triple that cannot be checked out, which is worse than a stale lock because it looks
+pin that cannot be checked out, which is worse than a stale lock because it looks
 authoritative. The same argument forbids `git add`ing a submodule path early, and forbids
 `git add -A` at the root, which sweeps every pointer in as a side effect.
 
@@ -52,7 +52,7 @@ it, and by then you will have stopped noticing.
 ## 1 — Bring each submodule to its merged main
 
 ```
-for r in chatbot-backend frontend infra; do
+for r in chatbot-backend chatbot-eval frontend infra; do
   git -C "$r" switch main && git -C "$r" pull --ff-only
 done
 make repos
@@ -109,7 +109,7 @@ For a change that also needs the browser, `make e2e`.
 ```
 git switch -c chore/realign-<change>
 ./scripts/lock.sh
-git add chatbot-backend frontend infra repos.lock
+git add chatbot-backend chatbot-eval frontend infra repos.lock
 git commit -m "chore: bump submodules for <change>"
 ```
 

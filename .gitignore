@@ -19,9 +19,7 @@ TODO.md
 changes/*/runs/
 
 # The joined stack's shared provider credentials. Read only by compose's `env_file:`, and
-# never by a script here. The .example beside it IS committed. This rule shipped inside
-# changes/0006 and so existed on that branch alone: on main, and therefore on every
-# main-based branch a lane or a retrospective stands on, `git add -A` staged the real file.
+# never by a script here — docs/adr/0016. The .example beside it IS committed.
 stack/secrets.env
 
 # A crashed run leaves the environment lock behind; it is never committable.

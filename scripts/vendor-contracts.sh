@@ -6,7 +6,7 @@
 #     --from DIR   the contracts/ tree to publish (default: this repo's working copy).
 #                  fanout.sh passes the tree extracted at the freeze SHA, so a slice is
 #                  handed exactly the promise it is judged against.
-#     --repos a,b  only these submodules (default: all three)
+#     --repos a,b  only these submodules (default: every one of them)
 #     --check      report what would change and exit 1 if anything would; write nothing
 #
 # WHY THIS EXISTS. contracts/ has one author, and the product repos are consumers: their
@@ -28,7 +28,7 @@ ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 cd "$ROOT"
 
 FILES="openapi.yaml infra-outputs.yaml"
-REPOS="chatbot-backend frontend infra"
+REPOS="chatbot-backend chatbot-eval frontend infra"
 FROM="$ROOT/contracts"
 CHECK=0; QUIET=0
 

@@ -5,9 +5,11 @@
       "Edit(./chatbot-backend/**)",
       "Edit(./frontend/**)",
       "Edit(./infra/**)",
+      "Edit(./chatbot-eval/**)",
       "Write(./chatbot-backend/**)",
       "Write(./frontend/**)",
-      "Write(./infra/**)"
+      "Write(./infra/**)",
+      "Write(./chatbot-eval/**)"
     ]
   },
   "hooks": {

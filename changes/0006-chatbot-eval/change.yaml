@@ -1,0 +1,72 @@
+# The machine half of a change. BRIEF.md is for humans and for the implementing agent;
+# this is what the scripts parse.
+
+change: 0006-chatbot-eval
+
+# The commit that landed contracts/ alone. The dispatch extracts contracts/ at exactly this
+# SHA and gives the slices nothing else, so it refuses to run without one.
+freeze_sha: "c0ff827c4927aeacbe893459f85b10a44cb89702"
+
+# Two slices. No frontend slice — nothing a person sees moves, and Phoenix is already the UI
+# for an eval result. No infra slice — infra/ is a two-.gitkeep scaffold with no IaC tool
+# chosen, so there is nothing there to add a CronJob to. BRIEF.md § Out of scope records both
+# as decisions rather than omissions.
+slices:
+  - chatbot-backend
+  - chatbot-eval
+
+deploy:
+  local: true
+  # No infra slice and nothing to deploy to, so `verified-local` is the best outcome this
+  # change can reach — on purpose. True here would fail with "infra declares no deploy
+  # target", which is docs/adr/0002 §4 working as intended.
+  infra: false
+
+# ONE-SHOT JOBS. The two criteria no HTTP client can reach: an eval run is a PROCESS, and its
+# exit code is the assertion. docs/adr/0014 is the decision. They run after the stack is up
+# and BEFORE smoke, because the suite reads what they produced — and the joined stack forgets
+# everything on `down` (docs/adr/0011), so on a cold stack there is nothing there until they
+# have run.
+#
+# TWO RUNS, and the second one is why this mechanism exists. A gate is only proved by
+# breaching it: `1.01` is an impossible mean, so the run must come back 1 for a reason that
+# has nothing to do with how good the fixture or the model is. Between them they also leave
+# the state `two-runs-produced-one-dataset` and the idempotent-seed criteria need.
+jobs:
+  - name: eval-run-meets-its-thresholds
+    service: eval
+    owner: chatbot-eval
+    expect_exit: 0
+    # A cold first run pays for the embedding model and the index on its first upload, and
+    # then runs a turn per question. `up --wait` absorbs the stack's own cold start before
+    # this begins, so this budget is the run itself.
+    timeout_s: 900
+
+  - name: a-breached-threshold-exits-non-zero
+    service: eval
+    owner: chatbot-eval
+    # 1 = the thing under test failed, which is what a breached threshold IS. An exit 2 here
+    # would be the eval refusing to judge, and the jobs stage reports that separately — so a
+    # run that could not reach the backend can never be mistaken for a run that scored badly.
+    expect_exit: 1
+    # Cheaper than the first: seeding is idempotent, so this re-runs the experiment only.
+    timeout_s: 600
+    env:
+      # Routing accuracy is a mean of per-example 0.0/1.0, so 1.01 is unreachable by
+      # construction — independent of the corpus, the question set, the model and the judge.
+      # The eval must ACCEPT it and compare rather than validating it away; chatbot-eval.md §3
+      # says so, because a range check here would turn this assertion into a refusal.
+      EVAL_THRESHOLD_ROUTING_ACCURACY: "1.01"
+
+smoke:
+  file: smoke.yaml
+  # The single origin a browser uses. The steps that read Phoenix override `base` per step,
+  # because Phoenix is a different service and must not be reachable through /api.
+  base: http://localhost:8080
+  # 27 steps after the 2026-09-07 amendment (was 20, then 22), eight of which poll Phoenix
+  # with a 30s export budget. The jobs are NOT in this budget; each carries its own
+  # timeout_s above.
+  timeout_s: 720
+  # No browser fact in this change: nothing renders an eval result, and Phoenix's own UI is
+  # not ours to assert. BRIEF.md § "A gap in the oracle" says what is checked elsewhere.
+  e2e: false

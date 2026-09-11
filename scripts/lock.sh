@@ -12,7 +12,7 @@
 # `make repos` read as truth. A lie in a committed file outlives the run that wrote it.
 set -euo pipefail
 
-REPOS=(chatbot-backend frontend infra)
+REPOS=(chatbot-backend chatbot-eval frontend infra)
 
 TMP="$(mktemp)"
 trap 'rm -f "$TMP"' EXIT

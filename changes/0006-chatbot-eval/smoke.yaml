@@ -1,0 +1,483 @@
+# 0006 — the criteria as steps. What the eval RUN produced, read back through HTTP.
+#
+# THE UNUSUAL PART OF THIS FILE is what it does NOT do: it never runs the eval. The eval is
+# a one-shot container and `change.yaml`'s `jobs:` runs it, twice, BEFORE this suite — once
+# expecting exit 0 and once with an impossible threshold expecting exit 1. So every step
+# below reads state that already exists, and criteria 6 and 7 live in `change.yaml` rather
+# than here because no HTTP client can ask a process for its exit code. docs/adr/0014.
+#
+# THREE ORIGINS. Most steps go through the app origin like every other suite. The Phoenix
+# steps use `base: ${PHOENIX_BASE}` and `contract: false` — Phoenix is a developer-facing
+# service and contracts/openapi.yaml says nothing about it. Two Phoenix PROJECTS are read:
+# ${EVAL_PHOENIX_PROJECT_NAME} for the eval's own spans and ${PHOENIX_PROJECT_NAME} for the
+# backend's, because one eval example draws one trace whose halves live in both.
+#
+# EVERY STEP IS TAGGED `local`, deliberately, for the reason 0005's suite gives: there is no
+# deployed Phoenix and no deployed eval. When there is, dropping the tags is the whole change.
+#
+# ORDER IS LOAD-BEARING, twice over:
+#   * the anonymous 401 comes FIRST, while the cookie jar is still logged out — the baseline
+#     ends with `logout-the-dev-account` precisely so that is a decision and not luck;
+#   * the eval-account block comes LAST, because signing in as it replaces whoever is in the
+#     jar, and every step above needs its own session.
+#
+# CAPTURE NAMES ARE ALL `eval_`-PREFIXED. smoke.py runs the baseline and this file in one
+# process with ONE variable table, and the baseline already binds `thread_id`,
+# `document_id`, `chat_trace` and three more. A verbatim name would silently rebind one.
+#
+# EVALUATOR NAMES ARE LITERALS, not variables. contracts/README.md § "Two origins, one
+# suite" forbids interpolating the differing fragment of an assertion: a reader has to be
+# able to see what is being asserted. So `routing_accuracy` and its three siblings are
+# spelled out, and chatbot-eval.md requires exactly those names.
+
+steps:
+  # ───────────────────────────────────────────── the version endpoint (backend slice)
+
+  - name: version-requires-a-session
+    owner: chatbot-backend
+    GET: /api/v1/version
+    tags: [local]
+    # Criterion 1. FIRST in the file, while the jar is logged out. Which build and which
+    # model an environment runs is deployment information; /healthz already answers
+    # liveness for an anonymous caller, and this endpoint deliberately does not.
+    expect:
+      status: 401
+      json:
+        error:
+          code: AUTH_REQUIRED
+
+  - name: register-a-version-reader
+    owner: chatbot-backend
+    POST: /api/v1/auth/register
+    tags: [local]
+    body:
+      email: smoke-0006-version-${SMOKE_RUN_ID}@auth.test
+      password: ${SMOKE_PASSWORD}
+      signup_code: ${SIGNUP_CODE}
+      display_name: Version Reader
+    expect:
+      status: 201
+      cookie: session
+
+  - name: version-reports-the-build-and-the-models
+    owner: chatbot-backend
+    GET: /api/v1/version
+    tags: [local]
+    # Criterion 2 and criterion 3. `image_tag` is asserted against the value stack/compose.yml
+    # passed IN, which is the whole point of the field: an application that invents its own
+    # build identity is not reporting one, and a hard-coded "dev" in the app would pass a
+    # looser check while telling every deployed environment the same lie.
+    expect:
+      status: 200
+      json:
+        image_tag: ${BACKEND_IMAGE_TAG}
+    capture:
+      eval_image_tag: image_tag
+      eval_chat_model: chat_model
+
+  - name: the-backend-image-tag-is-a-version
+    owner: chatbot-backend
+    GET: /api/v1/version
+    tags: [local]
+    # Criterion 23, new in the 2026-09-07 amendment. The step above asserts the tag is the
+    # value the stack passed IN, and `dev` satisfied that for the whole first version — the
+    # one field meant to identify a build was the same string forever. This asserts the
+    # SHAPE, so a tag that carries no version fails here rather than at the moment somebody
+    # tries to tell two experiments apart. docs/adr/0015.
+    expect:
+      status: 200
+      body_matches: '"image_tag":\s*"local-[0-9]+\.[0-9]+\.[0-9]+"'
+
+
+  - name: version-names-the-effective-chat-model
+    owner: chatbot-backend
+    GET: /api/v1/version
+    tags: [local]
+    # Criterion 4. One of the declared selectors, anchored — NOT asserted as `echo`, because
+    # a developer with Bedrock credentials in chatbot-backend/.env legitimately runs bedrock
+    # here (docs/adr/0006 layer 3), and a suite that failed for them would be asserting the
+    # machine rather than the endpoint. The enum is the real assertion: free text would pass
+    # a presence check and tell a reader of an experiment nothing.
+    expect:
+      status: 200
+      body_matches: '"chat_model":\s*"(echo|bedrock)"'
+
+  - name: version-names-the-retrieval-configuration
+    owner: chatbot-backend
+    GET: /api/v1/version
+    tags: [local]
+    # Criterion 2, the retrieval half. These two decide what a recall number MEANS, so an
+    # experiment that did not record them is not comparable with anything.
+    expect:
+      status: 200
+      body_matches: '"embedding_model":\s*"(local|bedrock)".*"retrieval_router":\s*"(heuristic|llm)"'
+
+  - name: version-leaks-no-credential
+    owner: chatbot-backend
+    GET: /api/v1/version
+    tags: [local]
+    # Criterion 5, and it is what makes an endpoint that reports configuration safe to have.
+    # `body_matches` keeps it honest: an empty body, or a 200 with `{}`, would satisfy the
+    # exclusion on its own. The names rather than the values, because a value that is not
+    # there yet cannot be excluded — this has to fail on the DAY somebody adds a field
+    # called `aws_secret_access_key`, not once it holds a real key.
+    expect:
+      status: 200
+      body_matches: '"version"'
+      body_excludes: '(?i)(secret|password|credential|signup_code|aws_access|session_token)'
+
+  # ───────────────────────────────────────── the dataset the run upserted (eval slice)
+
+  - name: the-question-set-is-a-phoenix-dataset
+    owner: chatbot-eval
+    GET: /v1/datasets?name=${EVAL_DATASET_NAME}
+    base: ${PHOENIX_BASE}
+    contract: false
+    tags: [local]
+    # Criterion 11. `example_count` matched against `[1-9]` rather than a number: the size of
+    # the question set belongs to chatbot-eval/evalset/ and putting it here as well would be
+    # two homes for one fact. What this repo is entitled to assert is that it is not empty —
+    # an experiment over zero examples would satisfy every step below.
+    expect:
+      status: 200
+      body_matches: '"name":\s*"${EVAL_DATASET_NAME}".*"example_count":\s*[1-9]'
+    capture:
+      eval_dataset_id: data.0.id
+
+  - name: two-runs-produced-one-dataset
+    owner: chatbot-eval
+    GET: /v1/datasets?name=${EVAL_DATASET_NAME}
+    base: ${PHOENIX_BASE}
+    contract: false
+    tags: [local]
+    # Criterion 12. The jobs stage ran the eval TWICE before this suite, so a create-instead-
+    # of-upsert would leave two datasets with this name. `},{` is the separator between two
+    # entries in `data`, so its absence is "exactly one" — and the positive clause is what
+    # stops an empty `data` from passing the exclusion.
+    expect:
+      status: 200
+      body_matches: '"data":\s*\[\s*\{'
+      body_excludes: '\}\s*,\s*\{'
+
+  # ────────────────────────────────────────────────── the experiment, and its metadata
+
+  - name: the-run-produced-an-experiment
+    owner: chatbot-eval
+    GET: /v1/datasets/${eval_dataset_id}/experiments
+    base: ${PHOENIX_BASE}
+    contract: false
+    tags: [local]
+    # An experiment exists on the dataset, and it ran over examples rather than existing
+    # empty. This step used to also assert `"project_name": "chatbot-eval"` and it passed
+    # for the WRONG reason: Phoenix names an experiment's project ITSELF, as
+    # `Experiment-<hash>`, so the regex was matching the project_name the eval copies into
+    # its own metadata rather than the experiment's project. Measured on 2026-09-03 against
+    # a live run. Criterion 13 moved to the next step, where it is about a project.
+    expect:
+      status: 200
+      body_matches: '"example_count":\s*[1-9]'
+    capture:
+      eval_experiment_id: data.0.id
+
+  - name: the-eval-files-its-own-spans-under-its-own-project
+    owner: chatbot-eval
+    GET: /v1/projects/${EVAL_PHOENIX_PROJECT_NAME}/spans?limit=50
+    base: ${PHOENIX_BASE}
+    contract: false
+    tags: [local]
+    retry: {attempts: 10, delay: 2.0}
+    # Criterion 13, asserted where it is actually true — docs/adr/0013 §3. A project by this
+    # name exists and holds at least one span the eval exported. An eval exporting under
+    # Phoenix's `default`, or under the BACKEND's project, gets a 404 or an empty list here
+    # rather than quietly putting synthetic traffic in the project a person opens to debug
+    # real requests. `"span_id"` rather than a name, because the span's name belongs to the
+    # eval and this repo should not freeze it.
+    expect:
+      status: 200
+      body_matches: '"span_id"'
+
+  - name: the-experiment-records-the-build-it-evaluated
+    owner: chatbot-eval
+    GET: /v1/datasets/${eval_dataset_id}/experiments
+    base: ${PHOENIX_BASE}
+    contract: false
+    tags: [local]
+    # Criterion 14, and the reason GET /v1/version exists at all. The tag is asserted equal
+    # to the one the BACKEND reported two blocks above — captured from its response, not
+    # written here — so an eval that took its image tag from its own environment, or from a
+    # flag somebody passed it, fails. A run must record what it evaluated by reading it.
+    expect:
+      status: 200
+      body_matches: '"image_tag":\s*"${eval_image_tag}"'
+
+  - name: the-experiment-records-the-fixture-it-used
+    owner: chatbot-eval
+    GET: /v1/datasets/${eval_dataset_id}/experiments
+    base: ${PHOENIX_BASE}
+    contract: false
+    tags: [local]
+    # Criterion 15. 64 hex, anchored to the field: a corpus hash is what stops two runs over
+    # different documents being compared as though they measured the same thing. A literal
+    # like "v1" would pass a presence check and carry no information.
+    expect:
+      status: 200
+      body_matches: '"fixture_hash":\s*"[0-9a-f]{64}"'
+
+  - name: the-experiment-records-what-judged-it
+    owner: chatbot-eval
+    GET: /v1/datasets/${eval_dataset_id}/experiments
+    base: ${PHOENIX_BASE}
+    contract: false
+    tags: [local]
+    # Criterion 16. Two runs judged by different prompts are not comparable and nothing else
+    # in Phoenix would say so. `chat_model` is here too: it is the model that produced the
+    # answers, and a correctness score without it is a number about nothing.
+    expect:
+      status: 200
+      body_matches: '"judge":\s*"(heuristic|bedrock)".*"judge_prompt_version"'
+
+  - name: the-experiment-copies-the-backends-model-selector
+    owner: chatbot-eval
+    GET: /v1/datasets/${eval_dataset_id}/experiments
+    base: ${PHOENIX_BASE}
+    contract: false
+    tags: [local]
+    # Criterion 25, first half. Asserted against the value the BACKEND reported — captured
+    # from its own response above, not written here — so an eval that took the selector from
+    # its own environment or from a flag fails. This is the faithful-copy assertion, and it
+    # holds under every configuration because `chat_model` is a non-nullable enum.
+    #
+    # THIS STEP REPLACES one that asserted `chat_model_id` against a live capture, and that
+    # step was unsatisfiable rather than strict: under CHAT_MODEL=echo — the loop's default —
+    # `chat_model_id` is null, smoke.py stringifies a captured null, and the regex became
+    # `"chat_model_id":\s*"None"`, which nothing can match. See § "A gap in the oracle".
+    expect:
+      status: 200
+      body_matches: '"chat_model":\s*"${eval_chat_model}"'
+
+  - name: the-experiment-carries-the-model-id-field
+    owner: chatbot-eval
+    GET: /v1/datasets/${eval_dataset_id}/experiments
+    base: ${PHOENIX_BASE}
+    contract: false
+    tags: [local]
+    # Criterion 25, second half. `chat_model` alone says `bedrock`, which identifies nothing
+    # — two runs a month apart against different Haiku versions would read identically — so
+    # the id has to be in the record. Present and well-formed: `null` exactly as the contract
+    # allows when there is no model, or a non-empty string. An eval that dropped the field,
+    # or wrote an empty string for "I do not know", fails.
+    #
+    # It does NOT assert the id EQUALS what the backend reported. That is only meaningful
+    # when a model is configured, and § "A gap in the oracle" names the oracle for it.
+    expect:
+      status: 200
+      body_matches: '"chat_model_id":\s*(null|"[^"]+")'
+
+  - name: the-experiment-records-the-eval-images-own-version
+    owner: chatbot-eval
+    GET: /v1/datasets/${eval_dataset_id}/experiments
+    base: ${PHOENIX_BASE}
+    contract: false
+    tags: [local]
+    # Criterion 24, new in the 2026-09-07 amendment. The evaluator code is as much a factor
+    # in a score as the fixture is: two runs over an identical corpus with a changed
+    # groundedness evaluator are not comparable, and before this nothing recorded which
+    # evaluators produced a number. Same rule as the backend's image_tag — supplied from
+    # outside the image, never invented.
+    expect:
+      status: 200
+      body_matches: '"eval_image_tag":\s*"${EVAL_IMAGE_TAG}"'
+
+  # ──────────────────────────────────────────────── every example ran, and was scored
+
+  - name: every-example-ran-without-error-and-has-a-trace
+    owner: chatbot-eval
+    GET: /v1/experiments/${eval_experiment_id}/runs
+    base: ${PHOENIX_BASE}
+    contract: false
+    tags: [local]
+    retry: {attempts: 10, delay: 2.0}
+    # Criterion 17, and it is the step that stops the next one passing vacuously. An
+    # experiment of ten errored examples satisfies "an experiment exists carrying metadata";
+    # this is what says the task actually ran. `trace_id` present is also what makes
+    # criterion 19 reachable — without it there is no id to follow into the other project.
+    expect:
+      status: 200
+      body_matches: '"trace_id":\s*"[0-9a-f]{32}"'
+      body_excludes: '"error":\s*"'
+    capture:
+      eval_run_trace: data.0.trace_id
+
+  - name: all-four-evaluators-scored-every-example
+    owner: chatbot-eval
+    GET: /v1/experiments/${eval_experiment_id}/incomplete-evaluations?evaluation_name=routing_accuracy&evaluation_name=retrieval_recall&evaluation_name=groundedness&evaluation_name=answer_correctness
+    base: ${PHOENIX_BASE}
+    contract: false
+    tags: [local]
+    retry: {attempts: 10, delay: 2.0}
+    # Criterion 18, through Phoenix's own oracle for exactly this question: the endpoint
+    # returns every run that is MISSING or FAILED an evaluation from the named set, so an
+    # empty `data` is the pass and a missing evaluator comes back named. Asserting the
+    # emptiness of a server-filtered list rather than the presence of four substrings, so a
+    # passing run has actually looked — and a typo in `evaluation_name` is a 400 here rather
+    # than a vacuous empty answer.
+    #
+    # It needs the step above: an experiment with no runs also has no incomplete
+    # evaluations, and would pass this on its own.
+    expect:
+      status: 200
+      body_matches: '"data":\s*\[\s*\]'
+
+  # ─────────────────────────────────────── one trace, two projects (criterion 19)
+
+  - name: the-run-records-the-backends-own-trace-id
+    owner: chatbot-eval
+    GET: /v1/experiments/${eval_experiment_id}/runs
+    base: ${PHOENIX_BASE}
+    contract: false
+    tags: [local]
+    retry: {attempts: 10, delay: 2.0}
+    # Criterion 20, and it is the assertion that CANNOT race. Two fields of one response:
+    # the trace id Phoenix assigned this run — captured above, from the eval's own task span
+    # — must equal the `X-Trace-Id` the backend handed back for the same request, which the
+    # eval records in the run's output. They are equal only if the two services were in ONE
+    # trace, which is exactly what propagating W3C trace context means.
+    #
+    # No project appears in it, and that is the point. The two steps below read a project,
+    # and WHICH project holds a shared trace is decided by whichever exporter's span created
+    # the trace row first — a race, under batch export. So this is the deterministic
+    # statement of criterion 19 and those two are the readable ones.
+    expect:
+      status: 200
+      body_matches: '"backend_trace_id":\s*"${eval_run_trace}"'
+
+  - name: the-backend-half-of-the-eval-trace-exists
+    owner: chatbot-eval
+    GET: /v1/projects/${PHOENIX_PROJECT_NAME}/spans?trace_id=${eval_run_trace}
+    base: ${PHOENIX_BASE}
+    contract: false
+    tags: [local]
+    retry: {attempts: 15, delay: 2.0}
+    # Criterion 19, first half. The trace id Phoenix recorded against the EVAL's run resolves
+    # in the BACKEND's project — which is only true if the eval propagated W3C trace context
+    # into the request. An eval that made a plain HTTP call would produce a trace id here
+    # that names nothing in the backend's project, and this returns an empty list.
+    expect:
+      status: 200
+      body_matches: '"trace_id":\s*"${eval_run_trace}"'
+
+  - name: the-backend-span-is-nested-under-the-eval-task
+    owner: chatbot-eval
+    GET: /v1/projects/${PHOENIX_PROJECT_NAME}/spans?trace_id=${eval_run_trace}&name=POST%20%2Fv1%2Fthreads%2F%7Bthread_id%7D%2Fmessages
+    base: ${PHOENIX_BASE}
+    contract: false
+    tags: [local]
+    retry: {attempts: 15, delay: 2.0}
+    # Criterion 19, second half, and the pair is what makes it real: `body_matches` requires
+    # the route span to come back at all, without which `body_excludes` passes on an empty
+    # list. Together: the backend served this trace at the messages route, and its span there
+    # is NOT a root — the eval's task span is its parent.
+    #
+    # THE OPPOSITE OF 0005 CRITERION 4, and deliberately: that one requires `parent_id: null`
+    # because an ordinary request carries no inbound traceparent and IS the root. These are
+    # different traces. A reader who finds the two side by side in the promoted baseline
+    # should read them as the two cases they are.
+    #
+    # The route also pins WHICH endpoint the eval calls. It has to be the threads endpoint:
+    # /v1/chat returns only `reply`, and routing accuracy and retrieval recall are read from
+    # `retrieval_consulted` and `citations` on the Message, which only this route returns.
+    expect:
+      status: 200
+      body_matches: '"span_kind"'
+      body_excludes: '"parent_id":\s*null'
+
+  # ───────────────────────────── the eval's account IS its collection (LAST: see header)
+
+  - name: the-eval-account-signs-in
+    owner: chatbot-eval
+    POST: /api/v1/auth/login
+    tags: [local]
+    # Criterion 8. On a cold stack this account exists only because the eval registered it
+    # (docs/adr/0011: `down` forgets everything), so this asserts that the eval provisions
+    # its own identity AND that the two values committed in stack/dev.env are the two that
+    # work. An eval that invented a password fails here rather than at 9am on a Monday.
+    body:
+      email: ${EVAL_ACCOUNT_EMAIL}
+      password: ${EVAL_ACCOUNT_PASSWORD}
+    expect:
+      status: 200
+      cookie: session
+
+  - name: the-eval-account-holds-the-marked-fixture
+    owner: chatbot-eval
+    GET: /api/v1/documents
+    tags: [local]
+    # Criterion 9. The corpus went in through POST /v1/documents — so it was extracted,
+    # summarised, chunked and indexed exactly the way a real upload is, which is the whole
+    # reason docs/adr/0013 forbids seeding OpenSearch directly. `chunk_count` above zero is
+    # what says it was actually indexed rather than merely stored.
+    expect:
+      status: 200
+      body_matches: '"filename":\s*"${EVAL_DOCUMENT_PREFIX}[^"]+".*"chunk_count":\s*[1-9]'
+
+  - name: nothing-unmarked-is-in-the-eval-account
+    owner: chatbot-eval
+    GET: /api/v1/documents
+    tags: [local]
+    # Criterion 10, and it is the safety property rather than a naming convention: the prefix
+    # is the ONLY thing the eval will delete, so an EVAL_ACCOUNT_EMAIL pointed at a real
+    # account by mistake loses nothing. The negative lookahead is what makes it an assertion
+    # about EVERY document rather than about one — it matches a filename that does not begin
+    # with the prefix, and finding one is the failure.
+    expect:
+      status: 200
+      body_matches: '"documents"'
+      body_excludes: '"filename":\s*"(?!${EVAL_DOCUMENT_PREFIX})'
+
+  - name: every-thread-in-the-eval-account-is-marked
+    owner: chatbot-eval
+    GET: /api/v1/threads
+    tags: [local]
+    # Criterion 21, new in the 2026-09-07 amendment. The marker is what makes the purge safe
+    # to have — it is the only thing the eval will ever delete, so an EVAL_ACCOUNT_EMAIL
+    # pointed at a real account loses no conversation. Exactly the rail
+    # ${EVAL_DOCUMENT_PREFIX} already is for documents, and the negative lookahead makes it
+    # an assertion about EVERY thread rather than about one.
+    expect:
+      status: 200
+      body_matches: '"threads"'
+      body_excludes: '"title":\s*"(?!${EVAL_THREAD_PREFIX})'
+
+  - name: two-runs-leave-one-runs-threads
+    owner: chatbot-eval
+    GET: /api/v1/threads
+    tags: [local]
+    # Criterion 22, and the one that answers "does a re-run clean up after itself". The jobs
+    # stage ran the eval TWICE before this suite, so without a purge the canary question's
+    # thread exists twice. `body_excludes` matches the title appearing a SECOND time, and
+    # finding it is the failure — the same shape as `two-runs-produced-one-dataset`, because
+    # a regex cannot count duplicates across a list any more than it could there.
+    #
+    # ANCHORED ON ONE RESERVED QUESTION ID. `q-charter-quorum` must exist in
+    # evalset/questions.yaml and must never be renamed; chatbot-eval.md says so. That is the
+    # same deliberate coupling the four evaluator names already have, and for the same
+    # reason — contracts/README.md § "Two origins, one suite" forbids interpolating the
+    # differing fragment of an assertion, so a reader has to be able to see what is asserted.
+    #
+    # The full count invariant is the eval's, not the seam's: BRIEF.md § "A gap in the
+    # oracle" records that it refuses (exit 2) on a thread it did not create this run.
+    expect:
+      status: 200
+      body_matches: '"title":\s*"${EVAL_THREAD_PREFIX}q-charter-quorum"'
+      body_excludes: '"title":\s*"${EVAL_THREAD_PREFIX}q-charter-quorum"[\s\S]*"title":\s*"${EVAL_THREAD_PREFIX}q-charter-quorum"'
+
+  - name: logout-the-eval-account
+    owner: chatbot-eval
+    POST: /api/v1/auth/logout
+    tags: [local]
+    # Not a criterion. The jar's exit state is a decision rather than an accident, which is
+    # the convention /realign added to the baseline after 0004's suite opened with two
+    # anonymous refusals that were true only by luck of what ran before it. This file OPENS
+    # with an anonymous 401; the next suite deserves the same footing.
+    expect:
+      status: 204
