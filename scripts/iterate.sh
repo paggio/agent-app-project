@@ -27,6 +27,12 @@
 #                       1 — which is the DEFAULT when this change deploys infra, below —
 #                       there is no repair pass, so a wrong --only is never corrected and
 #                       the run reports `failed` having dispatched the wrong repo.
+#     --dry-run         validate the arguments, print the resolved plan, dispatch nothing.
+#                       Creates no run directory and takes no lock. This is the only safe
+#                       way to exercise this script's own argument handling: doing it for
+#                       real launched two `claude -p` sessions and switched two submodules
+#                       off main to observe one guard. fanout.sh has had --dry-run since it
+#                       existed; the loop that calls it did not.
 #     --keep-up         leave the stack running after the final attempt
 #     --e2e             also run Playwright on each verify
 #     --no-build        reuse existing images
@@ -50,7 +56,7 @@ ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 cd "$ROOT"
 
 CHANGE=""; MAX_ATTEMPTS=""; REPAIR=1; VERIFY_ONLY=0; KEEP_UP=0; E2E=0; NO_BUILD=""
-NO_INFRA=0; PLAN_ONLY=0; ALLOW_DESTROY=0; ONLY=""
+NO_INFRA=0; PLAN_ONLY=0; ALLOW_DESTROY=0; ONLY=""; DRY=0
 while [ $# -gt 0 ]; do
   case "$1" in
     --only)
@@ -64,13 +70,14 @@ while [ $# -gt 0 ]; do
     --max-attempts) MAX_ATTEMPTS="$2"; shift ;;
     --no-repair) REPAIR=0 ;;
     --verify-only) VERIFY_ONLY=1 ;;
+    --dry-run) DRY=1 ;;
     --keep-up) KEEP_UP=1 ;;
     --e2e) E2E=1 ;;
     --no-build) NO_BUILD="--no-build" ;;
     --no-infra) NO_INFRA=1 ;;
     --plan-only) PLAN_ONLY=1 ;;
     --allow-destroy) ALLOW_DESTROY=1 ;;
-    -h|--help) sed -n '2,46p' "${BASH_SOURCE[0]}"; exit 0 ;;
+    -h|--help) sed -n '2,52p' "${BASH_SOURCE[0]}"; exit 0 ;;
     -*) echo "iterate: unknown option $1" >&2; exit 2 ;;
     *) CHANGE="$1" ;;
   esac
@@ -124,6 +131,16 @@ if [ "$CHANGE_DEPLOY_INFRA" = "1" ] && [ "$NO_INFRA" = "0" ] && [ "$PLAN_ONLY" =
 fi
 if [ -z "$MAX_ATTEMPTS" ]; then
   if [ "$REMOTE_RUN" = "1" ]; then MAX_ATTEMPTS=1; else MAX_ATTEMPTS=2; fi
+fi
+
+if [ "$DRY" = "1" ]; then
+  echo "iterate: [dry-run] change:        $CHANGE"
+  echo "iterate: [dry-run] slices:        $CHANGE_SLICES"
+  echo "iterate: [dry-run] would dispatch: ${ONLY:-$CHANGE_SLICES}"
+  echo "iterate: [dry-run] max-attempts:  $MAX_ATTEMPTS (repair=$REPAIR verify-only=$VERIFY_ONLY)"
+  echo "iterate: [dry-run] remote deploy: $([ "$REMOTE_RUN" = "1" ] && echo "yes ($CHANGE_DEPLOY_ENVIRONMENT)" || echo "no — best outcome verified-local")"
+  echo "iterate: [dry-run] no run directory, no lock, no session launched"
+  exit 0
 fi
 
 TS="$(date -u +%Y%m%dT%H%M%SZ)"
@@ -375,6 +392,7 @@ while :; do
 
   # ── dispatch ────────────────────────────────────────────────────────────────
   DISPATCH_OK=1
+  VERIFY_PASSED=0
   if [ "$VERIFY_ONLY" = "1" ]; then
     say "verify-only — dispatching nothing, checking what is on disk"
     record "**Attempt $ATTEMPT — dispatch:** skipped (\`--verify-only\`)"
@@ -438,12 +456,16 @@ except Exception:
       OUTCOME="contract-gap"
       record "**Attempt $ATTEMPT — dispatch:** stopped. ${GAPS} reported a contract gap."
       record ""
-      python3 -c "
+      # `record` appends to SUMMARY, and the last stage of a pipeline is a subshell — so
+      # `… | while read; do record; done` threw away every line it read, and the hard-stop
+      # report named neither the repo nor the gap. A here-string keeps the loop here.
+      GAP_LINES="$(python3 -c "
 import json
 d = json.load(open('$ATT_DIR/fanout.json'))
 for r in (d.get('contract_gaps') or []):
     print('- **' + r + '**: ' + (d['repos'][r].get('contract_gap') or '(no detail)'))
-" 2>/dev/null | while IFS= read -r l; do record "$l"; done
+" 2>/dev/null || true)"
+      while IFS= read -r l; do if [ -n "$l" ]; then record "$l"; fi; done <<< "$GAP_LINES"
       record ""
       record "A frozen contract cannot be worked around in a slice. This needs a new"
       record "contract-freeze pass in the control repo before anything else happens."
@@ -451,7 +473,7 @@ for r in (d.get('contract_gaps') or []):
     fi
 
     if [ -n "$FANOUT_FAILED" ]; then
-      record "**Attempt $ATTEMPT — dispatch:** failed for:${FANOUT_FAILED}"
+      record "**Attempt $ATTEMPT — dispatch:** failed for: ${FANOUT_FAILED}"
     else
       record "**Attempt $ATTEMPT — dispatch:** all slices reported OK"
     fi
@@ -480,9 +502,24 @@ for r in (d.get('contract_gaps') or []):
     # slice — the stack was already fine. Previously this said `verified` directly above a
     # line reading "dispatch: failed for: chatbot-backend frontend".
     if [ "$DISPATCH_OK" = "0" ]; then
-      record "**Attempt $ATTEMPT — verify:** PASS, but${FANOUT_FAILED} never reported a"
+      VERIFY_PASSED=1
+      record "**Attempt $ATTEMPT — verify:** PASS, but ${FANOUT_FAILED} did not report a"
       record "completed slice. Not verified: a passing suite over an unfinished slice"
       record "proves only that the stack still works."
+      record ""
+      # A slice that stops reports WHY, in fanout.json. That reason was reachable only by
+      # opening the log, so a `failed` outcome over a green suite read as "the agent did
+      # nothing" when it had in fact named a blocker.
+      REASONS="$(python3 -c "
+import json
+d = json.load(open('$ATT_DIR/fanout.json'))
+for r, v in (d.get('repos') or {}).items():
+    if v.get('status') != 'ok':
+        print('- **' + r + '** reported \`' + str(v.get('status')) + '\`: '
+              + (v.get('reason') or '(no reason given)'))
+" 2>/dev/null || true)"
+      while IFS= read -r l; do if [ -n "$l" ]; then record "$l"; fi; done <<< "$REASONS"
+      record ""
     else
       REMOTE_ASSERTED="$(python3 -c "
 import json
@@ -533,7 +570,16 @@ except Exception:
   if [ -z "${OWNERS// /}" ]; then
     OWNERS="$(echo "${FANOUT_FAILED:-}" | tr -s ' ')"
   fi
-  record "**Attempt $ATTEMPT — verify:** FAIL at \`$STAGE\`"
+  # Two callers reach here: a verify that failed, and a verify that PASSED over a slice
+  # that stopped. The second printed a third line for the same attempt — `verify: FAIL at
+  # \`unknown\`` — directly under `verify: PASS`, naming a stage that did not fail, because
+  # `failed_stage` is null when nothing failed.
+  if [ "${VERIFY_PASSED:-0}" = "1" ]; then
+    record "**Attempt $ATTEMPT — routing:** no stage failed. What is answerable is the"
+    record "unfinished slice above."
+  else
+    record "**Attempt $ATTEMPT — verify:** FAIL at \`$STAGE\`"
+  fi
   FAULT="$(python3 -c "
 import json
 try:

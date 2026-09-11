@@ -26,6 +26,26 @@ authoritative. The same argument forbids `git add`ing a submodule path early, an
 So: confirm the PRs are merged before doing anything here. `./scripts/prs.sh --list` shows
 them.
 
+## 0 — Is there anything to realign?
+
+```
+make repos
+```
+
+If all three submodules already **match** `repos.lock` and no change was named, nothing
+product-side moved: this is what a merged harness pull request leaves behind, and by
+`docs/adr/0009` that is the most frequent merge this repo sees. Steps 1, 4 and 5 then have
+no input — there is nothing to bump, nothing to pin, no change directory to promote from.
+Say so and go to step 7. Do not create a branch, do not commit, do not open a pull
+request: an empty bump commit names the same triple the lock already names.
+
+Steps 2 and 3 are the seam check and they are not optional on that basis alone. Run them
+unless you can show a diff proving nothing the stack, the baseline or `contracts/` reads
+has moved — `git diff --stat <last realign>..HEAD -- contracts/ smoke/ stack/ repos.lock
+chatbot-backend frontend infra changes/` empty is that proof. Then their result is
+**`not verified`, with that diff quoted**, and never a pass. The last lane that asserted
+the seam is the last one that ran them; say which it was.
+
 And from here on, keep a running note of anything that does not go smoothly — step 7 consumes
 it, and by then you will have stopped noticing.
 
@@ -38,9 +58,14 @@ done
 make repos
 ```
 
-`make repos` prints branch, SHA and how each compares to `repos.lock`. Do **not** use
-`git submodule update --remote --merge`: it yanks a checked-out submodule back and discards
-in-flight commits. If a repo still has unmerged work, stop and say so rather than moving it.
+`make repos` prints branch, SHA, how each compares to `repos.lock`, and how many files are
+uncommitted in it. Do **not** use `git submodule update --remote --merge`: it yanks a
+checked-out submodule back and discards in-flight commits.
+
+**Read the `uncommitted` column before the loop, not after.** Unmerged work is not only a
+branch: `git switch` carries a dirty file to `main` rather than refusing. Anything but
+`clean` means stop for that repo, name the file, leave it. This repo's own `git status`
+cannot tell you — a moved pointer and a dirty submodule both print ` M <repo>`.
 
 ## 2 — Is the contract still true?
 
@@ -72,6 +97,40 @@ field removed from a *response* breaks consumers, removed from a *request* it do
   promise it forever. Your wording survives the next harvest; structure does not. Then
   commit `contracts/` alone: that commit is a freeze point like any other.
 
+## 2b — Publish the contract into every consumer, not just the slices
+
+```
+./scripts/vendor-contracts.sh --check
+```
+
+`fanout.sh` publishes the freeze with `--repos "$TARGETS"` — **the slices only**
+(`scripts/fanout.sh:112`), and nothing else publishes at all. A repo that vendors
+`contracts/openapi.yaml` and was not a slice keeps verifying against last month's promise,
+and `[vendored-contracts]` then fails for everyone. Making the four repos agree is this
+lane's job, so the catch-up is too.
+
+Exit 0 — nothing to do. Exit 1 names each stale copy; for each one:
+
+```
+git -C <repo> switch -c chore/vendor-contracts-<change>
+./scripts/vendor-contracts.sh --repos <repo>
+make -C <repo> contract-sync   # only if the repo has one — `make -C <repo> help`; frontend
+                               # generates wire types FROM the spec, the others do not
+make -C <repo> contract && make -C <repo> typecheck
+git -C <repo> commit -am "chore: vendor the contract as of <change>"
+```
+
+then push and open its pull request. **This is the one sanctioned write into a submodule
+this lane has:** `docs/adr/0008` makes this repo the publisher and `vendor-contracts.sh` the
+only writer, and outside a dispatch there is no agent in that repo to commit what was
+published. Editing the vendored file by hand is still a mistake and the hook still blocks it.
+
+**Step 4 waits for it.** The ordering rule at the top covers this lane's own pull requests
+too: pin a repo while your own unmerged commit for it is outstanding and you pin a SHA you
+are about to supersede — the lock is wrong the hour it lands, and the lane has to be run a
+second time to correct it. Stop here instead, say which pull request must merge, and resume
+at step 4 once it has.
+
 ## 3 — Does the joined system still work?
 
 ```
@@ -93,6 +152,13 @@ git add chatbot-backend chatbot-eval frontend infra repos.lock
 git commit -m "chore: bump submodules for <change>"
 ```
 
+Nothing is pinned while this lane still has unmerged work of its own outstanding (§ 2b).
+
+**If `chore/realign-<change>` already exists, this is a second pass over that change.**
+Switch to it rather than branching, add a commit, and comment on its open pull request —
+one change gets one realign branch and one pull request. The commit message says why the
+earlier pin stopped being right.
+
 That commit contains the pointers and `repos.lock` and nothing else, and it is on a branch:
 nothing lands on this repo's `main` except through a reviewed pull request. A bump is not
 an exception — it is the commit that decides which four SHAs are believed to work together.
@@ -100,14 +166,41 @@ an exception — it is the commit that decides which four SHAs are believed to w
 ## 5 — Promote the durable smoke steps
 
 If a change just merged, move the assertions from `changes/<change>/smoke.yaml` that are
-worth keeping forever into `smoke/baseline.yaml`, carrying their tags across — a step
-tagged `local` is tagged that way for a reason. This is how the loop stops re-breaking what
-an earlier change fixed.
+worth keeping forever into `smoke/baseline.yaml`. This is how the loop stops re-breaking
+what an earlier change fixed.
+
+If the change's durable steps are already in the baseline — a second pass, or a promotion an
+earlier lane did — there is nothing to promote. Say so; the rest of this step still runs.
 
 Keep the baseline fast and keep it about the **seam**. Anything provable inside one repo
-belongs in that repo's own suite, not here. Then `make check`, `make smoke` again — the
-promoted steps have only ever run against the stack that is up, and the baseline's job is to
-pass on the next one too — and commit on the same branch.
+belongs in that repo's own suite, not here.
+
+**Re-judge each tag rather than copying it.** A `local` tag records why the step could not
+run against a deployed origin in *that change* — no deployed Phoenix, no credentials — and
+the baseline is a different suite with a different reach. Carry the tag when the reason
+still holds (it asserts a local value, a local-only service); drop it when the reason was
+circumstantial (a session gate, an enum, a credential-leak check are true of any origin),
+and say which you did and why in the commit message.
+
+Then `make check`, and re-run the baseline **against a stack that was just rebuilt**:
+
+```
+make restart && make smoke
+```
+
+A second `make smoke` against the stack already up can only fail for a reason the first run
+already caught. The restart is what asserts the promise, because `docs/adr/0011` says the
+stack forgets everything on `down`: a promoted step that depends on something *produced*
+rather than served fails here and nowhere else. Expect that of a change with `jobs:`
+(`docs/adr/0014`) — its one-shot jobs run in the verify loop and never in the baseline, so
+every step reading what a job produced is unpromotable. Then commit on the same branch.
+
+**Close the change out in the same commit.** The `<!-- iterate:begin -->` block in
+`changes/<change>/STATUS.md` is written by `iterate.sh` and records the *loop's* last
+attempt, not the change's fate — a change whose last run failed for a blocker a human then
+waived merges with `- **failed**` as its permanent record. Write under it what the merge
+settled: the merged pull requests, the SHAs now in `repos.lock`, what was promoted. No other
+lane knows this, and nothing else ever says the change shipped.
 
 Then push it and open the pull request (`gh pr create`), and do not merge it. Say in the
 body what moved, what the harvest said and what you did about it, and what you promoted.

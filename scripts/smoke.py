@@ -84,6 +84,14 @@ class CascadeSkip(Exception):
         self.key = key
 
 
+class NullCapture(Exception):
+    """A ${var} that bound to null: the step passed, and the value does not exist."""
+
+    def __init__(self, key: str) -> None:
+        super().__init__(key)
+        self.key = key
+
+
 # --------------------------------------------------------------------------- helpers
 
 def die(msg: str) -> None:
@@ -288,6 +296,16 @@ def interpolate(value: Any, scope: dict[str, Any]) -> Any:
         def sub(m: re.Match[str]) -> str:
             key = m.group(1)
             if key in scope:
+                # A capture that bound null — JSON null, or a field/header the response did
+                # not carry — used to interpolate as the four characters `None`, and an
+                # assertion built from those cannot be satisfied by anything. It was
+                # attributed to the repo that owns the step: 0006's
+                # `the-experiment-records-the-exact-model-that-answered` failed twice
+                # through a repair pass against chatbot-eval, which could not have fixed
+                # it. Refuse instead (docs/adr/0003) — a criterion nothing can satisfy is
+                # the harness's to fix, never a slice's.
+                if scope[key] is None:
+                    raise NullCapture(key)
                 return str(scope[key])
             if key in os.environ:
                 return os.environ[key]
@@ -451,6 +469,13 @@ def run_step(client: httpx.Client, step: dict[str, Any], scope: dict[str, Any],
         # browser's view, but "is the backend itself healthy" is a different question and
         # answering both is how a 502 gets attributed to the right repo.
         step_base = interpolate(step["base"], scope) if "base" in step else base
+    except NullCapture as exc:
+        die(f"step {step.get('name', '?')!r}: ${{{exc.key}}} was captured as null — the "
+            f"field, header or cookie it names was absent or JSON null — so this step can "
+            f"only compare against the literal 'None', which nothing returns. Assert the "
+            f"nullness itself (an `expect.json` with `null`, or a `body_matches` that "
+            f"allows it), or split the criterion so each half holds under every "
+            f"configuration this suite runs in.")
     except CascadeSkip as exc:
         return {
             "name": step.get("name") or f"{method} {raw_path}",

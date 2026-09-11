@@ -30,6 +30,11 @@ import sys
 
 import yaml
 
+# Same module the § 7 ledger prints from, so the gate and the printer cannot disagree
+# about what counts as a finding.
+sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
+import retro_findings  # noqa: E402
+
 ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 SUBMODULES = ("chatbot-backend", "chatbot-eval", "frontend", "infra")
 
@@ -211,6 +216,15 @@ def check_dead_wiring() -> None:
     all_prose = "\n".join(text_by_file.values())
 
     for path, text in text_by_file.items():
+        # A retrospective is HISTORY: it cites the tree it audited, and § 5 of the retro
+        # agent requires it to be written on an `origin/main` branch — where the script or
+        # the ADR the change under audit introduced does not exist yet. Both references
+        # become live the moment that change merges. Recorded as R7/20260902 with the fix
+        # spelled out and "the next retrospective should propose it on sight rather than
+        # degrade its own record again"; degraded twice more since. `retros/` stays in
+        # `all_prose`, so the reverse-direction checks below are unchanged.
+        if rel(path).startswith("retros/"):
+            continue
         for script in set(re.findall(r"scripts/[a-z0-9-]+\.(?:sh|py)", text)):
             if not os.path.exists(os.path.join(ROOT, script)):
                 fail("dead-wiring", f"{rel(path)} references {script}, which does not exist")
@@ -440,6 +454,39 @@ STATUS_HEADINGS = {
 }
 
 
+# --- 19. every finding a retro recorded is visible in the ledger ----------------------
+# retros/README.md says § 7 emits "every one of its finding headings" and that the ledger IS
+# the second-occurrence mechanism. The printer matched markdown headings only, so the three
+# retros that wrote their recorded findings as `- **R2 — …**` bullets showed 3 of 18, 2 of
+# 12 and 3 of 12 — and the set it dropped was precisely the recorded one the rule operates
+# on. The 20260903 realign retro had to grep five bodies to answer "was this recorded
+# before", which is the cost the ledger was built to remove.
+#
+# Counted against the file's own frontmatter rather than against a shape: the two forms in
+# retros/ are both legible, and a schema fight would rewrite history to satisfy a gate.
+def check_retro_ledger() -> None:
+    for path in sorted(glob.glob(os.path.join(ROOT, "retros", "*.md"))):
+        if os.path.basename(path) == "README.md":
+            continue
+        text = open(path).read()
+        want = retro_findings.declared(text)
+        if want is None:
+            fail("retro-ledger",
+                 f"{rel(path)} declares no `findings: <n> proposed, <n> recorded, "
+                 f"<n> rejected` in its frontmatter, so nothing can tell whether the "
+                 f"ledger sees all of them. retros/README.md specifies it.")
+            continue
+        need = want.get("proposed", 0) + want.get("recorded", 0)
+        got = len(retro_findings.leads(text))
+        if got < need:
+            fail("retro-ledger",
+                 f"{rel(path)} declares {need} proposed+recorded finding(s) and "
+                 f"scripts/retro_findings.py can see {got}. The § 7 ledger is what the "
+                 f"next retrospective reads, so the difference is findings recorded here "
+                 f"and invisible to the second-occurrence rule. Lead each one with "
+                 f"`### F1 — …` or `- **R1 — …**`.")
+
+
 def check_status_headings() -> None:
     for lane, heading in sorted(STATUS_HEADINGS.items()):
         path = os.path.join(ROOT, ".claude", "commands", f"{lane}.md")
@@ -546,12 +593,50 @@ def _referenced_in_scripts(needle: str) -> bool:
 # control repo is the only place all four trees are already present, so it needs no
 # network and does not invert the dependency direction docs/adr/0001 protects.
 readme_divergence: list[str] = []
+mid_change: list[str] = []
+
+
+def _locked_sha(sub: str) -> str | None:
+    """What repos.lock pins for a submodule: the SHA triple believed to work together."""
+    try:
+        with open(os.path.join(ROOT, "repos.lock")) as fh:
+            for line in fh:
+                line = line.strip()
+                if not line or line.startswith("#"):
+                    continue
+                parts = line.split()
+                if len(parts) >= 2 and parts[0] == sub:
+                    return parts[1]
+    except OSError:
+        pass
+    return None
+
+
+def _head_sha(sub: str) -> str | None:
+    p = subprocess.run(("git", "-C", sub, "rev-parse", "HEAD"),
+                       capture_output=True, text=True, cwd=ROOT)
+    return p.stdout.strip() if p.returncode == 0 else None
 
 
 def check_vendored_contracts() -> None:
     for sub in SUBMODULES:
         sub_dir = os.path.join(ROOT, sub, "contracts")
         if not os.path.isdir(sub_dir):
+            continue
+
+        # A submodule NOT on the SHA repos.lock pins is mid-change: /ship, /ship-correct
+        # and /ship-iterate all leave their slices on feature branches, and contracts/ here
+        # is frozen ahead of main until those merge. So the four trees sit on BOTH sides of
+        # one freeze and no branch satisfies a straight comparison — on feat/* the un-sliced
+        # repos are behind, on a main-based branch the sliced ones are ahead. It hard-failed
+        # for the whole window (retro 20260827 R2) and three retrospectives could not
+        # publish, because `make check` was red wherever they stood. verify.sh's preflight
+        # owns that window and owns it better: same two files, every run, per SLICE, routed
+        # to the repo answerable. What stays here is the steady state, which nothing else
+        # checks — a submodule AT its locked SHA carrying a stale copy.
+        head, locked = _head_sha(sub), _locked_sha(sub)
+        if head and locked and head != locked:
+            mid_change.append(f"{sub} ({head[:7]}, lock pins {locked[:7]})")
             continue
         for name in ("openapi.yaml", "infra-outputs.yaml"):
             ours = os.path.join(ROOT, "contracts", name)
@@ -768,6 +853,11 @@ def report_readme_divergence() -> None:
     invocation is how a reader learns to skim warnings, which then hides the actionable
     one. Said once, with what would make it actionable.
     """
+    if mid_change:
+        warn("vendored-contracts",
+             f"not compared, because they are off repos.lock and therefore mid-change: "
+             f"{', '.join(mid_change)}. The vendored copy of a repo whose slice is still "
+             f"on a branch is verify.sh's preflight to check, per run and per slice.")
     if readme_divergence:
         warn("vendored-contracts",
              f"{', '.join(readme_divergence)} carry the short vendored contracts/README.md "
@@ -1188,7 +1278,7 @@ def main() -> int:
               check_scripts_are_not_the_entry_point, check_env_layers,
               check_gate_messages, check_loop_calls, check_agent_dispatchers,
               check_stack_services, check_clean_slate, check_lane_coverage,
-              check_lane_vocabulary, check_status_headings,
+              check_lane_vocabulary, check_status_headings, check_retro_ledger,
               check_image_tags, check_dev_env_duplicates,
               check_provider_credentials, check_dev_env_inline_comments,
               report_readme_divergence)

@@ -152,8 +152,13 @@ phoenix-durability: ## Prove a trace survives restarting Phoenix, and show the l
 # Read-only, and they stay that way: implementation happens in a session started inside
 # the repo, or through the dispatch /ship runs. Nothing here writes into a submodule.
 
+# The `uncommitted` column is not decoration. `/realign` step 1 switches every submodule to
+# main and says to stop if a repo "still has unmerged work" — and a dirty worktree carries
+# across `git switch` silently. The control repo's own `git status` cannot tell the two
+# apart: a moved pointer and a dirty submodule both print ` M <repo>`. So the tool step 1
+# tells you to read has to be the one that says which.
 repos: ## Branch and SHA per submodule, against what repos.lock pins
-	@printf '  %-16s %-40s %-9s %s\n' REPO BRANCH SHA "vs repos.lock"
+	@printf '  %-16s %-40s %-9s %-18s %s\n' REPO BRANCH SHA "vs repos.lock" uncommitted
 	@for r in $(REPOS); do \
 		branch=$$(git -C $$r rev-parse --abbrev-ref HEAD 2>/dev/null || echo '-'); \
 		sha=$$(git -C $$r rev-parse --short HEAD 2>/dev/null || echo '-'); \
@@ -161,7 +166,9 @@ repos: ## Branch and SHA per submodule, against what repos.lock pins
 		if [ "$$sha" = "$$pinned" ]; then state="matches"; \
 		elif [ -z "$$pinned" ]; then state="not pinned"; \
 		else state="ahead of $$pinned"; fi; \
-		printf '  %-16s %-40s %-9s %s\n' "$$r" "$$branch" "$$sha" "$$state"; \
+		dirty=$$(git -C $$r status --porcelain 2>/dev/null | wc -l | tr -d ' '); \
+		if [ "$$dirty" = "0" ]; then dirty="clean"; else dirty="$$dirty file(s)"; fi; \
+		printf '  %-16s %-40s %-9s %-18s %s\n' "$$r" "$$branch" "$$sha" "$$state" "$$dirty"; \
 	done
 
 lock: ## Refresh repos.lock from the current submodule SHAs
