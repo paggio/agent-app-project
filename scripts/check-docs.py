@@ -31,7 +31,7 @@ import sys
 import yaml
 
 ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
-SUBMODULES = ("chatbot-backend", "frontend", "infra")
+SUBMODULES = ("chatbot-backend", "chatbot-eval", "frontend", "infra")
 
 problems: list[str] = []
 warnings: list[str] = []
@@ -803,6 +803,31 @@ def check_stack_services() -> None:
              f"SERVICES does not list it — `stack.sh dump` writes no log for it, so a run "
              f"that failed because of it leaves no evidence. Add it to SERVICES.")
 
+    # A job routes its failure by its own `owner`, and the service it runs routes a
+    # stack failure by its `agentapp.owner` label. Two fields, one question — and when they
+    # disagree the same container sends two different repos after the same problem. Neither
+    # file can see the other, so this is the only place the pair is checkable.
+    labels = {name: ((svc or {}).get("labels") or {}).get("agentapp.owner")
+              for name, svc in ((yaml.safe_load(open(compose)) or {})
+                                .get("services") or {}).items()}
+    for path in sorted(glob.glob(os.path.join(ROOT, "changes", "*", "change.yaml"))):
+        try:
+            doc = yaml.safe_load(open(path)) or {}
+        except yaml.YAMLError:
+            continue  # manifest.py --validate is what reports an unparseable manifest
+        for job in doc.get("jobs") or []:
+            if not isinstance(job, dict):
+                continue
+            svc, owner = job.get("service"), job.get("owner")
+            declared = labels.get(svc)
+            if svc and owner and declared and declared != owner:
+                fail("stack-services",
+                     f"{rel(path)}: job {job.get('name')!r} runs service {svc!r} with "
+                     f"owner: {owner!r}, and stack/compose.yml labels that service "
+                     f"agentapp.owner: {declared!r}. One container, two answerable repos — "
+                     f"a failing job and a failing stack would be routed to different "
+                     f"agents. Make them agree.")
+
     brief = open(os.path.join(ROOT, "scripts", "failure-brief.py")).read()
     block = re.search(r"^SERVICES = \{(.*?)^\}", brief, re.M | re.S)
     attributed = set(re.findall(r'"([a-z0-9_.-]+)"', block.group(1) if block else ""))
@@ -873,6 +898,285 @@ def check_clean_slate() -> None:
 
 
 
+# --- 17. every image carries a hand-bumped local version -----------------------------
+# docs/adr/0015. `BACKEND_IMAGE_TAG=dev` honoured the rule that a build identity is supplied
+# from outside the image, and was the same string for every build — so every experiment in
+# Phoenix recorded `image_tag: "dev"` in the one field meant to distinguish builds. The rule
+# held and the field was useless, which reads as working.
+#
+# Two checks. The shape always runs. The bump needs `origin/main` to compare against and
+# SKIPS when there is none — a fresh clone or a shallow CI checkout — because a gate that
+# cannot see the baseline must not invent one. That is a real weakening and is why
+# changes/0006's suite asserts the shape at the seam independently.
+IMAGE_TAG_SHAPE = re.compile(r"^local-\d+\.\d+\.\d+$")
+
+# Which repo's changes oblige which tag. A repo absent from this map is NOT gated, on
+# purpose: `frontend` ships an image but nothing reads a frontend build identity today, and
+# a gate over a value nobody consumes is the speculative check this file's own doctrine
+# rejects. `infra` ships no image. Adding one is a line here.
+IMAGE_TAG_OWNERS = {
+    "chatbot-backend": "BACKEND_IMAGE_TAG",
+    "chatbot-eval": "EVAL_IMAGE_TAG",
+}
+
+
+def _dev_env_values(text: str) -> dict[str, str]:
+    """FIRST occurrence wins, because that is what scripts/dev-env.sh does.
+
+    dev-env.sh fills only variables that are still unset, so a name declared twice resolves
+    to its FIRST value. This function used to build a dict and therefore took the LAST —
+    so `[image-tags]` passed on `local-0.0.1` while the stack ran the `dev` declared 18
+    lines earlier. A gate reading a file differently from the loader that consumes it is
+    worse than no gate. `[dev-env-duplicates]` below makes the divergence unreachable;
+    this keeps the two readers honest even so.
+    """
+    out: dict[str, str] = {}
+    for line in text.splitlines():
+        line = line.strip()
+        if not line or line.startswith("#") or "=" not in line:
+            continue
+        key, value = line.split("=", 1)
+        out.setdefault(key.strip(), value.strip())
+    return out
+
+
+# --- 18. a name is declared once in stack/dev.env ------------------------------------
+# docs/adr/0006 makes stack/dev.env one layer of a precedence chain, and check_env_layers
+# already refuses a name that ALSO appears in chatbot-backend/.env. It never looked for a
+# name declared twice in this file, and that cost a run: BACKEND_IMAGE_TAG was `dev` in one
+# block and `local-0.0.1` in another, dev-env.sh took the first, the gate took the last, and
+# the stack was tested against a value nothing had asserted. Cheap, and it maps to a defect
+# that actually happened.
+def check_dev_env_duplicates() -> None:
+    path = os.path.join(ROOT, "stack", "dev.env")
+    try:
+        lines = open(path).read().splitlines()
+    except OSError:
+        return  # check_suite_vars reports a missing dev.env
+
+    seen: dict[str, int] = {}
+    for n, line in enumerate(lines, 1):
+        line = line.strip()
+        if not line or line.startswith("#") or "=" not in line:
+            continue
+        key = line.split("=", 1)[0].strip()
+        if not re.fullmatch(r"[A-Za-z_][A-Za-z0-9_]*", key):
+            continue
+        if key in seen:
+            fail("dev-env-duplicates",
+                 f"stack/dev.env declares {key} twice, on lines {seen[key]} and {n}. "
+                 f"scripts/dev-env.sh fills only UNSET names, so line {seen[key]} wins and "
+                 f"line {n} is unreachable — the stack runs one value while a reader of the "
+                 f"file sees the other. Delete one.")
+        else:
+            seen[key] = n
+
+
+def check_image_tags() -> None:
+    dev_env = os.path.join(ROOT, "stack", "dev.env")
+    try:
+        current = _dev_env_values(open(dev_env).read())
+    except OSError:
+        return  # check_suite_vars already reports a missing dev.env
+
+    declared = {k: v for k, v in current.items() if k.endswith("_IMAGE_TAG")}
+    for name, value in sorted(declared.items()):
+        if not IMAGE_TAG_SHAPE.match(value):
+            fail("image-tags",
+                 f"stack/dev.env: {name}={value!r} is not `local-<major>.<minor>.<patch>`. "
+                 f"A tag that carries no version cannot distinguish two builds, which is the "
+                 f"whole reason the field exists — `dev` satisfied every other check for a "
+                 f"month. See docs/adr/0015.")
+
+    for repo, name in sorted(IMAGE_TAG_OWNERS.items()):
+        if name not in declared:
+            fail("image-tags",
+                 f"IMAGE_TAG_OWNERS maps {repo} to {name} and stack/dev.env does not declare "
+                 f"it. Declare it, or drop the mapping — an unmapped repo is simply not "
+                 f"gated, and that is a decision rather than an omission.")
+
+    # The bump. Only for a change IN FLIGHT — one whose directory is not on origin/main.
+    # A merged change's tag is already history and must not be re-litigated.
+    # The ref is overridable so this half can be PROBED. It cannot fire against real
+    # origin/main until the variables exist there, and an unprobed gate is worse than none
+    # (docs/init/README.md). Defaults to origin/main; nothing in the harness sets it.
+    baseline_ref = os.environ.get("CHECK_DOCS_BASELINE_REF", "origin/main")
+    p = subprocess.run(("git", "show", f"{baseline_ref}:stack/dev.env"),
+                       capture_output=True, text=True, cwd=ROOT)
+    if p.returncode != 0:
+        return  # no origin/main here; the shape check above still ran
+    baseline = _dev_env_values(p.stdout)
+
+    for path in sorted(glob.glob(os.path.join(ROOT, "changes", "*", "change.yaml"))):
+        change_dir = os.path.basename(os.path.dirname(path))
+        if change_dir == "0000-example-change":
+            continue
+        on_main = subprocess.run(
+            ("git", "cat-file", "-e",
+             f"{baseline_ref}:changes/{change_dir}/change.yaml"),
+            capture_output=True, cwd=ROOT).returncode == 0
+        if on_main:
+            continue  # merged, or at least already on main: its tags are history
+        try:
+            doc = yaml.safe_load(open(path)) or {}
+        except yaml.YAMLError:
+            continue  # manifest.py --validate owns unparseable manifests
+        for repo in doc.get("slices") or []:
+            name = IMAGE_TAG_OWNERS.get(repo)
+            if not name:
+                continue
+            was, now = baseline.get(name), declared.get(name)
+            if was is not None and was == now:
+                fail("image-tags",
+                     f"changes/{change_dir} has a {repo} slice and stack/dev.env still has "
+                     f"{name}={now!r}, the same value as on {baseline_ref}. A change that "
+                     f"touches a product repo must bump its image tag, or every experiment "
+                     f"and every deployed environment records this build as the previous "
+                     f"one. See docs/adr/0015.")
+
+
+# --- 19. one home for provider credentials, and no harness process reads it ----------
+# docs/adr/0016. `make eval JUDGE=bedrock` failed with "You must specify a region" because
+# chatbot-eval/.env held three credential names and no region, and nothing anywhere named
+# one — while chatbot-backend/.env happened to carry AWS_REGION, so the backend worked and
+# the eval did not. Credentials were per-repo, so a second consumer meant a second copy and
+# a second chance to omit something.
+#
+# The safety property this must NOT trade away is docs/adr/0006's: a credential never
+# enters a control-repo process, because this repo writes verify.json, smoke.json, container
+# logs and repair prompts. A shared file is safe only while compose's `env_file` is its only
+# reader — hence the dev-env.sh clause, which is the load-bearing one.
+SECRETS_FILE = "secrets.env"
+
+# Services in stack/compose.yml that may call a provider and therefore need the shared file.
+# Hand-kept, like IMAGE_TAG_OWNERS: a service absent from this tuple is simply not gated,
+# which is a decision rather than an omission.
+PROVIDER_SERVICES = ("backend", "eval")
+
+# What the template has to name. AWS_REGION is here because its absence is the whole reason
+# this check exists: boto3 resolves a region from the environment or fails, and nothing in
+# the joined stack named one for the eval.
+REQUIRED_SECRET_NAMES = ("AWS_REGION",)
+
+# Names that must NEVER appear in a committed file or an interpolated `environment:` value.
+# Deliberately NOT CREDENTIAL_SHAPED: that also matches SMOKE_PASSWORD, DEV_ACCOUNT_PASSWORD
+# and EVAL_ACCOUNT_PASSWORD, which are committed ON PURPOSE — they are `.test` identities
+# that guard nothing reachable, docs/adr/0005 and 0006 argue why, and the smoke suites have
+# to interpolate them so stack/dev.env is exactly where they belong. The rule is about a
+# real credential for an external provider, which is a narrower thing.
+PROVIDER_SECRET = re.compile(
+    r"^AWS_(ACCESS_KEY_ID|SECRET_ACCESS_KEY|SESSION_TOKEN|PROFILE)$")
+
+
+def check_provider_credentials() -> None:
+    example = os.path.join(ROOT, "stack", f"{SECRETS_FILE}.example")
+    if not os.path.exists(example):
+        fail("provider-credentials",
+             f"stack/{SECRETS_FILE}.example does not exist. It is the file a person copies "
+             f"to stack/{SECRETS_FILE} to give the whole joined stack its credentials, and "
+             f"without a template the names are folklore — which is how the eval ended up "
+             f"with credentials and no AWS_REGION. See docs/adr/0016.")
+    else:
+        declared = _env_keys(example)
+        for name in REQUIRED_SECRET_NAMES:
+            if name not in declared:
+                fail("provider-credentials",
+                     f"stack/{SECRETS_FILE}.example does not name {name}. boto3 resolves a "
+                     f"region from the environment or refuses, and `make eval JUDGE=bedrock` "
+                     f"died on exactly that. Name it in the template, commented out if it "
+                     f"has no sensible default.")
+
+    # The real file must never be committable.
+    p = subprocess.run(("git", "check-ignore", "-q", f"stack/{SECRETS_FILE}"),
+                       capture_output=True, cwd=ROOT)
+    if p.returncode != 0:
+        fail("provider-credentials",
+             f"stack/{SECRETS_FILE} is not gitignored. It is the one file in this repo that "
+             f"holds real credentials; .gitignore must cover it by name.")
+
+    # THE LOAD-BEARING CLAUSE. docs/adr/0006 keeps credentials out of every control-repo
+    # process. The shared file is safe only because compose's env_file is its only reader.
+    try:
+        dev_env_sh = open(os.path.join(ROOT, "scripts", "dev-env.sh")).read()
+    except OSError:
+        dev_env_sh = ""
+    if SECRETS_FILE in dev_env_sh:
+        fail("provider-credentials",
+             f"scripts/dev-env.sh names {SECRETS_FILE}. It must NOT read it: dev-env.sh "
+             f"exports into the environment of the process that writes verify.json, "
+             f"smoke.json, container logs and repair prompts, and docs/adr/0006 keeps "
+             f"credentials out of exactly that. compose's env_file is the only sanctioned "
+             f"reader.")
+
+    compose = os.path.join(ROOT, "stack", "compose.yml")
+    try:
+        doc = yaml.safe_load(open(compose)) or {}
+    except (OSError, yaml.YAMLError):
+        return  # other checks report an unparseable compose file
+    services = doc.get("services") or {}
+
+    for name in PROVIDER_SERVICES:
+        svc = services.get(name)
+        if svc is None:
+            fail("provider-credentials",
+                 f"PROVIDER_SERVICES names {name!r} and stack/compose.yml declares no such "
+                 f"service. Drop it from the tuple, or declare the service — an ungated "
+                 f"provider service is how a credential goes missing silently.")
+            continue
+        entries = (svc or {}).get("env_file") or []
+        if isinstance(entries, (str, dict)):
+            entries = [entries]
+        paths = [e if isinstance(e, str) else (e or {}).get("path", "") for e in entries]
+        if not any(SECRETS_FILE in str(p) for p in paths):
+            fail("provider-credentials",
+                 f"stack/compose.yml service {name!r} does not read stack/{SECRETS_FILE} "
+                 f"through env_file. It is a provider-calling service, so it needs the "
+                 f"shared credentials — and per-service copies are what left the eval "
+                 f"without a region. See docs/adr/0016.")
+
+    # A credential must never be interpolated into an `environment:` value: `make config`
+    # prints those, and stack/dev.env is committed.
+    for name, svc in sorted(services.items()):
+        for key in ((svc or {}).get("environment") or {}):
+            if PROVIDER_SECRET.match(str(key)):
+                fail("provider-credentials",
+                     f"stack/compose.yml service {name!r} sets {key} under `environment:`. "
+                     f"Credentials reach a container through env_file, read by the Docker "
+                     f"daemon — an `environment:` value is interpolated by compose and "
+                     f"printed by `make config`.")
+
+    for key in _env_keys(os.path.join(ROOT, "stack", "dev.env")):
+        if PROVIDER_SECRET.match(key):
+            fail("provider-credentials",
+                 f"stack/dev.env declares {key}, which is credential-shaped, and that file "
+                 f"is COMMITTED. It belongs in stack/{SECRETS_FILE}.")
+
+
+# --- 20. dev-env.sh does not strip trailing comments ---------------------------------
+# Its parser is `_val="${_line#*=}"` — everything after the first `=`, verbatim. So
+# `SIGNUP_CODE=dev-signup-code  # gates registration` sets the value to
+# `dev-signup-code  # gates registration` and every assertion that interpolates it fails
+# for a reason nobody would look for. This is a live trap precisely because the file was
+# just made terse, and an inline comment is the obvious way to keep it terse.
+def check_dev_env_inline_comments() -> None:
+    path = os.path.join(ROOT, "stack", "dev.env")
+    try:
+        lines = open(path).read().splitlines()
+    except OSError:
+        return
+    for n, line in enumerate(lines, 1):
+        stripped = line.strip()
+        if not stripped or stripped.startswith("#") or "=" not in stripped:
+            continue
+        value = stripped.split("=", 1)[1]
+        if " #" in value:
+            fail("dev-env-inline-comments",
+                 f"stack/dev.env line {n} looks like it has a trailing comment. "
+                 f"scripts/dev-env.sh takes EVERYTHING after the first `=` verbatim — it "
+                 f"does not strip comments or quotes — so the value would include the "
+                 f"comment. Put it on its own line above.")
+
+
 def main() -> int:
     ap = argparse.ArgumentParser()
     ap.add_argument("--warnings-are-errors", action="store_true")
@@ -885,6 +1189,8 @@ def main() -> int:
               check_gate_messages, check_loop_calls, check_agent_dispatchers,
               check_stack_services, check_clean_slate, check_lane_coverage,
               check_lane_vocabulary, check_status_headings,
+              check_image_tags, check_dev_env_duplicates,
+              check_provider_credentials, check_dev_env_inline_comments,
               report_readme_divergence)
     for fn in checks:
         try:

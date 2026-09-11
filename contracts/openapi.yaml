@@ -7,7 +7,7 @@
 openapi: 3.1.0
 info:
   title: agent-app API
-  version: 1.5.0
+  version: 1.6.0
   description: Frozen HTTP contract between the backend and its consumers. Changes are made here only,
     in a dedicated commit, before any implementation.
 servers:
@@ -72,6 +72,35 @@ paths:
             application/json:
               schema:
                 $ref: '#/components/schemas/HTTPValidationError'
+  /v1/version:
+    get:
+      tags:
+      - ops
+      summary: What build this is, and what it is running
+      description: 'Build identity and the effective model selectors, so a caller can record WHAT it
+        measured by reading it rather than by being told. Requires a session: which image and which
+        model an environment runs is deployment information, and /healthz already answers liveness for
+        an anonymous caller. Every field is a selector or an identifier — never a credential, never a
+        connection string, and never a wholesale dump of the settings object. Deliberately silent about
+        retrieval TUNING (top-k, the score floor, the fusion weights): those are internals that must
+        move freely, and promising them here would make them contract. See contracts/README.md
+        section "What GET /v1/version promises".'
+      operationId: getVersion
+      security:
+      - cookieAuth: []
+      responses:
+        '200':
+          description: The build, and the configuration that decides what an answer is made of.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/VersionResponse'
+        '401':
+          description: There is no valid session (`AUTH_REQUIRED`).
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
   /v1/auth/register:
     post:
       tags:
@@ -1300,3 +1329,73 @@ components:
       - type
       title: ValidationError
       description: 'One validation problem: where it was, and what was wrong.'
+    VersionResponse:
+      properties:
+        version:
+          type: string
+          description: The application's own version — the release, not the build. Two containers built
+            from different commits can report the same one, which is why image_tag exists.
+        image_tag:
+          anyOf:
+          - type: string
+          - type: 'null'
+          description: The container image tag, supplied to the process from OUTSIDE the image. NULL
+            when nothing supplied one, and null is the correct answer rather than a fallback — an
+            application that derives its own build identity from its version, its git tree or its
+            hostname is not reporting one, and the fallback would read as true in every deployed
+            environment. A consumer recording what it measured must treat null as "unknown", never as
+            a value.
+        git_sha:
+          anyOf:
+          - type: string
+          - type: 'null'
+          description: The commit the image was built from, supplied from outside the image, or null.
+            Same rule as image_tag.
+        chat_model:
+          type: string
+          enum:
+          - echo
+          - bedrock
+          description: Which chat model is injected into the graph, as it is EFFECTIVELY configured
+            rather than as a default. `echo` replies with the caller's own message and costs nothing;
+            `bedrock` calls a real provider. A consumer may switch exhaustively on this, and a third
+            value would be a contract change rather than a surprise.
+        chat_model_id:
+          anyOf:
+          - type: string
+          - type: 'null'
+          description: The provider's model identifier when one is in use, and NULL under `echo`,
+            because there is no model. Its shape is the provider's and nothing may be inferred from it.
+        embedding_model:
+          type: string
+          enum:
+          - local
+          - bedrock
+          description: Which embedder indexed the knowledge base and answers a dense query. It changes
+            what a retrieval measurement means, so a consumer comparing two measurements must compare
+            this too.
+        retrieval_router:
+          type: string
+          enum:
+          - heuristic
+          - llm
+          description: How the graph decides whether to consult the knowledge base — by lexical overlap
+            with the corpus manifest, or by asking the model. Promised because it is a behavioural MODE
+            rather than a tuning value. A routing figure produced under one and a routing figure
+            produced under the other are not the same measurement.
+      type: object
+      required:
+      - version
+      - image_tag
+      - git_sha
+      - chat_model
+      - chat_model_id
+      - embedding_model
+      - retrieval_router
+      title: VersionResponse
+      description: 'Response body for getVersion. Every field is REQUIRED and four of them are
+        nullable: a consumer must always be able to ask "what was this?" and get an explicit answer,
+        including the explicit answer "nothing supplied it". What may NOT be inferred: that the values
+        will still be true a moment later (a deploy is not atomic with a read), that they describe the
+        instance that served any other request, or that an absent field means a default — there are no
+        absent fields.'

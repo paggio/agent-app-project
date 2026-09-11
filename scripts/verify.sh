@@ -100,6 +100,13 @@ stage() { CURRENT_STAGE="$1"; echo; echo "-- $* --------------------------------
 ASSERT_PASSED=0
 ASSERT_FAILED=0
 ASSERT_FROM_CHANGE=0
+# One-shot jobs, counted separately as well as folded into the totals above.
+# Separately, because "an exit code matched what the change declared" and "an HTTP
+# assertion held" are different kinds of evidence, and a reader should not have to
+# guess which kind a number is.
+JOBS_RAN=0
+JOBS_PASSED=0
+JOBS_FAILED=0
 
 count_assertions() {
   # $1 = a smoke.py --json file. Adds its counts to the running totals.
@@ -152,11 +159,13 @@ finish() {
   [ "${LOCK_OWNED:-0}" = "1" ] && rm -rf "${LOCK_DIR:?}" 2>/dev/null || true
   python3 - "$RUN_DIR/verify.json" "$STATUS" "$FAILED_STAGE" "$OWNERS" "$CHANGE" "$BASE" \
            "$FAULT" "$ASSERT_PASSED" "$ASSERT_FAILED" "$ASSERT_FROM_CHANGE" "$CHANGE_SUITE" \
-           "$STAGE_LOG" "${CHANGE_DEPLOY_ENVIRONMENT:-}" "$REMOTE_SKIPPED" <<'PY'
+           "$STAGE_LOG" "${CHANGE_DEPLOY_ENVIRONMENT:-}" "$REMOTE_SKIPPED" \
+           "$JOBS_RAN" "$JOBS_PASSED" "$JOBS_FAILED" "${CHANGE_JOBS_COUNT:-0}" <<'PY'
 import json, sys
 (out, status, stage, owners, change, base,
  fault, passed, failed, from_change, change_suite, stage_log,
- environment, remote_skipped) = sys.argv[1:15]
+ environment, remote_skipped, jobs_ran, jobs_passed, jobs_failed,
+ jobs_declared) = sys.argv[1:19]
 json.dump({
     "change": change, "status": status, "failed_stage": stage or None,
     "owners_failing": [o for o in owners.split() if o], "base": base,
@@ -170,12 +179,20 @@ json.dump({
     # never touched the remote environment must not claim it did.
     "infra": {"environment": environment or None,
               "remote_asserted": not int(remote_skipped) and bool(environment)},
+    # One-shot runs declared by this change. `ran` is what makes a green line readable:
+    # a change that declared two jobs and ran none means something different from one
+    # that declared none, and the totals above cannot tell them apart.
+    # `declared` beside `ran`, because the two disagreeing IS the defect this stage shipped
+    # with: a reader of "ran: 1, passed: 1" cannot tell it from a one-job change.
+    "jobs": {"declared": int(jobs_declared), "ran": int(jobs_ran),
+             "passed": int(jobs_passed), "failed": int(jobs_failed)},
 }, open(out, "w"), indent=2)
 PY
   echo
   if [ "$STATUS" = "pass" ]; then
     note "PASS — $CHANGE verified against $BASE"
     note "$ASSERT_PASSED assertion(s) passed, $ASSERT_FROM_CHANGE of them from $CHANGE_SUITE"
+    [ "$JOBS_RAN" != "0" ] && note "$JOBS_PASSED of $JOBS_RAN one-shot job(s) exited as declared (of ${CHANGE_JOBS_COUNT:-0} declared)"
   else
     note "FAIL — $CHANGE failed at: $FAILED_STAGE"
     [ -n "$OWNERS" ] && note "answerable repo(s): $OWNERS"
@@ -239,7 +256,7 @@ fi
 # Not a failure: verify always tests the working tree, and during a change the submodules
 # are supposed to be ahead of the lock. Said out loud so a stale pin is never mistaken for
 # a verified one.
-for repo in chatbot-backend frontend infra; do
+for repo in chatbot-backend chatbot-eval frontend infra; do
   pinned="$(awk -v r="$repo" '$1==r{print $2}' repos.lock 2>/dev/null || true)"
   current="$(git -C "$repo" rev-parse HEAD 2>/dev/null || true)"
   if [ -n "$pinned" ] && [ -n "$current" ] && [ "$pinned" != "$current" ]; then
@@ -377,6 +394,98 @@ if [ "$CHANGE_DEPLOY_LOCAL" = "1" ]; then
        esac ;;
     *) fail_stage "contract: could not read the served spec at $DIRECT_BASE/openapi.json" "" harness ;;
   esac
+fi
+
+# ------------------------------------------------------------------------ jobs
+# A criterion whose oracle is a PROCESS rather than a request. smoke.py speaks HTTP against
+# a stack somebody else brought up, so it can never start a container — and "the run exits
+# non-zero when a threshold is breached" is not a thing any HTTP client can ask. Before this
+# stage such a criterion had two homes and neither was an assertion: a paragraph under
+# "a gap in the oracle", or a make target a human was trusted to run. See docs/adr/0014.
+#
+# BEFORE SMOKE, and that ordering is the point: a job produces the state the suite then
+# asserts. The joined stack forgets everything on `down` (docs/adr/0011), so a suite reading
+# what a job produced without the job having run in the same pass would be asserting the
+# leftovers of whatever somebody did last — or, on a cold stack, nothing at all.
+if [ "$CHANGE_DEPLOY_LOCAL" = "1" ] && [ "${CHANGE_JOBS_COUNT:-0}" != "0" ]; then
+  stage "jobs: $CHANGE_JOBS_COUNT one-shot run(s) in the joined stack"
+  JOB_TAB="$(printf '\t')"
+  # Collected to a file before the loop rather than piped in from a process substitution.
+  # Belt to the `< /dev/null` brace below: the list is then somewhere the loop body cannot
+  # reach even if a future runner forgets to close its stdin.
+  ./scripts/manifest.py "$CHANGE_DIR" --jobs > "$RUN_DIR/jobs.tsv" || \
+    fail_stage "jobs: could not read the job list from change.yaml" "" harness
+  while IFS="$JOB_TAB" read -r j_name j_service j_owner j_expect j_timeout j_env; do
+    [ -n "$j_name" ] || continue
+    j_log="$RUN_DIR/job-$j_name.log"
+    note "job '$j_name': run $j_service, expect exit $j_expect, budget ${j_timeout}s"
+    [ -n "$j_env" ] && note "  with: $j_env"
+
+    # $j_env is deliberately unquoted — it is a space-separated list of KEY=VALUE words,
+    # and manifest.py refuses a value containing whitespace so the split is safe.
+    #
+    # `< /dev/null` IS NOT TIDINESS. `docker compose run -T` still attaches stdin, and this
+    # loop reads its job list from stdin — so without it the first job's container consumed
+    # the second job's line, the loop ended after one iteration, and the stage reported
+    # "1 of 1 job(s) exited as declared" for a two-job change. A pass that silently skipped
+    # an assertion, and self-concealing: the counter and the loss had the same cause. The
+    # count check after the loop is what makes it impossible rather than merely fixed.
+    set +e
+    ./scripts/stack.sh run "$j_service" $j_env < /dev/null > "$j_log" 2>&1 &
+    j_pid=$!
+    # No timeout(1) on macOS, so a watchdog per job — the same shape fanout.sh uses and for
+    # the same reason: one hung run must not hold the loop open forever. The marker is
+    # written BEFORE the signal, so collection can tell a timeout from a job that happened
+    # to fail at the same moment.
+    ( sleep "$j_timeout"; touch "$RUN_DIR/.job-timeout-$j_name"
+      kill -TERM "$j_pid" 2>/dev/null ) >/dev/null 2>&1 &
+    j_dog=$!
+    wait "$j_pid"; j_rc=$?
+    kill "$j_dog" 2>/dev/null
+    set -e
+
+    JOBS_RAN=$((JOBS_RAN + 1))
+    if [ -f "$RUN_DIR/.job-timeout-$j_name" ]; then
+      rm -f "$RUN_DIR/.job-timeout-$j_name"
+      JOBS_FAILED=$((JOBS_FAILED + 1)); ASSERT_FAILED=$((ASSERT_FAILED + 1))
+      note "job '$j_name' exceeded its ${j_timeout}s budget — see $j_log"
+      fail_stage "jobs: '$j_name' timed out after ${j_timeout}s" "$j_owner" slice
+    fi
+    if [ "$j_rc" = "$j_expect" ]; then
+      JOBS_PASSED=$((JOBS_PASSED + 1)); ASSERT_PASSED=$((ASSERT_PASSED + 1))
+      note "job '$j_name' exited $j_rc as declared"
+      continue
+    fi
+    JOBS_FAILED=$((JOBS_FAILED + 1)); ASSERT_FAILED=$((ASSERT_FAILED + 1))
+    note "job '$j_name' exited $j_rc, expected $j_expect — see $j_log"
+    tail -20 "$j_log" 2>/dev/null | sed 's/^/verify:   /' || true
+    # Exit 2 from a job is that process refusing to judge, in the vocabulary this script
+    # already uses (docs/adr/0003). Still the owner's to fix — a job that cannot reach what
+    # it measures is a real failure — but calling it a threshold breach would send a repair
+    # agent after a number when the cause is a missing precondition.
+    if [ "$j_rc" = "2" ] && [ "$j_expect" != "2" ]; then
+      fail_stage "jobs: '$j_name' refused to judge (exit 2) rather than producing a result" \
+                 "$j_owner" slice
+    fi
+    fail_stage "jobs: '$j_name' exited $j_rc, expected $j_expect" "$j_owner" slice
+  done < "$RUN_DIR/jobs.tsv"
+
+  # THE COUNTED-EVIDENCE GATE FOR JOBS. A stage that runs a subset of what the change
+  # declared and reports a pass is exactly what docs/adr/0003 forbids, and this stage did
+  # it on its first outing. `fault: harness`, because a job that never started is not a
+  # product repo's failure and must not be sent to one as a repair brief.
+  if [ "$JOBS_RAN" != "$CHANGE_JOBS_COUNT" ]; then
+    note "change.yaml declares $CHANGE_JOBS_COUNT job(s) and only $JOBS_RAN ran."
+    note "The missing one asserted nothing, and this stage would otherwise have reported"
+    note "a pass over the subset that did run."
+    fail_stage "jobs: $JOBS_RAN of $CHANGE_JOBS_COUNT declared job(s) ran" "" harness
+  fi
+  record_stage jobs pass
+  note "$JOBS_PASSED of $JOBS_RAN declared job(s) exited as declared"
+elif [ "$CHANGE_DEPLOY_LOCAL" = "1" ]; then
+  record_stage jobs "skipped: change declares none"
+else
+  record_stage jobs "skipped: deploy.local=false"
 fi
 
 # ----------------------------------------------------------------------- smoke
@@ -562,14 +671,19 @@ fi
 # This is the clause that makes that impossible, including for skip branches nobody has
 # written yet. See docs/adr/0003.
 stage "verdict"
-if [ "$ASSERT_FROM_CHANGE" -lt 1 ]; then
-  note "no assertion from $CHANGE_SUITE was evaluated."
+# A job declared by THIS change is evidence about this change, exactly as one of its
+# own steps is, so it satisfies the gate. Written as `or` rather than folded into
+# ASSERT_FROM_CHANGE, because a reader of the notes below has to be able to see which
+# kind of evidence a pass actually rests on.
+if [ "$ASSERT_FROM_CHANGE" -lt 1 ] && [ "$JOBS_PASSED" -lt 1 ]; then
+  note "no assertion from $CHANGE_SUITE was evaluated, and no job of this change ran."
   note "This run proves the stack still works, not that $CHANGE does."
   note "Write the acceptance criteria as steps, or check whether every step is tagged"
   note "out of the passes this run executed."
-  fail_stage "verdict: no assertion from the change's own suite ran" "" harness
+  fail_stage "verdict: no assertion from the change's own suite or jobs ran" "" harness
 fi
 note "$ASSERT_PASSED assertion(s) evaluated, $ASSERT_FROM_CHANGE from $CHANGE_SUITE"
+[ "$JOBS_RAN" != "0" ] && note "$JOBS_PASSED of $JOBS_RAN one-shot job(s) exited as declared (of ${CHANGE_JOBS_COUNT:-0} declared)"
 
 # The terminal marker. STATUS starts at `incomplete` and only this line makes it a pass,
 # so a death anywhere above reports the stage it died in rather than a PASS.

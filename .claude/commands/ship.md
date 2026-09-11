@@ -51,7 +51,13 @@ Produce four things:
   contract entries it depends on, and how it is verified. Say nothing about another repo's
   internals. Delete the slices that do not apply and prune `slices:` to match.
 - **`change.yaml`** — slices, deploy flags, the smoke file and base. Set `smoke.e2e: true`
-  when a criterion can only be proved in a browser.
+  when a criterion can only be proved in a browser. Declare `jobs:` for a criterion whose
+  oracle is a process rather than a request — an exit code, asserted and routed by `owner`.
+
+**If a slice touches a product repo, bump that repo's image tag in `stack/dev.env`.** Every
+image carries a hand-bumped `local-<n>.<n>.<n>`; leaving it means every experiment and every
+deployed environment records this build as the previous one. `check-docs.py [image-tags]`
+refuses it, and `docs/adr/0015` says why the git SHA is not the answer.
 
 ## 2 — Freeze the contract
 

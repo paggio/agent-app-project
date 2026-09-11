@@ -59,7 +59,7 @@ if [ -n "$RUN_DIR" ] && [ ! -d "$RUN_DIR" ]; then
 fi
 
 TS="$(date -u +%Y%m%dT%H%M%SZ)"
-REPOS="chatbot-backend frontend infra"
+REPOS="chatbot-backend chatbot-eval frontend infra"
 
 say() { printf '%s\n' "$*"; }
 

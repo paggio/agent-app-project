@@ -1,12 +1,13 @@
 # agent-app-project
 
-Control repo for a three-tier system developed primarily through AI coding agents. It holds
+Control repo for a multi-tier system developed primarily through AI coding agents. It holds
 the one thing that cannot live inside any single product repo: the interface between them.
 
 | Repo | Submodule path | Contents | Deploy cadence |
 | --- | --- | --- | --- |
 | [`agent-app-project`](https://github.com/Paggio/agent-app-project) | — | contracts, change briefs, cross-cutting docs, orchestration | n/a |
 | [`chatbot-backend`](https://github.com/Paggio/chatbot-backend) | `chatbot-backend/` | API service | per merge |
+| [`chatbot-eval`](https://github.com/Paggio/chatbot-eval) | `chatbot-eval/` | one-shot eval run: fixture corpus, question set, Phoenix experiments | on a schedule |
 | [`frontend`](https://github.com/Paggio/frontend) | `frontend/` | web client | per merge |
 | [`infra`](https://github.com/Paggio/infra) | `infra/` | IaC | reviewed, gated |
 
@@ -25,7 +26,7 @@ no contract pass. That repo's CI fails if the work turns out to touch contract s
 which is the signal to come back here.
 
 ```bash
-cd chatbot-backend   # or frontend, infra
+cd chatbot-backend   # or chatbot-eval, frontend, infra
 claude
 ```
 
@@ -78,7 +79,7 @@ record. See `docs/adr/0010`.
 > /realign
 ```
 
-Bumps the submodules to their merged `main`, pins the triple in `repos.lock`, re-checks
+Bumps the submodules to their merged `main`, pins their SHAs in `repos.lock`, re-checks
 `contracts/` against what the services actually serve, re-runs the baseline suite, and
 promotes the assertions worth keeping forever into `smoke/baseline.yaml`. This is also the
 lane a single-repo deploy needs on its own — it is the only check that can fail on the seam.
@@ -97,7 +98,7 @@ If nothing does, it says so and opens nothing. See `docs/adr/0009`.
 - `concept.md` — the reasoning behind this layout, and the parts of it that are load-bearing.
 - `docs/adr/` — decisions and their accepted costs. Read before proposing a redesign.
 - `docs/infra-interface.md` — what this repo requires of `infra/`.
-- `docs/init/` — how all four repos were created from zero.
+- `docs/init/` — how the repos were created from zero, and how a new one is attached.
 - `retros/` — what each lane's retrospective found, and the reason the next one does not
   raise the same thing twice.
 - `CLAUDE.md` — additive agent context. Never load-bearing; every product repo is

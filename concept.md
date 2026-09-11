@@ -21,20 +21,21 @@ the mechanism wins, and the mechanism is never quoted here.
 | `frontend` | web client | per merge |
 | `infra` | IaC | reviewed, gated |
 
-The three product repos are vendored here as git submodules.
+The product repos — `chatbot-backend`, `chatbot-eval`, `frontend`, `infra` — are
+vendored here as git submodules.
 
 **Why split at all.** Each product repo keeps its own git history, CI pipeline, deploy
 cadence, secret scope and observability. A shared pipeline couples deploy risk across tiers
 with very different review requirements — infra is gated, the app repos are per-merge.
 
-**Why a control repo.** Three agents working in three repos will each re-derive the
+**Why a control repo.** Agents working in separate repos will each re-derive the
 interface between them if allowed to, and they will disagree in small ways that surface in
 production rather than in review. Prose cannot prevent that, because **instruction text
 cannot fail a build**. A contract can. The control repo exists to hold the one thing that
 cannot live inside any single product repo.
 
 **The accepted costs**, stated because an argument that lists only benefits is a sales
-pitch: a feature spanning all three repos produces three pull requests and three CI runs
+pitch: a feature spanning every repo produces a pull request and a CI run in each
 and cannot merge atomically; version skew is a permanent tax, paid via expand-contract
 migrations and feature flags; and submodules are a sharp edge (§6). The fallback, if the
 three-PR overhead ever becomes the dominant friction, is to merge backend + frontend +
@@ -68,7 +69,7 @@ removals in a later change once every consumer is updated.
 ## 3. Verification is what makes any of it true
 
 A contract says what the interface *should* be. It says nothing about whether the interface
-is honoured at runtime, and for a while nothing filled that gap: three repos could each be
+is honoured at runtime, and for a while nothing filled that gap: the repos could each be
 internally green while the seam between them was broken, and nobody found out until someone
 ran the whole thing by hand. The frontend's tests passed against mock clients; the backend's
 passed against itself; the proxy could not resolve the backend at all.
@@ -190,7 +191,7 @@ claude
 
 which brings the submodule to its merged `main`, re-checks the contract against what the
 service now actually serves, re-runs the baseline suite through the joined origin, and pins
-the triple in `repos.lock` — one commit containing the pointers and the lock and nothing
+the SHAs in `repos.lock` — one commit containing the pointers and the lock and nothing
 else. A single-repo deploy still needs this lane, because a product repo's own CI can only
 ever prove that repo is consistent with itself.
 
@@ -359,6 +360,80 @@ The rules that follow:
 performs the sequence.
 
 ---
+
+## 6b. Configuration and secrets: where to put things
+
+Two files under `stack/`, split by one question — **can this be committed?**
+
+| File | Committed | Holds | Read by |
+| --- | --- | --- | --- |
+| `stack/dev.env` | yes | non-secret config, grouped by service; every `${VAR}` a smoke suite interpolates | the scripts, and compose |
+| `stack/secrets.env` | **no, gitignored** | real credentials: AWS keys and the region | compose's `env_file` only |
+
+### Putting your credentials in
+
+```bash
+cp stack/secrets.env.example stack/secrets.env   # the region is already filled in
+#  paste your AWS keys into it
+make creds                                       # says what resolved, never prints a value
+```
+
+That is the whole of it. **Every service that needs them gets them automatically** — no
+export, no second copy, no flag:
+
+```bash
+make up                      # backend, with CHAT_MODEL=bedrock available
+make eval JUDGE=bedrock      # the eval, with the real judge
+make iterate CHANGE=...      # and the loop
+```
+
+`backend` and `eval` are the two services wired to that file, in `stack/compose.yml`.
+`frontend` and `proxy` are not, because they call no provider. A new service that needs
+credentials is one `env_file` entry plus one name in `check-docs.py`'s
+`PROVIDER_SERVICES` — and the gate fails until both are there.
+
+### What wins over what
+
+Highest first. Measured, not taken from the manual:
+
+1. `environment:` in a compose file
+2. the real process environment — `CHAT_MODEL=echo make up`
+3. **`stack/secrets.env`** — the joined stack's shared credentials
+4. `<submodule>/.env` — that repo's own file
+
+So a per-repo `.env` keeps working for `cd chatbot-backend && make up`, and in the joined
+stack `stack/secrets.env` overrides it. You do not have to delete the per-repo files, and
+you should stop adding to them.
+
+### Two rules `stack/dev.env` will punish you for breaking
+
+Both are gates, because both have cost a run:
+
+- **One line per name.** A name declared twice resolves to the **first**; the second is
+  dead. This silently ran a stack on `BACKEND_IMAGE_TAG=dev` while every reader of the file
+  saw `local-0.0.1`.
+- **No trailing comments.** Everything after the first `=` is the value, verbatim — no
+  comment stripping, no quote stripping. `SIGNUP_CODE=abc  # gates registration` sets the
+  code to `abc  # gates registration`. Comments go on their own line.
+
+### Why the secrets never enter a script here
+
+`scripts/dev-env.sh` is **forbidden** from reading `stack/secrets.env`, and that is a gate
+rather than a convention. This repo writes `verify.json`, `smoke.json`, container logs and
+repair prompts; a credential in the environment of the process that writes them is one
+careless dump away from being committed. Compose hands the file to the Docker daemon and no
+process here ever sees it. `docs/adr/0006` and `docs/adr/0016`.
+
+The corollary worth knowing: **`make creds` prints names and provenance, never values**, and
+`make config` redacts. Plain `docker compose config` on the joined stack does not — do not
+run it.
+
+### When the region is missing
+
+The failure does not look like a missing region. boto3 reports it inside a sentence that
+begins "Could not load credentials to authenticate with AWS client", which sends you to
+audit credentials that are fine. `make creds` is the answer, and the eval now refuses up
+front naming the variable instead of letting a validation dump do it.
 
 ## 7. Where instructions live
 

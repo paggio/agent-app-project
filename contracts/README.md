@@ -314,6 +314,48 @@ lossy by design: a response returns before its spans are written, and a collecto
 unreachable drops them without touching the request. The header says what the id was, not
 that anybody kept it.
 
+## What `GET /v1/version` promises
+
+Session-required, and that is the unusual part of an `ops` endpoint. `/healthz` answers
+liveness for an anonymous caller and is the endpoint a load balancer polls; this one answers
+*which build and which models*, which is deployment information. The one consumer signs in
+anyway, so authenticating it costs nothing and keeps that information off an open endpoint.
+
+**It exists so that a consumer can record what it measured by reading it.** That is the whole
+reason, and it is a narrow one. A process told its own image tag by a flag records what its
+caller believed; a process that reads it records what is serving. `chatbot-eval` copies
+`image_tag`, `chat_model`, `embedding_model` and `retrieval_router` into every Phoenix
+experiment's metadata, and a wrong value there is not a wrong response — it is a wrong
+permanent record of what was measured.
+
+**Every field is a selector or an identifier.** No credential, no connection string, no
+endpoint URL, and never a wholesale serialisation of the settings object. That last one is
+the implementation to refuse: "report the configuration" is exactly the instruction under
+which a secret arrives later, so the seam suite asserts that no field NAME in the body
+matches `secret|password|credential|signup_code|aws_access|session_token`. Written against
+names rather than values, so it fails on the day such a field is added rather than once it
+holds a real key.
+
+**`image_tag` and `git_sha` are null when nothing supplied them**, and null is the answer
+rather than a fallback. An application that derives its own build identity — from its
+version, its git tree, its hostname — is not reporting one, and the fallback reads as true in
+every deployed environment. A consumer must treat null as "unknown" and never as a value.
+
+**What may NOT be inferred.** That the values are still true a moment later: a deploy is not
+atomic with a read, and a consumer that pins a measurement to a tag is recording what it saw,
+not a guarantee. That they describe the instance that served any other request — behind a
+load balancer, they do not. And that a value absent from the response means a default: no
+field is ever absent, four of them are nullable instead.
+
+**Retrieval tuning is deliberately NOT here.** `retrieval_top_k`, the score floor and the
+fusion weights all change what a recall number means, which is exactly the argument for
+adding them, and it is refused: they are internals that must be free to move, and a promise
+here would freeze them. `retrieval_router` is promised because it is a behavioural mode
+rather than a tuning value — a routing figure produced by a model and one produced by lexical
+overlap are not the same measurement, and a reader of two experiments has to be able to tell.
+Anything else a consumer turns out to need is a contract change, which is the cost
+`docs/adr/0013` accepts on purpose.
+
 ## Changing a contract
 
 1. Additive by default. The repos deploy independently, so production will always
