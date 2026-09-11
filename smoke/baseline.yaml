@@ -703,6 +703,103 @@ steps:
   # the same thing for free. `phoenix-knows-the-backend-project` is implied by every
   # project-scoped query here, which 404s when the project is absent.
 
+
+  # ─────────────────────────── what build is this, and what is it running (0006)
+  # Promoted from changes/0006-chatbot-eval. The eval reads this endpoint to record what it
+  # measured, so a regression here silently corrupts a permanent record of a score rather
+  # than breaking a request — which is why these are worth keeping forever.
+  #
+  # Self-contained: its own account, its own logout, so it can sit anywhere in the file and
+  # perturbs no other block's session.
+
+  - name: version-requires-a-session
+    owner: chatbot-backend
+    GET: /api/v1/version
+    # UNTAGGED, so it runs against a deployed origin too. Which build and which model an
+    # environment runs is deployment information; /healthz already answers liveness for an
+    # anonymous caller and this deliberately does not. Asserts a body property, not a bare
+    # status — contracts/README.md § "Two origins, one suite".
+    expect:
+      status: 401
+      json:
+        error:
+          code: AUTH_REQUIRED
+
+  - name: register-a-version-reader
+    owner: chatbot-backend
+    POST: /api/v1/auth/register
+    body:
+      email: smoke-baseline-version-${SMOKE_RUN_ID}@auth.test
+      password: ${SMOKE_PASSWORD}
+      signup_code: ${SIGNUP_CODE}
+      display_name: Version Reader
+    expect:
+      status: 201
+      cookie: session
+
+  - name: version-names-the-effective-chat-model
+    owner: chatbot-backend
+    GET: /api/v1/version
+    # UNTAGGED. The enum is the assertion: free text would pass a presence check and tell a
+    # reader of an experiment nothing. NOT asserted as `echo` — a developer or an
+    # environment with credentials legitimately runs bedrock.
+    expect:
+      status: 200
+      body_matches: '"chat_model":\s*"(echo|bedrock)"'
+
+  - name: version-names-the-retrieval-configuration
+    owner: chatbot-backend
+    GET: /api/v1/version
+    # UNTAGGED. These two decide what a retrieval measurement MEANS, so an experiment that
+    # did not record them is not comparable with anything.
+    expect:
+      status: 200
+      body_matches: '"embedding_model":\s*"(local|bedrock)".*"retrieval_router":\s*"(heuristic|llm)"'
+
+  - name: version-leaks-no-credential
+    owner: chatbot-backend
+    GET: /api/v1/version
+    # UNTAGGED, and the most valuable of the seven remotely: this endpoint exists to report
+    # configuration, which is exactly the instruction under which a secret gets added later.
+    # Written against field NAMES rather than values so it fails on the DAY one is added
+    # rather than once it holds a real key. `body_matches` stops an empty body passing the
+    # exclusion on its own.
+    expect:
+      status: 200
+      body_matches: '"version"'
+      body_excludes: '(?i)(secret|password|credential|signup_code|aws_access|session_token)'
+
+  - name: version-reports-the-build-it-was-given
+    owner: chatbot-backend
+    GET: /api/v1/version
+    # `local` ONLY: it asserts the value stack/dev.env passes in, and a deployed environment
+    # has a different tag. The property is that the app reports what it was GIVEN — an
+    # application that derives its own build identity is not reporting one.
+    tags: [local]
+    expect:
+      status: 200
+      json:
+        image_tag: ${BACKEND_IMAGE_TAG}
+
+  - name: the-backend-image-tag-is-a-version
+    owner: chatbot-backend
+    GET: /api/v1/version
+    # `local` ONLY, same reason. Asserts the SHAPE rather than the value: `dev` satisfied
+    # every other check for a month while making two builds indistinguishable.
+    # docs/adr/0015.
+    tags: [local]
+    expect:
+      status: 200
+      body_matches: '"image_tag":\s*"local-[0-9]+\.[0-9]+\.[0-9]+"'
+
+  - name: logout-the-version-reader
+    owner: chatbot-backend
+    POST: /api/v1/auth/logout
+    # The jar's exit state is a decision, not an accident: the block that follows opens with
+    # steps that assume nobody is signed in.
+    expect:
+      status: 204
+
   - name: phoenix-is-up
     owner: chatbot-backend
     GET: /healthz
