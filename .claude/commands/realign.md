@@ -125,8 +125,11 @@ this lane has:** `docs/adr/0008` makes this repo the publisher and `vendor-contr
 only writer, and outside a dispatch there is no agent in that repo to commit what was
 published. Editing the vendored file by hand is still a mistake and the hook still blocks it.
 
-That pull request merges on its own and does not hold up step 4; say in the report that the
-repo is a commit ahead of `repos.lock` until it does.
+**Step 4 waits for it.** The ordering rule at the top covers this lane's own pull requests
+too: pin a repo while your own unmerged commit for it is outstanding and you pin a SHA you
+are about to supersede — the lock is wrong the hour it lands, and the lane has to be run a
+second time to correct it. Stop here instead, say which pull request must merge, and resume
+at step 4 once it has.
 
 ## 3 — Does the joined system still work?
 
@@ -149,6 +152,13 @@ git add chatbot-backend chatbot-eval frontend infra repos.lock
 git commit -m "chore: bump submodules for <change>"
 ```
 
+Nothing is pinned while this lane still has unmerged work of its own outstanding (§ 2b).
+
+**If `chore/realign-<change>` already exists, this is a second pass over that change.**
+Switch to it rather than branching, add a commit, and comment on its open pull request —
+one change gets one realign branch and one pull request. The commit message says why the
+earlier pin stopped being right.
+
 That commit contains the pointers and `repos.lock` and nothing else, and it is on a branch:
 nothing lands on this repo's `main` except through a reviewed pull request. A bump is not
 an exception — it is the commit that decides which four SHAs are believed to work together.
@@ -158,6 +168,9 @@ an exception — it is the commit that decides which four SHAs are believed to w
 If a change just merged, move the assertions from `changes/<change>/smoke.yaml` that are
 worth keeping forever into `smoke/baseline.yaml`. This is how the loop stops re-breaking
 what an earlier change fixed.
+
+If the change's durable steps are already in the baseline — a second pass, or a promotion an
+earlier lane did — there is nothing to promote. Say so; the rest of this step still runs.
 
 Keep the baseline fast and keep it about the **seam**. Anything provable inside one repo
 belongs in that repo's own suite, not here.
