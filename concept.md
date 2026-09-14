@@ -373,10 +373,24 @@ Two files under `stack/`, split by one question — **can this be committed?**
 ### Putting your credentials in
 
 ```bash
-cp stack/secrets.env.example stack/secrets.env   # the region is already filled in
+cp stack/secrets.env.example stack/secrets.env   # region and mode already filled in
 #  paste your AWS keys into it
 make creds                                       # says what resolved, never prints a value
 ```
+
+**Credentials alone switch nothing.** The backend never sniffs for them — which model it
+builds is an explicit selector, so a fully credentialled stack still serves `echo` until
+`CHAT_MODEL=bedrock` is set. That is why the same file carries the mode:
+
+```
+CHAT_MODEL=bedrock     # echo | bedrock      — the backend's model
+EVAL_JUDGE=heuristic   # heuristic | bedrock — the eval's judge
+```
+
+Those two are the **only** names any script here reads out of that file, through an
+allowlist, so a credential can never follow them in. `make creds` prints what they resolve
+to and from which layer, and says so when credentials are present while the model is still
+`echo`. `docs/adr/0017`.
 
 That is the whole of it. **Every service that needs them gets them automatically** — no
 export, no second copy, no flag:

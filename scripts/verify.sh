@@ -160,12 +160,13 @@ finish() {
   python3 - "$RUN_DIR/verify.json" "$STATUS" "$FAILED_STAGE" "$OWNERS" "$CHANGE" "$BASE" \
            "$FAULT" "$ASSERT_PASSED" "$ASSERT_FAILED" "$ASSERT_FROM_CHANGE" "$CHANGE_SUITE" \
            "$STAGE_LOG" "${CHANGE_DEPLOY_ENVIRONMENT:-}" "$REMOTE_SKIPPED" \
-           "$JOBS_RAN" "$JOBS_PASSED" "$JOBS_FAILED" "${CHANGE_JOBS_COUNT:-0}" <<'PY'
+           "$JOBS_RAN" "$JOBS_PASSED" "$JOBS_FAILED" "${CHANGE_JOBS_COUNT:-0}" \
+           "${CHAT_MODEL:-}" "${EVAL_JUDGE:-}" <<'PY'
 import json, sys
 (out, status, stage, owners, change, base,
  fault, passed, failed, from_change, change_suite, stage_log,
  environment, remote_skipped, jobs_ran, jobs_passed, jobs_failed,
- jobs_declared) = sys.argv[1:19]
+ jobs_declared, chat_model, eval_judge) = sys.argv[1:21]
 json.dump({
     "change": change, "status": status, "failed_stage": stage or None,
     "owners_failing": [o for o in owners.split() if o], "base": base,
@@ -186,6 +187,12 @@ json.dump({
     # with: a reader of "ran: 1, passed: 1" cannot tell it from a one-job change.
     "jobs": {"declared": int(jobs_declared), "ran": int(jobs_ran),
              "passed": int(jobs_passed), "failed": int(jobs_failed)},
+    # WHICH CONFIGURATION THIS PASS WAS OBTAINED UNDER. Two runs are otherwise
+    # byte-identical although one called a real provider and the other did not, and an
+    # expired credential has been charged to a slice four times because nothing recorded
+    # that the run was reaching for one. Empty means the compose default.
+    "configuration": {"chat_model": chat_model or None,
+                      "eval_judge": eval_judge or None},
 }, open(out, "w"), indent=2)
 PY
   echo

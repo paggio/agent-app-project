@@ -1190,13 +1190,29 @@ def check_provider_credentials() -> None:
         dev_env_sh = open(os.path.join(ROOT, "scripts", "dev-env.sh")).read()
     except OSError:
         dev_env_sh = ""
+    # dev-env.sh MAY read the credentials file, for MODE SELECTORS only, through an
+    # allowlist — docs/adr/0017. What it may never do is let a credential through: this repo
+    # writes verify.json, smoke.json, container logs and repair prompts, and docs/adr/0006
+    # keeps credentials out of exactly that. The rule used to be "must not name the file",
+    # which was a blunt proxy for this and forbade the working fix along with the dangerous
+    # one. The credentials themselves still reach the containers over compose's env_file
+    # and are read by the Docker daemon, never here.
     if SECRETS_FILE in dev_env_sh:
-        fail("provider-credentials",
-             f"scripts/dev-env.sh names {SECRETS_FILE}. It must NOT read it: dev-env.sh "
-             f"exports into the environment of the process that writes verify.json, "
-             f"smoke.json, container logs and repair prompts, and docs/adr/0006 keeps "
-             f"credentials out of exactly that. compose's env_file is the only sanctioned "
-             f"reader.")
+        m = re.search(r'^SECRETS_ENV_ALLOW="([^"]*)"', dev_env_sh, re.M)
+        if not m:
+            fail("provider-credentials",
+                 f"scripts/dev-env.sh reads {SECRETS_FILE} with no SECRETS_ENV_ALLOW "
+                 f"allowlist. Reading that file without one lets a credential into the "
+                 f"environment of the process that writes this repo's run artifacts. "
+                 f"See docs/adr/0006 and docs/adr/0017.")
+        else:
+            for name in m.group(1).split():
+                if PROVIDER_SECRET.match(name) or CREDENTIAL_SHAPED.search(name):
+                    fail("provider-credentials",
+                         f"SECRETS_ENV_ALLOW in scripts/dev-env.sh names {name}, which is "
+                         f"credential-shaped. That allowlist exists for MODE SELECTORS — "
+                         f"CHAT_MODEL, EVAL_JUDGE — and a credential in it would enter the "
+                         f"process that writes verify.json, smoke.json and repair prompts.")
 
     compose = os.path.join(ROOT, "stack", "compose.yml")
     try:

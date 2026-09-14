@@ -65,6 +65,30 @@ KEY_OK=0
 [ -n "$(_has "$SECRETS" AWS_ACCESS_KEY_ID)" ] && [ "$(_has "$SECRETS" AWS_ACCESS_KEY_ID)" != "declared but EMPTY" ] && KEY_OK=1
 [ -n "${AWS_ACCESS_KEY_ID:-}" ] && KEY_OK=1
 
+# The MODE, which is a different question from the credentials and is where the confusion
+# lives: credentials alone switch nothing. CHAT_MODEL is an explicit selector by design
+# (chatbot-backend's docs/adr/0001 and 0004) — the backend never sniffs for credentials.
+. "$ROOT/scripts/dev-env.sh"
+echo "  mode, as the stack will resolve it"
+printf '  %-22s %-28s %s\n' NAME VALUE SOURCE
+for name in CHAT_MODEL EVAL_JUDGE; do
+  src="-"
+  case " ${SECRETS_ENV_DEFAULTED:-} " in *" $name "*) src="$SECRETS" ;; esac
+  case " ${DEV_ENV_DEFAULTED:-} " in *" $name "*) src="stack/dev.env" ;; esac
+  case " ${SUBMODULE_ENV_DEFAULTED:-} " in *" $name "*) src="a submodule .env" ;; esac
+  [ -n "${!name:-}" ] && [ "$src" = "-" ] && src="the environment you ran this in"
+  printf '  %-22s %-28s %s\n' "$name" "${!name:-<unset, compose default>}" "$src"
+done
+echo
+
+if [ "$REGION_OK" = "1" ] && [ "$KEY_OK" = "1" ] && [ "${CHAT_MODEL:-}" != "bedrock" ]; then
+  echo "  NOTE: credentials are configured and the backend will still run CHAT_MODEL=echo."
+  echo "        Credentials do not switch the model — it is an explicit selector, and the"
+  echo "        backend never sniffs for them. Add CHAT_MODEL=bedrock to $SECRETS, or run"
+  echo "        CHAT_MODEL=bedrock make up for one stack."
+  echo
+fi
+
 if [ "$REGION_OK" = "1" ] && [ "$KEY_OK" = "1" ]; then
   echo "  bedrock: ready — CHAT_MODEL=bedrock make up   ·   make eval JUDGE=bedrock"
 elif [ "$KEY_OK" = "1" ]; then
