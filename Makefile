@@ -15,6 +15,9 @@ BASE         ?= http://localhost:$(PROXY_PORT)
 BACKEND_BASE ?= http://localhost:8000
 PHOENIX_BASE ?= http://localhost:6006
 MSG          ?= hello
+# The Identity Center profile every AWS-facing target goes through. Nothing here ever holds
+# a long-lived key: `make login` gets a session, and it expires. docs/adr/0018.
+AWS_PROFILE  ?= sample-agent-dev
 SVC          ?=
 CHANGE       ?=
 
@@ -22,7 +25,8 @@ REPOS := chatbot-backend chatbot-eval frontend infra
 
 .DEFAULT_GOAL := help
 .PHONY: help up down restart ps logs rebuild config urls open health chat smoke verify iterate \
-        e2e eval creds phoenix-durability repos lock prs check check-docs init clean
+        e2e eval creds login push-gh-creds gh-creds-status secrets-refresh \
+        phoenix-durability repos lock prs check check-docs init clean
 
 help: ## Show this list
 	@echo "The full local stack — backend, datastores, frontend, proxy — on one origin."
@@ -35,7 +39,7 @@ help: ## Show this list
 	@echo
 	@echo "  Variables: PROXY_PORT=$(PROXY_PORT) BASE=$(BASE)"
 	@echo "             CHANGE=<change-dir> for verify/iterate, MSG=\"...\" for chat,"
-	@echo "             SVC=<service> for logs/rebuild"
+	@echo "             SVC=<service> for logs/rebuild, AWS_PROFILE=$(AWS_PROFILE)"
 
 # ── the stack ────────────────────────────────────────────────────────────────────────
 
@@ -66,6 +70,29 @@ config: ## Print the rendered compose config, with secrets redacted
 # where, and a missing AWS_REGION is the failure it exists to make obvious.
 creds: ## Say whether provider credentials are configured, and from where
 	@./scripts/creds.sh
+
+# ── AWS, and the credentials the deploy runs on ──────────────────────────────────────────
+# There is no long-lived access key for this account anywhere, and there is not going to be
+# one: `login` gets a SESSION through Identity Center, and everything downstream inherits
+# its expiry. That is the whole design, and its cost is that you re-run these. docs/adr/0018.
+
+login: ## Log in to AWS through Identity Center, and say how long the session lasts
+	@aws sso login --profile $(AWS_PROFILE)
+	@echo
+	@aws sts get-caller-identity --profile $(AWS_PROFILE) \
+		--query '{account:Account,role:Arn}' --output table
+	@echo "  Next:  make push-gh-creds   so /dev-push can deploy as you"
+	@echo "         make secrets-refresh so the local stack can reach Bedrock"
+	@echo
+
+push-gh-creds: ## Push the current session credentials into this repo's Actions secrets
+	@./scripts/push-gh-creds.sh
+
+gh-creds-status: ## What is on GitHub now, and when it expires
+	@./scripts/push-gh-creds.sh --status
+
+secrets-refresh: ## Rewrite the AWS lines of stack/secrets.env from the SSO profile
+	@./scripts/secrets-refresh.sh
 
 urls: ## Print the endpoints worth knowing
 	@echo

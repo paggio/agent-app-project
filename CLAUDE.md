@@ -25,18 +25,18 @@ Never run two lanes in one session.
 - Smoke assertions are owned here too. A failing assertion means fix the cause, or change
   the criterion here on purpose — never in a product repo.
 - Harness fixes arrive as a PR from `harness-retro`, which ends each lane. Never slip one into a change.
-- Never commit inside a submodule while it is on `main`, and never assume which ref it is
-  on: `git -C <repo> switch -c <branch>` first, every time. `git submodule update` leaves
-  a detached HEAD, `/realign` leaves `main`, and a commit on either is a commit in the
-  wrong place.
+- Never commit inside a submodule while it is on `main`, and never assume which ref it is on:
+  `git -C <repo> switch -c <branch>` first, every time. `git submodule update` leaves a
+  detached HEAD, `/realign` leaves `main`, and a commit on either is in the wrong place.
 - The freeze point is the commit that lands `contracts/` alone. Its SHA goes in that
   change's `change.yaml` as `freeze_sha`. Nowhere else — nothing reads anywhere else.
 - "Three PRs exist" is not shipped: shipped means deployed together with the smoke suite passing. See `docs/adr/0002`.
-- Every variable a smoke suite interpolates is declared in `stack/dev.env`. Never export
-  one by hand.
+- Every variable a smoke suite interpolates is declared in `stack/dev.env`. Never export one by hand.
 - Exit 1 = the thing under test failed. Exit 2 = the harness refused. See `docs/adr/0003`.
 - NEVER run `docker compose config` on `stack/compose.yml` or paste its output — it inlines
   `env_file` and prints the real AWS credentials in `chatbot-backend/.env`. Use `make config`.
+- No long-lived AWS credential exists, and none is to be created. `make login` gets a session;
+  only `push-gh-creds.sh` and `secrets-refresh.sh` may hold one. See `docs/adr/0018`.
 - Ignore `TODO.md` — it is a personal ideas dump, not something you must maintain/populate/read into.
 - Concise EVERYWHERE, and REPLIES TO ME MOST OF ALL: lead with the result, no preamble, no
   narration, no recap. Same for comments, docs, briefs, commit messages. Verbosity is the

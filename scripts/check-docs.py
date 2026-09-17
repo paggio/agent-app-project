@@ -1158,6 +1158,84 @@ PROVIDER_SECRET = re.compile(
     r"^AWS_(ACCESS_KEY_ID|SECRET_ACCESS_KEY|SESSION_TOKEN|PROFILE)$")
 
 
+# docs/adr/0018. The prohibition in 0006/0016 — a credential must never enter a control-repo
+# process — now has exactly one exception, and an exception written only as prose is one a
+# future reader imitates. This is the boundary: the list of scripts that may acquire a
+# credential is closed, and the one that may must still not be able to leak it.
+CREDENTIAL_ACQUIRERS = {
+    # script                         may it write a credential to a file?
+    "scripts/push-gh-creds.sh":      False,   # a pipe to `gh secret set`, and nothing else
+    "scripts/secrets-refresh.sh":    True,    # writing stack/secrets.env is its whole purpose
+}
+
+# How a credential is obtained from the SSO profile. A script running this is holding one.
+CREDENTIAL_SOURCE = re.compile(r"aws\s+configure\s+export-credentials")
+
+# Ways a held credential escapes into something this repo writes, or into something `ps`
+# shows. `writes_file` marks the ones that are the stated job of secrets-refresh.sh; the
+# others apply to every acquirer, because no purpose justifies them.
+CREDENTIAL_LEAKS = (
+    (re.compile(r"^\s*set\s+-[a-z]*x", re.M), False,
+     "turns on shell tracing, which prints every credential it handles to stderr — and this "
+     "repo's stderr ends up in run artifacts and transcripts"),
+    (re.compile(r"gh\s+secret\s+set[^\n]*(--body\b|-b\s)"), False,
+     "passes the secret as `--body`, which puts it in argv where `ps` shows it to every user "
+     "on the machine. `gh secret set` reads stdin when --body is absent, which is why it is "
+     "absent"),
+    # `2>/dev/null` is not a leak, so a redirection preceded by a digit or `&` is skipped.
+    (re.compile(r"export-credentials[^\n|]*(?<![0-9&])>\s*(?!/dev/null|&)"), True,
+     "redirects `export-credentials` straight to a file"),
+    (re.compile(r"export-credentials[^\n]*\|\s*tee\b"), True,
+     "pipes `export-credentials` through `tee`, which by definition writes what passes "
+     "through it to a file"),
+)
+
+
+def check_credential_handling() -> None:
+    """docs/adr/0018: one script may hold a credential, and it must not be able to leak it."""
+    scripts_dir = os.path.join(ROOT, "scripts")
+    if not os.path.isdir(scripts_dir):
+        return
+
+    for name in sorted(os.listdir(scripts_dir)):
+        rel = f"scripts/{name}"
+        path = os.path.join(scripts_dir, name)
+        if not os.path.isfile(path) or name == os.path.basename(__file__):
+            continue  # this file names the patterns it hunts for
+        try:
+            body = open(path, encoding="utf-8", errors="replace").read()
+        except OSError:
+            continue
+
+        # Strip comments before looking: naming the command in an explanation is not calling
+        # it, and a check that cannot tell the difference makes the documentation unwritable.
+        code = "\n".join(ln for ln in body.splitlines()
+                         if not ln.lstrip().startswith("#"))
+
+        if not CREDENTIAL_SOURCE.search(code):
+            continue
+
+        if rel not in CREDENTIAL_ACQUIRERS:
+            fail("credential-handling",
+                 f"{rel} acquires AWS credentials, and docs/adr/0018 permits exactly two "
+                 f"scripts to: {', '.join(sorted(CREDENTIAL_ACQUIRERS))}. This repo writes "
+                 f"verify.json, smoke.json, container logs and repair prompts, so a "
+                 f"credential in one of its processes is one careless dump from being "
+                 f"committed. If this script genuinely needs one, that is an amendment to "
+                 f"0018 and a line here — not a third script that quietly does it too.")
+            continue
+
+        may_write = CREDENTIAL_ACQUIRERS[rel]
+        for pattern, is_a_write, why in CREDENTIAL_LEAKS:
+            if is_a_write and may_write:
+                continue
+            if pattern.search(code):
+                fail("credential-handling",
+                     f"{rel} holds a credential and {why}. docs/adr/0018 permits it to hold "
+                     f"one only because it cannot leak it, and that permission is this check "
+                     f"rather than a sentence somebody has to remember.")
+
+
 def check_provider_credentials() -> None:
     example = os.path.join(ROOT, "stack", f"{SECRETS_FILE}.example")
     if not os.path.exists(example):
@@ -1297,6 +1375,7 @@ def main() -> int:
               check_lane_vocabulary, check_status_headings, check_retro_ledger,
               check_image_tags, check_dev_env_duplicates,
               check_provider_credentials, check_dev_env_inline_comments,
+              check_credential_handling,
               report_readme_divergence)
     for fn in checks:
         try:

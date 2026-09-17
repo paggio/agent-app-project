@@ -39,7 +39,7 @@ if [ -f "$SECRETS" ]; then
   echo "  $SECRETS                  present"
 else
   echo "  $SECRETS                  MISSING"
-  echo "      cp stack/secrets.env.example $SECRETS   and fill it in"
+  echo "      make login && make secrets-refresh   to fill it from the SSO profile"
 fi
 echo
 
