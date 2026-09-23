@@ -44,8 +44,8 @@ case "$ONLY" in ""|backend|frontend|infra) ;; *) refuse "--only takes backend, f
 SINCE="$(date -u +%Y-%m-%dT%H:%M:%SZ)"
 if [ "$LOCK" = "1" ]; then
   REF="${REF:-main}"
-  git ls-remote --exit-code --heads origin "$REF" >/dev/null 2>&1 \
-    || refuse "$REF is not on origin — push it first; CI deploys what is pushed"
+  WANT_REF="$(git ls-remote --heads origin "$REF" | awk -v r="refs/heads/$REF" '$2==r{print $1}')"
+  [ -n "$WANT_REF" ] || refuse "$REF is not on origin — push it first; CI deploys what is pushed"
   gh workflow run dev-push.yml -R "$CONTROL" --ref "$REF" -f lock=true \
     ${ALLOW:+-f allow_destroy=true} ${ONLY:+-f only="$ONLY"}
   EVENT="workflow_dispatch"
@@ -62,26 +62,46 @@ else
   say "commented \`$BODY\` on $CONTROL#$PR"
 fi
 
-# The run is located, not guessed: the first dev-push run of this event created after the
-# trigger. A second trigger in the same minute would be the second run in the queue, and
-# `concurrency: env-dev` serialises them anyway.
-RUN=""
-for _ in $(seq 1 30); do
-  RUN="$(gh run list -R "$CONTROL" --workflow dev-push.yml --event "$EVENT" --limit 20 \
-          --json databaseId,createdAt \
-          --jq "[.[] | select(.createdAt >= \"$SINCE\")] | sort_by(.createdAt) | .[0].databaseId // empty")"
-  [ -n "$RUN" ] && break
-  sleep 4
+# The run is located by what it says it was for, never by timing. Every PR comment starts a
+# run — most skip at the job `if` and leave no artifact — and another PR's /dev-push can land
+# in the same minute. So each run created after the trigger is waited on in turn, and the
+# first whose trigger.json names this trigger is ours. trigger.json is written before
+# anything can refuse, so even a run that stopped early is identifiable.
+[ "$WAIT" = "1" ] || { say "not waiting — gh run list -R $CONTROL --workflow dev-push.yml"; exit 0; }
+DEADLINE=$(( $(date +%s) + 120 * 60 ))
+SEEN=" "; RUN=""; OUT=""
+while [ -z "$RUN" ]; do
+  [ "$(date +%s)" -lt "$DEADLINE" ] || refuse "no dev-push run for this trigger finished within two hours"
+  CANDIDATES="$(gh run list -R "$CONTROL" --workflow dev-push.yml --event "$EVENT" --limit 30 \
+      --json databaseId,createdAt \
+      --jq "[.[] | select(.createdAt >= \"$SINCE\")] | sort_by(.createdAt) | .[].databaseId")"
+  NEXT=""
+  for id in $CANDIDATES; do case "$SEEN" in *" $id "*) ;; *) NEXT="$id"; break ;; esac; done
+  if [ -z "$NEXT" ]; then sleep 10; continue; fi
+  SEEN="$SEEN$NEXT "
+  gh run watch "$NEXT" -R "$CONTROL" --interval 30 >/dev/null 2>&1 || true
+  TMP_OUT="$OUT_ROOT/dev-push-$NEXT"
+  rm -rf "$TMP_OUT"; mkdir -p "$TMP_OUT"
+  gh run download "$NEXT" -R "$CONTROL" -n dev-push-evidence -D "$TMP_OUT" >/dev/null 2>&1 || true
+  if python3 - "$TMP_OUT/trigger.json" "$LOCK" "$CHANGE" "${PR:-}" "${WANT_REF:-}" <<'PY'
+import json, sys
+path, lock, change, pr, want_ref = sys.argv[1:6]
+try:
+    t = json.load(open(path))
+except Exception:
+    sys.exit(1)
+if lock == "1":
+    ok = t.get("mode") == "lock" and t.get("control_ref") == want_ref
+else:
+    ok = t.get("mode") == "change" and t.get("change") == change and t.get("pr") == pr
+sys.exit(0 if ok else 1)
+PY
+  then RUN="$NEXT"; OUT="$TMP_OUT"
+  else rm -rf "$TMP_OUT"
+  fi
 done
-[ -n "$RUN" ] || refuse "no dev-push run appeared within two minutes. Is dev-push.yml on main? (issue_comment runs main's copy)"
-URL="https://github.com/$CONTROL/actions/runs/$RUN"
-say "run $URL"
-[ "$WAIT" = "1" ] || exit 0
+say "run https://github.com/$CONTROL/actions/runs/$RUN"
 
-gh run watch "$RUN" -R "$CONTROL" --interval 30 >/dev/null 2>&1 || true
-OUT="$OUT_ROOT/dev-push-$RUN"
-mkdir -p "$OUT"
-gh run download "$RUN" -R "$CONTROL" -n dev-push-evidence -D "$OUT" >/dev/null 2>&1 || true
 VR="$(find "$OUT" -name verify-remote.json | head -1)"
 if [ -z "$VR" ]; then
   say "the run produced no verify-remote.json — it stopped before the remote pass began."

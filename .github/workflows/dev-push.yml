@@ -115,6 +115,13 @@ jobs:
             echo "mode=$mode"; echo "change=$change"; echo "product=$product"; echo "only=$only"
             echo "allow_destroy=$allow"; echo "pr=$PR"; echo "control_ref=$control_ref"
           } >> "$GITHUB_OUTPUT"
+          # What this run is FOR, written before anything can refuse, so scripts/dev-push.sh
+          # can tell its own run from another PR's even when this one never reached a verdict.
+          # Outside the workspace: the checkouts below clean it.
+          jq -n --arg mode "$mode" --arg change "$change" --arg product "$product" \
+            --arg only "$only" --arg pr "$PR" --arg repo "$REPO" --arg ref "$control_ref" \
+            '{mode:$mode, change:$change, product:$product, only:$only, pr:$pr, repo:$repo, control_ref:$ref}' \
+            > "$RUNNER_TEMP/trigger.json"
 
       # An expired session is the harness refusing, not a failed deploy routed to infra.
       - name: The pushed session is still alive
@@ -145,6 +152,10 @@ jobs:
           repository: ${{ env.OWNER }}/${{ env.CONTROL }}
           ref: ${{ steps.trigger.outputs.control_ref }}
           ssh-key: ${{ secrets.DEPLOY_KEY_AGENT_APP_PROJECT }}
+          # Persisted, this key becomes core.sshCommand in .git/config, and every later
+          # `git ls-remote` here offers it first: GitHub accepts it and answers "Repository
+          # not found" for the other repos. deploy-set.py also sets GIT_SSH_COMMAND per repo.
+          persist-credentials: false
           # manifest.py checks the freeze SHA is an ancestor, which needs history.
           fetch-depth: 0
           submodules: false
@@ -168,6 +179,7 @@ jobs:
               "$repo" "$repo" >> ~/.ssh/config
           done
           echo "DEPLOY_SET_URL_TEMPLATE=git@github.com-{repo}:$OWNER/{repo}.git" >> "$GITHUB_ENV"
+          echo "DEPLOY_SET_KEY_TEMPLATE=$HOME/.ssh/{repo}" >> "$GITHUB_ENV"
 
       - uses: astral-sh/setup-uv@v5
       - uses: hashicorp/setup-terraform@v3
@@ -212,7 +224,17 @@ jobs:
       # What dev runs now: the tags an --only push carries, and what this run replaces.
       # No state yet is a first deploy, not an error.
       - name: What dev runs now
-        run: make -s -C infra outputs ENV=dev > evidence/previous-outputs.json 2>/dev/null || echo '{}' > evidence/previous-outputs.json
+        run: |
+          set +e
+          make -s -C infra outputs ENV=dev > evidence/previous-outputs.json 2> evidence/previous-outputs.err
+          rc=$?
+          # Exit 1 is the interface's "no state for ENV" — a first deploy. Anything else is
+          # a broken read, and treating it as "nothing deployed" would carry nothing.
+          case "$rc" in
+            0) ;;
+            1) echo '{}' > evidence/previous-outputs.json ;;
+            *) cat evidence/previous-outputs.err; echo "::error::make outputs exited $rc"; exit 2 ;;
+          esac
 
       - name: Resolve the deploy set
         id: set
@@ -246,11 +268,17 @@ jobs:
           ssh-key: ${{ secrets.DEPLOY_KEY_FRONTEND }}
           path: frontend
 
+      # The chained deployer session lasts an hour and this job may not. verify-remote.sh
+      # re-assumes the role from the pushed session before each stage that reaches AWS.
       - name: Remote pass
         id: verify
         env:
           CHANGE: ${{ steps.trigger.outputs.change }}
           ALLOW: ${{ steps.trigger.outputs.allow_destroy }}
+          BASE_AWS_ACCESS_KEY_ID: ${{ secrets.DEV_AWS_ACCESS_KEY_ID }}
+          BASE_AWS_SECRET_ACCESS_KEY: ${{ secrets.DEV_AWS_SECRET_ACCESS_KEY }}
+          BASE_AWS_SESSION_TOKEN: ${{ secrets.DEV_AWS_SESSION_TOKEN }}
+          DEPLOYER_ROLE_ARN: ${{ vars.DEV_AWS_DEPLOYER_ROLE_ARN }}
         run: |
           set -uo pipefail
           # A fresh password per run: the suites register with it, and a committed one
@@ -264,6 +292,10 @@ jobs:
           ./scripts/verify-remote.sh --deploy-set evidence/deploy-set.json --env dev \
             --previous evidence/previous-outputs.json --run-dir evidence/run "${extra[@]}"
           echo "rc=$?" >> "$GITHUB_OUTPUT"
+
+      - name: Record what this run was for
+        if: always()
+        run: mkdir -p evidence; cp "$RUNNER_TEMP/trigger.json" evidence/ 2>/dev/null || true
 
       - uses: actions/upload-artifact@v4
         if: always()

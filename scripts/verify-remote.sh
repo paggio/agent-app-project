@@ -20,6 +20,12 @@
 # Exit 1 = the thing under test failed. Exit 2 = refused before the trap: bad arguments.
 # Later refusals exit 1 with `fault: "harness"` in verify-remote.json. docs/adr/0003.
 #
+# CREDENTIALS. A role assumed from a role session lasts at most an hour, and a first apply
+# plus the suite can take longer. With BASE_AWS_ACCESS_KEY_ID/_SECRET_ACCESS_KEY/
+# _SESSION_TOKEN and DEPLOYER_ROLE_ARN set (the workflow sets them), each stage that reaches
+# AWS re-assumes the deployer first, so every segment starts with a fresh hour. Without them
+# the ambient credentials are used as they are — a hand run with with-aws.sh.
+#
 # No lock here: one run at a time is `concurrency: env-dev` in the workflow. A local run is
 # for debugging a deploy by hand, and nothing stops it racing CI — say so if you start one.
 set -euo pipefail
@@ -95,6 +101,21 @@ head_of() {
   fi
 }
 stage() { CURRENT_STAGE="$1"; echo; echo "-- $* --------------------------------------------------"; }
+
+refresh_aws() {
+  [ -n "${DEPLOYER_ROLE_ARN:-}" ] && [ -n "${BASE_AWS_ACCESS_KEY_ID:-}" ] || return 0
+  local creds
+  creds="$(AWS_ACCESS_KEY_ID="$BASE_AWS_ACCESS_KEY_ID" AWS_SECRET_ACCESS_KEY="$BASE_AWS_SECRET_ACCESS_KEY" \
+           AWS_SESSION_TOKEN="$BASE_AWS_SESSION_TOKEN" \
+           aws sts assume-role --role-arn "$DEPLOYER_ROLE_ARN" --duration-seconds 3600 \
+             --role-session-name "verify-remote-$SMOKE_RUN_ID" \
+             --query 'Credentials.[AccessKeyId,SecretAccessKey,SessionToken]' --output text 2>/dev/null)" \
+    || fail_stage "$CURRENT_STAGE: could not re-assume the deployer role — the pushed session has likely expired; make login && make push-gh-creds" "" harness
+  # shellcheck disable=SC2086
+  set -- $creds
+  [ "${GITHUB_ACTIONS:-}" = "true" ] && { echo "::add-mask::$2"; echo "::add-mask::$3"; }
+  export AWS_ACCESS_KEY_ID="$1" AWS_SECRET_ACCESS_KEY="$2" AWS_SESSION_TOKEN="$3"
+}
 record_stage() { STAGE_LOG="$STAGE_LOG
 $1=$2"; }
 
@@ -223,6 +244,7 @@ fi
 
 # --------------------------------------------------------------------- publish
 stage "publish: application images"
+refresh_aws
 ./scripts/publish.sh --deploy-set "$SET" --env "$ENV_NAME" --json "$RUN_DIR/published.json" \
     2>&1 | tee "$RUN_DIR/publish.log" \
   || fail_stage "publish: could not build and push the images the deploy set names" "" harness
@@ -233,6 +255,7 @@ record_stage publish pass
 
 # ------------------------------------------------------------------------ plan
 stage "infra: plan"
+refresh_aws
 set +e
 make -C infra plan ENV="$ENV_NAME" "${IMAGE_ARGS[@]}" 2>&1 | tee "$RUN_DIR/infra-plan.txt"
 PLAN_RC=${PIPESTATUS[0]}
@@ -252,12 +275,14 @@ record_stage plan pass
 
 # ---------------------------------------------------------------------- deploy
 stage "infra: deploy"
+refresh_aws
 # The interface promises this returns only once the new revision is serving, or the suite
 # races the rollout and the failure lands on whichever step ran first.
 make -C infra deploy ENV="$ENV_NAME" "${IMAGE_ARGS[@]}" 2>&1 | tee "$RUN_DIR/infra-deploy.log" \
   || fail_stage "infra: deploy failed" "infra"
 record_stage deploy pass
 
+refresh_aws
 make -s -C infra outputs ENV="$ENV_NAME" > "$RUN_DIR/infra-outputs.json" 2>"$RUN_DIR/infra-outputs.err" || {
   note "$(head -5 "$RUN_DIR/infra-outputs.err" 2>/dev/null || true)"
   fail_stage "infra: outputs target failed" "infra"; }
@@ -338,6 +363,7 @@ esac
 # have redeployed while the suite ran — and then the assertions above were about commits
 # this run did not deploy. Re-read what runs and cross-check it again.
 stage "remote: still running the deploy set"
+refresh_aws
 make -s -C infra outputs ENV="$ENV_NAME" > "$RUN_DIR/infra-outputs-after.json" 2>/dev/null \
   && ./scripts/infra-crosscheck.py --outputs "$RUN_DIR/infra-outputs-after.json" \
        --contract contracts/openapi.yaml --strip-prefix "$INFRA_API_PATH_PREFIX" \

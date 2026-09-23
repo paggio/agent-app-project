@@ -21,8 +21,9 @@ already runs, read from `--current`. infra is never carried: it has no image, an
 apply always runs the infra commit resolved here.
 
 Remote heads come from `git ls-remote`. DEPLOY_SET_URL_TEMPLATE (e.g.
-`git@github.com-{repo}:Paggio/{repo}.git`) overrides the .gitmodules URL, which is how CI
-reaches each repo with its own read-only deploy key.
+`git@github.com-{repo}:Paggio/{repo}.git`) overrides the .gitmodules URL, and
+DEPLOY_SET_KEY_TEMPLATE (e.g. `~/.ssh/{repo}`) names the key each repo is reached with —
+which is how CI reaches each repo with its own read-only deploy key.
 
 Exit 0 resolved · 2 the harness refuses: an unpushed slice branch, a gitlink that disagrees
 with repos.lock, nothing deployed to carry. docs/adr/0003.
@@ -101,8 +102,16 @@ def remote_url(repo: str) -> str:
 
 
 def remote_head(repo: str, branch: str) -> str:
+    # GIT_SSH_COMMAND outranks core.sshCommand. actions/checkout's ssh-key persists the
+    # CONTROL repo's key there, ssh offers it first, GitHub accepts it, and then answers
+    # "Repository not found" for every other repo — so every change-mode deploy refused.
+    env = dict(os.environ)
+    key = os.environ.get("DEPLOY_SET_KEY_TEMPLATE")
+    if key:
+        env["GIT_SSH_COMMAND"] = (f"ssh -i {os.path.expanduser(key.format(repo=repo))} "
+                                  f"-o IdentitiesOnly=yes -o StrictHostKeyChecking=yes")
     p = subprocess.run(("git", "ls-remote", "--heads", remote_url(repo), branch),
-                       capture_output=True, text=True, cwd=ROOT)
+                       capture_output=True, text=True, cwd=ROOT, env=env)
     if p.returncode != 0:
         refuse(f"could not reach {repo}'s remote: {p.stderr.strip()}")
     for line in p.stdout.splitlines():
@@ -163,6 +172,12 @@ def main() -> int:
             refuse(f"--product-pr wants <repo>@<40-char sha>, got {args.product_pr!r}")
         trigger["product_pr"] = args.product_pr
         repos[m.group(1)] = {"sha": m.group(2), "from": "pull request"}
+        # Carrying the PR's own repo would deploy none of the PR's code and still report a
+        # green deployed-partial about it.
+        if args.only and args.only != m.group(1) and IMAGES[m.group(1)]:
+            refuse(f"--only {args.only} on a {m.group(1)} PR would carry {m.group(1)} at what "
+                   f"dev runs, deploying none of this PR. Use /dev-push, or "
+                   f"/dev-push-{m.group(1).replace('chatbot-', '')}.")
     else:
         trigger["lock"] = True
 

@@ -65,6 +65,9 @@ no environment variables, no protection rules.
    `DEV_AWS_*` so the environment survives in the name GitHub Free gives it nowhere else.
    Every job refuses (exit 2) with under 30 minutes left, then immediately assumes
    `agentapp-dev-deployer` — least privilege, created by bootstrap — and uses nothing else.
+   A chained role session lasts at most an hour, so `verify-remote.sh` re-assumes it from
+   the pushed session before each stage that reaches AWS; a run that outlives the pushed
+   session fails there as `fault: harness`.
 
 7. **Cross-repo access is read-only deploy keys**, one per repo, created by
    `make gh-setup` through the API. `dev-push.yml` is reusable (`workflow_call`); a
@@ -116,6 +119,9 @@ Accepted costs:
 - **Workflow changes take effect only once merged**: `issue_comment` runs `main`'s file.
 - **`dev` is shared and last-writer-wins.** A `/dev-push` replaces what another PR
   deployed; the comment names what it replaced.
+- **A concurrency group holds one pending run.** A third `/dev-push` queued behind a
+  running one cancels the second, which never runs. `dev-push.sh` identifies its run by
+  `trigger.json`, so a cancelled one is never mistaken for a verdict — re-comment.
 - **About $0.30/hour while up** (EKS, NAT, nodes, RDS, ALB). `dev-down` when idle.
 - **A linked account cannot activate cost-allocation tags**, and myApplications no longer
   creates applications. Cost is read from a CUR 2.0 data export (bootstrap) queried in
