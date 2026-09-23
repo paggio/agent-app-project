@@ -282,6 +282,14 @@ refresh_aws
 # infra captures describe, logs and events first into DEPLOY_EVIDENCE_DIR; putting that
 # inside the run dir is what makes it part of the uploaded artifact. Run 35881556395
 # failed with nothing left to read.
+# Record which commits are about to own `dev`, BEFORE the apply: a failed rollout still
+# leaves Terraform state written by this infra, and dev-down must destroy with the same
+# code. Mid-change that is a feat/ head, not the gitlink — dev-down run 35903316430
+# checked out infra `main`, a scaffold that predates everything it was asked to destroy.
+# The bucket is bootstrap's state bucket, named agentapp-tfstate-<account>-<region>.
+DEPLOYED_SET_URI="s3://agentapp-tfstate-$(aws sts get-caller-identity --query Account --output text)-${AWS_REGION:-eu-west-1}/$ENV_NAME/deployed-set.json"
+aws s3 cp --quiet "$SET" "$DEPLOYED_SET_URI" \
+  || fail_stage "infra: could not record the deploy set at $DEPLOYED_SET_URI" "" harness
 DEPLOY_EVIDENCE_DIR="$(cd "$RUN_DIR" && pwd)/deploy-evidence" \
   ./scripts/infra.sh deploy ENV="$ENV_NAME" "${IMAGE_ARGS[@]}" 2>&1 | tee "$RUN_DIR/infra-deploy.log" \
   || fail_stage "infra: deploy failed" "infra"

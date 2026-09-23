@@ -17,6 +17,16 @@ CONTROL="Paggio/agent-app-project"
 
 case "${1:-}" in
   "")
+    # Destroy with the infra that deployed dev (verify-remote.sh records it). A checkout on
+    # any other commit may not know every resource that is up — refuse rather than guess.
+    want="$(./scripts/with-aws.sh sh -c 'aws s3 cp --quiet "s3://agentapp-tfstate-$(aws sts get-caller-identity --query Account --output text)-${AWS_REGION:-eu-west-1}/dev/deployed-set.json" - 2>/dev/null' \
+            | python3 -c 'import json,sys; print(json.load(sys.stdin)["repos"]["infra"]["sha"])' 2>/dev/null || true)"
+    have="$(git -C infra rev-parse HEAD 2>/dev/null || echo none)"
+    if [ -n "$want" ] && [ "$want" != "$have" ]; then
+      echo "dev-down: dev was deployed by infra ${want:0:12}; infra/ is at ${have:0:12}." >&2
+      echo "dev-down:   git -C infra fetch && git -C infra switch --detach $want   (or: make dev-down VIA=ci)" >&2
+      exit 2
+    fi
     ./scripts/with-aws.sh ./scripts/infra.sh destroy ENV=dev CONFIRM=dev
     ./scripts/with-aws.sh ./scripts/infra.sh leftovers ENV=dev
     echo "dev-down: dev is down and nothing billable is tagged for it" ;;
