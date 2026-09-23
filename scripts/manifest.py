@@ -39,11 +39,11 @@ import yaml
 
 REPOS = ("chatbot-backend", "chatbot-eval", "frontend", "infra")
 
-# Environments iterate.sh and verify.sh may deploy to. `prod` is deliberately absent:
-# adding it is a reviewed commit in this repo, not a change author's decision, and an
-# agent-driven self-repairing loop is not the tool for a production deploy. The real
-# guarantee is credentials — see docs/adr/0004.
-ENVIRONMENTS = ("staging",)
+# Environments verify-remote.sh may deploy to — one AWS account, treated as `dev`
+# (docs/adr/0018). `prod` is deliberately absent: adding it is a reviewed commit in this
+# repo, not a change author's decision. The real guarantee is credentials — the pushed
+# session can assume the dev deployer role and nothing else.
+ENVIRONMENTS = ("dev",)
 
 HERE = os.path.dirname(os.path.abspath(__file__))
 
@@ -207,7 +207,7 @@ def validate_deploy(doc: dict, slices: list) -> list[str]:
         problems.append(
             f"deploy.environment: {env!r} is not a deployable environment "
             f"(allowed: {', '.join(ENVIRONMENTS)}). Adding one is a reviewed commit in "
-            f"this repo, not a change author's decision — see docs/adr/0004")
+            f"this repo, not a change author's decision — see docs/adr/0018")
     if env and not infra:
         problems.append(
             f"deploy.environment names {env!r} but deploy.infra is false — nothing would "

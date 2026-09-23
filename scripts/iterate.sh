@@ -14,8 +14,7 @@
 #
 #   ./scripts/iterate.sh <change> [options]
 #
-#     --max-attempts N  total passes, including the first (default 2, or 1 when this
-#                       change deploys infra — see below)
+#     --max-attempts N  total passes, including the first (default 2)
 #     --no-repair       fan out and verify once, then stop and report
 #     --verify-only     skip dispatching entirely; just deploy and check what is on disk
 #     --only a,b        dispatch only these slices on the FIRST attempt. Repair passes
@@ -24,9 +23,8 @@
 #                       guess. Every verify still asserts the whole suite. /ship-correct
 #                       uses it: a correction one repo is answerable for should not buy a
 #                       fresh session in the other two. With --no-repair, or a budget of
-#                       1 — which is the DEFAULT when this change deploys infra, below —
-#                       there is no repair pass, so a wrong --only is never corrected and
-#                       the run reports `failed` having dispatched the wrong repo.
+#                       1, there is no repair pass, so a wrong --only is never corrected
+#                       and the run reports `failed` having dispatched the wrong repo.
 #     --dry-run         validate the arguments, print the resolved plan, dispatch nothing.
 #                       Creates no run directory and takes no lock. This is the only safe
 #                       way to exercise this script's own argument handling: doing it for
@@ -36,27 +34,20 @@
 #     --keep-up         leave the stack running after the final attempt
 #     --e2e             also run Playwright on each verify
 #     --no-build        reuse existing images
-#     --no-infra        ignore deploy.infra; local deploy and local assertions only.
-#                       The outcome is then `verified-local`, never `verified`.
 #
-# `verified` requires an ASSERTED REMOTE ENVIRONMENT (docs/adr/0004). A change with
-# `deploy.infra: false` has none, so its best outcome is `verified-local` — a full pass, and
-# the honest name for one that proves nothing about a deployment.
-#     --plan-only       plan the infra change, never apply it
-#     --allow-destroy   let the infra plan destroy or replace a resource
+# `verified` requires an ASSERTED REMOTE ENVIRONMENT, and this loop never touches one: the
+# remote pass is /dev-push, in CI (docs/adr/0018). So the best outcome here is
+# `verified-local` — a full pass, and the honest name for one that proves nothing about a
+# deployment. A change with `deploy.infra: true` is not shipped until /dev-push is green.
 #
-# Outcomes: verified | verified-local | failed | contract-gap | blocked | unattributable
-#
-# WHEN deploy.infra IS TRUE, the default attempt budget drops to 1. Automatic repair that
-# costs a real `terraform apply` per attempt is a different product from automatic repair
-# that costs a container rebuild. Pass --max-attempts explicitly to override.
+# Outcomes: verified-local | failed | contract-gap | blocked | unattributable
 set -euo pipefail
 
 ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 cd "$ROOT"
 
 CHANGE=""; MAX_ATTEMPTS=""; REPAIR=1; VERIFY_ONLY=0; KEEP_UP=0; E2E=0; NO_BUILD=""
-NO_INFRA=0; PLAN_ONLY=0; ALLOW_DESTROY=0; ONLY=""; DRY=0
+ONLY=""; DRY=0
 while [ $# -gt 0 ]; do
   case "$1" in
     --only)
@@ -74,10 +65,7 @@ while [ $# -gt 0 ]; do
     --keep-up) KEEP_UP=1 ;;
     --e2e) E2E=1 ;;
     --no-build) NO_BUILD="--no-build" ;;
-    --no-infra) NO_INFRA=1 ;;
-    --plan-only) PLAN_ONLY=1 ;;
-    --allow-destroy) ALLOW_DESTROY=1 ;;
-    -h|--help) sed -n '2,52p' "${BASH_SOURCE[0]}"; exit 0 ;;
+    -h|--help) sed -n '2,43p' "${BASH_SOURCE[0]}"; exit 0 ;;
     -*) echo "iterate: unknown option $1" >&2; exit 2 ;;
     *) CHANGE="$1" ;;
   esac
@@ -123,22 +111,14 @@ if [ -n "$ONLY" ]; then
     exit 2; }
 fi
 
-# A repair attempt against a real environment costs an apply, so the budget is 1 unless
-# the human says otherwise.
-REMOTE_RUN=0
-if [ "$CHANGE_DEPLOY_INFRA" = "1" ] && [ "$NO_INFRA" = "0" ] && [ "$PLAN_ONLY" = "0" ]; then
-  REMOTE_RUN=1
-fi
-if [ -z "$MAX_ATTEMPTS" ]; then
-  if [ "$REMOTE_RUN" = "1" ]; then MAX_ATTEMPTS=1; else MAX_ATTEMPTS=2; fi
-fi
+[ -n "$MAX_ATTEMPTS" ] || MAX_ATTEMPTS=2
 
 if [ "$DRY" = "1" ]; then
   echo "iterate: [dry-run] change:        $CHANGE"
   echo "iterate: [dry-run] slices:        $CHANGE_SLICES"
   echo "iterate: [dry-run] would dispatch: ${ONLY:-$CHANGE_SLICES}"
   echo "iterate: [dry-run] max-attempts:  $MAX_ATTEMPTS (repair=$REPAIR verify-only=$VERIFY_ONLY)"
-  echo "iterate: [dry-run] remote deploy: $([ "$REMOTE_RUN" = "1" ] && echo "yes ($CHANGE_DEPLOY_ENVIRONMENT)" || echo "no — best outcome verified-local")"
+  echo "iterate: [dry-run] remote deploy: never here — best outcome verified-local$([ "$CHANGE_DEPLOY_INFRA" = "1" ] && echo ", then /dev-push")"
   echo "iterate: [dry-run] no run directory, no lock, no session launched"
   exit 0
 fi
@@ -147,23 +127,6 @@ TS="$(date -u +%Y%m%dT%H%M%SZ)"
 RUN_ROOT="$CHANGE_DIR/runs/$TS"
 mkdir -p "$RUN_ROOT"
 REPORT="$RUN_ROOT/report.md"
-
-# One run per environment, held for the WHOLE run rather than per verify — otherwise two
-# runs serialise their applies and then interleave their smoke against one origin.
-LOCK_OWNED=0
-if [ "$REMOTE_RUN" = "1" ]; then
-  LOCK_DIR=".locks/infra-$CHANGE_DEPLOY_ENVIRONMENT.lock"
-  mkdir -p .locks
-  if mkdir "$LOCK_DIR" 2>/dev/null; then
-    printf 'pid=%s\nrun=%s\nchange=%s\n' "$$" "$RUN_ROOT" "$CHANGE" > "$LOCK_DIR/owner"
-    LOCK_OWNED=1
-    export INFRA_LOCK_HELD="$CHANGE_DEPLOY_ENVIRONMENT"
-  else
-    echo "iterate: environment '$CHANGE_DEPLOY_ENVIRONMENT' is locked by:" >&2
-    sed 's/^/iterate:   /' "$LOCK_DIR/owner" 2>/dev/null >&2 || true
-    exit 2
-  fi
-fi
 
 say() { echo "iterate: $*"; }
 banner() {
@@ -212,7 +175,7 @@ write_report() {
     if [ -n "$ONLY" ]; then
       echo "- first dispatch restricted to (\`--only\`): $ONLY"
     fi
-    echo "- infra deploy: $([ "$REMOTE_RUN" = "1" ] && echo "yes ($CHANGE_DEPLOY_ENVIRONMENT)" || echo no)"
+    echo "- remote deploy: $([ "$CHANGE_DEPLOY_INFRA" = "1" ] && echo "required — /dev-push, in CI" || echo "not declared")"
     # The assertion count, so a report can never say `verified` above an empty one.
     LAST_VERIFY="$(ls -1d "$RUN_ROOT"/attempt-*/verify.json 2>/dev/null | tail -1 || true)"
     if [ -n "$LAST_VERIFY" ]; then
@@ -254,15 +217,12 @@ ASSERTPY
     echo
     echo "## Next"
     echo
-    if [ "$OUTCOME" = "verified" ]; then
-      echo "The change is deployed and asserted, locally and against"
-      echo "\`$CHANGE_DEPLOY_ENVIRONMENT\`. Review the PRs and merge in dependency order —"
-      echo "merging is a human decision. Once they are merged, run \`/realign\`."
-    elif [ "$OUTCOME" = "verified-local" ]; then
+    if [ "$OUTCOME" = "verified-local" ]; then
       echo "The change is deployed and asserted **locally only** — no remote environment"
       echo "was touched, so nothing here says it works deployed."
       if [ "$CHANGE_DEPLOY_INFRA" = "1" ]; then
-        echo "Re-run without \`--no-infra\`/\`--plan-only\` before treating this as shippable."
+        echo "It declares \`deploy.infra: true\`, so it is not shippable until the remote"
+        echo "pass is green: \`./scripts/dev-push.sh $CHANGE\` (\`make push-gh-creds\` first)."
       else
         echo "That is all this change declares (\`deploy.infra: false\`), so it is the best"
         echo "outcome available to it rather than a step that was skipped. Review the PRs and"
@@ -318,7 +278,7 @@ lines = [f"- **{outcome}** \u2014 {ts}, {used} attempt(s)"]
 # if the first dispatch was narrowed.
 if only.strip():
     lines.append(f"- first dispatch: {only.strip()} (`--only`)")
-if outcome not in ("verified", "verified-local"):
+if outcome != "verified-local":
     if stage:
         lines.append(f"- failed at: `{stage}`")
     if owners:
@@ -333,7 +293,6 @@ STATUSPY
 }
 
 release_lock() {
-  [ "${LOCK_OWNED:-0}" = "1" ] && rm -rf "${LOCK_DIR:?}" 2>/dev/null || true
   [ "${RUN_LOCK_OWNED:-0}" = "1" ] && rm -rf "${RUN_LOCK:?}" 2>/dev/null || true
   return 0
 }
@@ -345,7 +304,7 @@ finish() {
   # an invitation to merge something nothing asserted. Idempotent, so a slice that opened
   # its own keeps it, and prs.json is the checked fact next to fanout.json's claim.
   case "$OUTCOME" in
-    verified|verified-local)
+    verified-local)
       banner "$CHANGE — pull requests"
       if ./scripts/prs.sh --create "$CHANGE" --run-dir "$RUN_ROOT"; then
         record ""
@@ -364,7 +323,7 @@ finish() {
   say "report: $REPORT"
   [ "$KEEP_UP" = "1" ] && say "stack left running — ./scripts/stack.sh down when finished"
   case "$OUTCOME" in
-    verified|verified-local) exit 0 ;;
+    verified-local) exit 0 ;;
     *) exit 1 ;;
   esac
 }
@@ -486,9 +445,6 @@ for r in (d.get('contract_gaps') or []):
   # A change whose criteria can only be proved in a browser says so in change.yaml, rather
   # than depending on whoever ran the loop remembering the flag.
   if [ "$E2E" = "1" ] || [ "${CHANGE_SMOKE_E2E:-0}" = "1" ]; then VERIFY_ARGS+=(--e2e); fi
-  [ "$NO_INFRA" = "1" ] && VERIFY_ARGS+=(--no-infra)
-  [ "$PLAN_ONLY" = "1" ] && VERIFY_ARGS+=(--plan-only)
-  [ "$ALLOW_DESTROY" = "1" ] && VERIFY_ARGS+=(--allow-destroy)
   # --verify-only means "check what is on disk", so the branch check would be wrong there.
   [ "$VERIFY_ONLY" = "1" ] && VERIFY_ARGS+=(--any-branch)
   # Keep the stack up between attempts: rebuilding from cold on every pass is most of the
@@ -539,10 +495,10 @@ except Exception:
         record "**Attempt $ATTEMPT — verify:** PASS locally. No remote environment was"
         record "touched, so this does not say the change works deployed."
       else
-        OUTCOME="verified"
-        record "**Attempt $ATTEMPT — verify:** PASS. The joined stack came up and every"
-        record "assertion held through \`$CHANGE_SMOKE_BASE\`."
-        record "The same suite also held against \`$CHANGE_DEPLOY_ENVIRONMENT\`."
+        # verify.sh cannot set this since docs/adr/0018; a pass claiming it is a harness bug.
+        OUTCOME="unattributable"
+        record "**Attempt $ATTEMPT — verify:** reported remote_asserted, which verify.sh"
+        record "can no longer do — the remote pass is /dev-push. Harness bug; not a result."
       fi
       finish
     fi
@@ -633,13 +589,7 @@ except Exception:
   if [ "$ATTEMPT" -ge "$MAX_ATTEMPTS" ]; then
     OUTCOME="failed"
     record ""
-    if [ "$REMOTE_RUN" = "1" ] && [ "$MAX_ATTEMPTS" = "1" ]; then
-      record "Attempts exhausted (1). This change deploys infra, so the budget is 1 by"
-      record "default — each attempt costs a real apply. Pass \`--max-attempts N\` if a"
-      record "repair pass against \`$CHANGE_DEPLOY_ENVIRONMENT\` is genuinely wanted."
-    else
-      record "Attempts exhausted ($MAX_ATTEMPTS)."
-    fi
+    record "Attempts exhausted ($MAX_ATTEMPTS)."
     finish
   fi
 
