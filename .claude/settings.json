@@ -1,15 +1,11 @@
 {
-  "$comment": "Root-session guards. Implementation happens in a session started inside the product repo, or via the dispatch in scripts/fanout.sh — never from here. The deny rules cover the editing tools; the PreToolUse hook covers shell commands that write into a submodule, which no Edit rule can see.",
+  "$comment": "Root-session guards. Implementation happens in a session started inside the product repo, or via the dispatch in scripts/fanout.sh — never from here. The Edit deny rules cover every file-editing tool, Write included; the PreToolUse hook covers shell commands that write into a submodule, which no Edit rule can see.",
   "permissions": {
     "deny": [
       "Edit(./chatbot-backend/**)",
       "Edit(./frontend/**)",
       "Edit(./infra/**)",
-      "Edit(./chatbot-eval/**)",
-      "Write(./chatbot-backend/**)",
-      "Write(./frontend/**)",
-      "Write(./infra/**)",
-      "Write(./chatbot-eval/**)"
+      "Edit(./chatbot-eval/**)"
     ]
   },
   "hooks": {

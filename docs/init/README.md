@@ -191,7 +191,7 @@ one is missed** — so work down the list rather than trusting a grep:
 
 | Where | What |
 | --- | --- |
-| `.claude/settings.json` | `Edit(./<path>/**)` and `Write(./<path>/**)` deny rules |
+| `.claude/settings.json` | `Edit(./<path>/**)` deny rule (covers Write too) |
 | `.claude/hooks/no-subrepo-edits.sh` | the `SUB` alternation |
 | `scripts/test-hooks.py` | a BLOCK case and an ALLOW case for the new path — this is the probe that holds the two above honest |
 | `scripts/manifest.py` | `REPOS`, so it may be a slice |
