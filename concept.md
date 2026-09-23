@@ -318,6 +318,73 @@ Two things worth knowing before you invoke it:
   skew and nothing has deployed, so a frozen-but-unmerged contract can be reshaped freely —
   a field removed, the version left alone. The window closes at the first merge.
 
+### 5.5 Deploying it — `dev`, from the pull request
+
+*"It passes locally. Does it work in AWS?"*
+
+There is one AWS account, treated as `dev`, and one environment. The loop never touches it
+— `verified-local` is its ceiling — because deploys run in GitHub Actions, triggered from
+the pull request under review. `docs/adr/0018`.
+
+The whole life of a change that deploys:
+
+| Step | Who | What it proves |
+| --- | --- | --- |
+| `/ship` | the lane | `verified-local`, and a PR per slice repo plus one here |
+| `make login && make push-gh-creds` | you, once per working session | CI holds a session that dies with yours |
+| `/dev-push` on the control PR | the lane (phase 5b), or you | `verified`: the PR's exact commits ran together in AWS and both suites held through CloudFront |
+| merge, in `STATUS.md` order | a human | nothing yet — see below |
+| `/realign` | the lane | the merged commits, pinned, deployed from the lock and asserted there |
+| `make dev-down` | you, when idle | nothing bills but bootstrap — `leftovers` says so |
+
+**Which commits a deploy builds.** Not the gitlinks: mid-change they name the last merged
+`main`, and the change lives on `feat/<change>` (§6). The deploy set is resolved from the
+trigger and posted on the PR before anything is built:
+
+| `/dev-push` on | slice repos | every other repo |
+| --- | --- | --- |
+| a change's control PR | the head of `feat/<change>` on the remote | the gitlinks of that PR |
+| a product repo's PR | that PR's head | control `main`'s gitlinks |
+| any other control PR, or `make dev-up` | — | that ref's gitlinks |
+
+An unpushed slice branch, or a gitlink that disagrees with `repos.lock`, is a refusal
+(exit 2). Images are tagged with the commit and never rebuilt, so a second `/dev-push`
+costs an apply, not a build. `/dev-push-backend` (or `-frontend`, `-infra`) rebuilds one
+repo and carries the others at what `dev` already runs; that is `deployed-partial`, never
+`verified`, because the commits it asserts are not all the PR's.
+
+**Why `/realign` is still required**, even when every PR was pushed and green:
+
+- the gitlinks are behind the moment a product PR merges — that has not changed;
+- a squash merge mints new SHAs, so the images `/dev-push` verified are not the ones on
+  `main`, and nothing has yet asserted the merged code deployed together;
+- `dev` is last-writer-wins, so after a PR's `/dev-push` it runs unmerged code. The lock is
+  what `dev` should run when no PR is under test, and `/realign` is what puts it back.
+
+A single-repo change is the same: its PR's `/dev-push` proves the PR, `/realign` proves `main`.
+
+**The credentials, end to end.** `make login` is SSO, and rewrites the four credential lines
+of `stack/secrets.env`, expiry included. `make push-gh-creds` copies that session into
+`DEV_AWS_*` repository secrets of the five repos — GitHub Free has no Environments for
+private repos, so the prefix is where `dev` lives. Every job refuses with under 30 minutes
+left (exit 2, naming the command), then assumes `agentapp-dev-deployer` and uses nothing
+else. That role, the state bucket, the registries and the budget come from
+`make dev-bootstrap`, the one apply run from here, once; `make gh-setup` wires the
+read-only deploy keys the workflow reads the other repos with. No long-lived AWS key exists
+anywhere.
+
+Three things bite.
+
+- **`/dev-push` runs `main`'s copy of the workflow.** A change to it takes effect once
+  merged — which is also why a PR cannot rewrite what holds the credentials.
+- **`dev` is shared.** A `/dev-push` replaces whatever else was deployed, and its comment
+  names what it replaced. A product repo's run is not serialised with the control repo's,
+  so the remote pass re-reads what `dev` runs after the suite and refuses a result about
+  commits it did not deploy.
+- **`dev` bills while it is up, about $0.30 an hour**, and nothing tears it down for you.
+  `make dev-down`, or `make dev-down VIA=ci` from anywhere; a teardown is done when
+  `leftovers` is empty, not when `destroy` exits 0.
+
 ---
 
 ## 6. Submodules, the sharpest edge
@@ -331,14 +398,19 @@ interactive sessions must do it themselves.
 **Stale pointers.** The control repo pins SHAs, and they have to be bumped after the product
 PRs merge — in that order, never before.
 
-There are **three independently-moving values** per submodule, and mistaking one for another
-causes nearly every submodule mistake in this layout:
+There are **three independently-moving values** per submodule, and a fourth once it deploys;
+mistaking one for another causes nearly every submodule mistake in this layout:
 
 | | what it is | mid-change | after the bump |
 | --- | --- | --- | --- |
 | the gitlink in the parent's `HEAD` | what the parent *records* | the last merged commit | the merged `main` |
 | what is checked out | what is *on disk* | the feature branch | the same merged `main` |
-| `repos.lock` | the human-readable duplicate | older still | the same merged `main` |
+| `repos.lock` | the human-readable duplicate | the same as the gitlink | the same merged `main` |
+| what `dev` runs | what is *deployed* | the last `/dev-push`'s deploy set | the lock, once `/realign` redeploys it |
+
+The gitlink and the lock move together, in one `/realign` commit, and a deploy refuses when
+they disagree. Only the last row is read off something other than git — the PR comment and
+`make dev-status` say what `dev` runs.
 
 A submodule is one SHA, not a branch: in the parent it is a tree entry whose entire content
 is a commit id. So a submodule "change" in `git status` is always a pointer move, never a
@@ -354,7 +426,8 @@ The rules that follow:
    checked-out submodules back and discards in-flight commits.
 4. Merge first, then pin, then bump the pointers — as one commit containing only the
    pointers and `repos.lock`. Pinning first records commits that a squash-merge deletes,
-   which is worse than a stale pin because it looks authoritative.
+   which is worse than a stale pin because it looks authoritative. Then deploy the pin
+   (§5.5) — that run, not the merge, is the one that asserts `main`.
 
 `make repos` reports the disagreement between all three values, at any stage. `/realign`
 performs the sequence.
@@ -438,6 +511,11 @@ repair prompts; a credential in the environment of the process that writes them 
 careless dump away from being committed. Compose hands the file to the Docker daemon and no
 process here ever sees it. `docs/adr/0006` and `docs/adr/0016`.
 
+Three hand tools are the exceptions, and each writes no artifact: `make login` writes the
+credential lines, `make push-gh-creds` copies them to GitHub over `gh`'s stdin, and
+`scripts/with-aws.sh` exports them into the one command it runs — bootstrap, teardown, a
+look at the cluster. `docs/adr/0018`.
+
 The corollary worth knowing: **`make creds` prints names and provenance, never values**, and
 `make config` redacts. Plain `docker compose config` on the joined stack does not — do not
 run it.
@@ -494,7 +572,10 @@ not happen belongs in a mechanism, not in prose.
   schema; `check-docs.py` holds the prose to the mechanisms, each check tied to a
   documentation defect that actually happened; a `PreToolUse` hook blocks shell writes into
   a submodule, and `test-hooks.py` probes that guard in both directions — a guard that fires
-  on ordinary work is one the agent learns to route around.
+  on ordinary work is one the agent learns to route around. The deploy workflows are held
+  the same way: every secret they read is one a script here writes, none names a GitHub
+  Environment (there are none on this plan), and `actionlint` runs in CI because a workflow
+  that only runs from `main` is otherwise first tested by a real deploy.
 - **Every product repo's CI**, as required checks: typecheck, lint, unit and integration
   tests, contract conformance, secret scanning.
 

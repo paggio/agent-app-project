@@ -73,6 +73,18 @@ so the open pull requests update rather than multiply. It refuses once anything 
 because at that point the criteria describe what is running and a new change is the honest
 record. See `docs/adr/0010`.
 
+**Before the merge, deployed.** A change that deploys is not shipped on a local pass:
+
+```bash
+make login && make push-gh-creds     # once per working session
+```
+
+then comment `/dev-push` on its control PR (`/ship` does it for you). CI deploys exactly
+the PR's commits to `dev` in AWS, asserts both suites through the CloudFront origin, and
+posts the verdict and the deploy set on the PR. `/dev-push-backend` rebuilds one repo.
+`make dev-down` takes `dev` to zero; `make dev-up` brings it back at the lock. See
+`docs/adr/0018` and `concept.md` § 5.5.
+
 **After the merge.**
 
 ```bash
@@ -81,7 +93,8 @@ record. See `docs/adr/0010`.
 
 Bumps the submodules to their merged `main`, pins their SHAs in `repos.lock`, re-checks
 `contracts/` against what the services actually serve, re-runs the baseline suite, and
-promotes the assertions worth keeping forever into `smoke/baseline.yaml`. This is also the
+promotes the assertions worth keeping forever into `smoke/baseline.yaml`, then redeploys
+`dev` from the new pin and asserts the baseline there. This is also the
 lane a single-repo deploy needs on its own — it is the only check that can fail on the seam.
 
 **Every lane ends by grading itself.** The last phase of `/ship`, `/ship-correct`,
@@ -98,6 +111,7 @@ If nothing does, it says so and opens nothing. See `docs/adr/0009`.
 - `concept.md` — the reasoning behind this layout, and the parts of it that are load-bearing.
 - `docs/adr/` — decisions and their accepted costs. Read before proposing a redesign.
 - `docs/infra-interface.md` — what this repo requires of `infra/`.
+- `docs/dev-push-caller.md` — the workflow a product repo carries so `/dev-push` works there.
 - `docs/init/` — how the repos were created from zero, and how a new one is attached.
 - `retros/` — what each lane's retrospective found, and the reason the next one does not
   raise the same thing twice.

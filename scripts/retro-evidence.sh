@@ -79,7 +79,7 @@ cap() {
 # block — the one shape the agent is told to treat as a pass it cannot infer.
 run_py() {
   local file="$1" out
-  if out="$(python3 - "$file" 2>&1)"; then
+  if out="$(python3 - "$@" 2>&1)"; then
     printf '%s\n' "$out"
   else
     say "  (UNREADABLE — $file did not parse. Anything derived from it is NOT VERIFIED.)"
@@ -272,7 +272,42 @@ if not infra.get("remote_asserted"):
     print("  → nothing was proved about a remote environment in this run.")
 PY
 else
-  say "  no verify.json in scope — nothing here is evidence about a deployed environment."
+  say "  no verify.json in scope — nothing here is evidence about a local run."
+fi
+
+# The remote pass runs in CI since docs/adr/0018, and verify.json can no longer claim it.
+# Its evidence is what dev-push.sh downloaded — read here rather than fetched, because this
+# script never touches the network. A run nobody downloaded is not in evidence.
+say ""
+say "remote passes (/dev-push evidence downloaded by scripts/dev-push.sh):"
+dp_root="runs"; [ -n "$CHANGE" ] && dp_root="changes/$CHANGE/runs"
+last_remote="$(ls -1dt "$dp_root"/dev-push-*/ 2>/dev/null | head -1 || true)"
+last_remote_json="$(find "${last_remote:-/nonexistent}" -name verify-remote.json 2>/dev/null | head -1 || true)"
+if [ -s "${last_remote_json:-}" ]; then
+  say "  latest: $last_remote_json"
+  run_py "$last_remote_json" "${CHANGE:-}" <<'PY'
+import json, subprocess, sys
+d = json.load(open(sys.argv[1])); change = sys.argv[2]
+a = d.get("assertions") or {}
+print(f"  outcome:         {d.get('outcome')}  ({a.get('passed', 0)} passed, "
+      f"{a.get('failed', 0)} failed, {a.get('from_change_suite', 0)} from the change suite)")
+if d.get("failed_stage"):
+    print(f"  failed at:       {d['failed_stage']}  answerable: {d.get('owners_failing')}")
+# Was `verified` about the commits the PRs carry NOW? Compared against the local
+# feat/<change> ref, which is what the lane pushed — no fetch.
+for repo, e in ((d.get("deploy_set") or {}).get("repos") or {}).items():
+    note = ""
+    if change and e.get("from") == f"feat/{change}":
+        p = subprocess.run(["git", "-C", repo, "rev-parse", f"feat/{change}"],
+                           capture_output=True, text=True)
+        head = p.stdout.strip()
+        note = ("  = local feat head" if head == e.get("sha")
+                else f"  ≠ local feat head {head[:12] or '?'} — the PR moved after this deploy")
+    print(f"  {repo:16} {e.get('tag')}  {e.get('from')} ({e.get('source')}){note}")
+PY
+else
+  say "  none in $dp_root/ — no remote pass is in evidence. If one ran, it was not downloaded:"
+  say "  gh run download <id> -R Paggio/agent-app-project -n dev-push-evidence"
 fi
 say ""
 say "contract against what is served:"

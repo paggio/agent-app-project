@@ -20,9 +20,10 @@ too weak, or already failing, and which repo is answerable. Do not ask the user 
 
 ## Refuse early, mechanically
 
-Both checks before anything else. `find changes/<change>/runs -name verify.json` is
-whether anything has ever been asserted — a loop run writes it under `attempt-*/`, a
-standalone `make verify` writes it beside the run directory, and either counts;
+Both checks before anything else. `find changes/<change>/runs -name 'verify*.json'` is
+whether anything has ever been asserted — a loop run writes `verify.json` under
+`attempt-*/`, a standalone `make verify` writes it beside the run directory, a
+`dev-push.sh` run downloads `verify-remote.json` into `dev-push-<id>/`, and any counts;
 `./scripts/prs.sh --list` against the most recent `runs/<ts>/prs.json` is whether anything
 has merged.
 
@@ -76,7 +77,14 @@ never manufacture a failing step to satisfy it, because a criterion nobody chose
 than none. Report the count and stop.
 
 `owners_failing` in the `verify.json` that run just wrote — the path is in `make verify`'s
-own output, `changes/<change>/runs/<ts>/verify.json` — now names the repo answerable. That
+own output, `changes/<change>/runs/<ts>/verify.json` — now names the repo answerable.
+
+**A red `/dev-push` routes the same way**, from `verify-remote.json` rather than
+`verify.json`: `dev-push.sh` prints its path, and for a run someone else started,
+`gh run download <id> -R Paggio/agent-app-project -n dev-push-evidence`. A failure only
+the deployed origin shows is still an assertion — tag the step `remote` if it cannot hold
+locally — and it is watched failing with `./scripts/dev-push.sh <change>`, not
+`make verify`. `fault: harness` there is this repo's, including an expired session. That
 is the routing, and it came from evidence rather than from a guess. Intersect it with the
 change's slices: a failing owner with no slice file cannot be dispatched, and `--only`
 refuses a name that is not a slice.
@@ -157,11 +165,10 @@ leads. Use it whenever one repo is answerable — a one-line frontend correction
 buy a fresh backend session. Drop it when more than one repo is answerable, or when phase 2
 moved the freeze.
 
-**With no repair pass there is nothing to correct a wrong `--only`.** That is `--no-repair`,
-and it is also the default when the change deploys infra, where the budget is 1 because an
-attempt is a real `terraform apply`. In that case either pass `--max-attempts 2`
-deliberately or drop `--only` — a single pass into the wrong repo reports `failed` about
-the change.
+**With no repair pass there is nothing to correct a wrong `--only`.** That is `--no-repair`
+or `--max-attempts 1` — drop `--only` there, since a single pass into the wrong repo reports
+`failed` about the change. A change that deploys goes back through `/ship` phase 5b once the
+loop is green: the loop never touches `dev`, so a remote objection is only settled there.
 
 The branches already exist, so each session continues its own work and the open pull
 requests update rather than multiply. `prs.sh --create` is idempotent and keeps the URLs.

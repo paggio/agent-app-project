@@ -67,8 +67,11 @@ it, or the words **not verified**:
 - **Contract against what is served** — re-checked in this lane, or not looked at?
 - **Assertions** — how many held, and how many came from the change's own suite? `verified`
   above a thin count is worth naming out loud.
-- **The cloud** — did anything reach a remote environment (`infra.remote_asserted`), or is
-  a `verified-local` outcome being read as shipped? Say which.
+- **The cloud** — the loop never reaches AWS (`docs/adr/0018`), so the only evidence is a
+  downloaded `dev-push` run's `verify-remote.json`, in § 4 of the bundle. Was `verified`
+  backed by one whose deploy set equals the PR heads as they stand now — or is a
+  `verified-local`, a `deployed-partial`, or a stale deploy being read as shipped? After
+  `/realign`: was the pin deployed and the baseline asserted remotely? Is `dev` still up?
 - **Pull requests** — facts in `prs.json`, or claims in `fanout.json` that nothing fetched?
 - **Gates** — green against the tree as it stands, not as the lane last saw it.
 

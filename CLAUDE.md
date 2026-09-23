@@ -29,11 +29,10 @@ Never run two lanes in one session.
   on: `git -C <repo> switch -c <branch>` first, every time. `git submodule update` leaves
   a detached HEAD, `/realign` leaves `main`, and a commit on either is a commit in the
   wrong place.
-- The freeze point is the commit that lands `contracts/` alone. Its SHA goes in that
-  change's `change.yaml` as `freeze_sha`. Nowhere else — nothing reads anywhere else.
-- "Three PRs exist" is not shipped: shipped means deployed together with the smoke suite passing. See `docs/adr/0002`.
-- Every variable a smoke suite interpolates is declared in `stack/dev.env`. Never export
-  one by hand.
+- The freeze point is the commit landing `contracts/` alone; its SHA goes in `change.yaml` as `freeze_sha`, nowhere else.
+- "Three PRs exist" is not shipped: shipped means deployed together with the smoke suite
+  passing — `/dev-push` on the PR, then from the lock in `/realign`. `docs/adr/0002`, `0018`.
+- Every variable a smoke suite interpolates is declared in `stack/dev.env`. Never export one by hand.
 - Exit 1 = the thing under test failed. Exit 2 = the harness refused. See `docs/adr/0003`.
 - NEVER run `docker compose config` on `stack/compose.yml` or paste its output — it inlines
   `env_file` and prints the real AWS credentials in `chatbot-backend/.env`. Use `make config`.
@@ -57,4 +56,5 @@ Never run two lanes in one session.
 ## Commands
 
 `make help` lists the hand tools for looking at the running system. `/ship`,
-`/ship-correct`, `/ship-iterate` and `/realign` are how work gets done.
+`/ship-correct`, `/ship-iterate` and `/realign` are how work gets done. Deploys run only in
+CI: `make login && make push-gh-creds` first, `make dev-down` when `dev` is idle.
