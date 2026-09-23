@@ -35,7 +35,7 @@ agent-app-project, then `/realign`, which pins and redeploys `dev` from the lock
 | # | Criterion | Evidence |
 | --- | --- | --- |
 | 1 | bootstrap creates, and a second run changes nothing | re-run 2026-09-23: "already migrated", `No changes` |
-| 6 | `dev-down` leaves nothing billable; `/dev-push` brings it back | local `make dev-down`: 93 destroyed, `leftovers` "nothing remains for dev"; then run 35900953903 rebuilt it from zero, verified |
+| 6 | `dev-down` leaves nothing billable; `/dev-push` brings it back | local `make dev-down`: 93 destroyed, `leftovers` "nothing remains for dev"; run 35900953903 rebuilt it from zero, verified; CI `dev-down` run 35903783324: 93 destroyed, nothing remains |
 | 7 | every resource tagged | `leftovers` while up: 71 resources, each with Project, Environment, ManagedBy, Repository |
 | 8 | the interface codes | infra `make test` via `bin/infra`: outputs no-state 1, plan no-ENV 2, destroy fixture 3, destroy without CONFIRM 2 |
 
