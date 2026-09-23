@@ -1,0 +1,25 @@
+# The production release. VACANT: there is one AWS account and it is dev (docs/adr/0018).
+# It exists so the one rule that must hold on the day prod arrives is already in place —
+# a release runs from main and nowhere else — and so `prod` has a home that is not
+# scripts/manifest.py's allowlist.
+name: release-prod
+
+on:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  release:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Only from main
+        if: github.ref != 'refs/heads/main'
+        run: |
+          echo "::error::a production release runs from main only, not ${GITHUB_REF}"
+          exit 2
+      - name: Not configured
+        run: |
+          echo "::error::prod is not configured — docs/adr/0018"
+          exit 1
