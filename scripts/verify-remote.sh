@@ -278,7 +278,12 @@ stage "infra: deploy"
 refresh_aws
 # The interface promises this returns only once the new revision is serving, or the suite
 # races the rollout and the failure lands on whichever step ran first.
-./scripts/infra.sh deploy ENV="$ENV_NAME" "${IMAGE_ARGS[@]}" 2>&1 | tee "$RUN_DIR/infra-deploy.log" \
+# A failed rollout is rolled back, and the rollback deletes the pods whose logs say why.
+# infra captures describe, logs and events first into DEPLOY_EVIDENCE_DIR; putting that
+# inside the run dir is what makes it part of the uploaded artifact. Run 35881556395
+# failed with nothing left to read.
+DEPLOY_EVIDENCE_DIR="$(cd "$RUN_DIR" && pwd)/deploy-evidence" \
+  ./scripts/infra.sh deploy ENV="$ENV_NAME" "${IMAGE_ARGS[@]}" 2>&1 | tee "$RUN_DIR/infra-deploy.log" \
   || fail_stage "infra: deploy failed" "infra"
 record_stage deploy pass
 
