@@ -1,6 +1,7 @@
 # What the control repo requires of `infra/`
 
-The control repo never learns Terraform or Helm. It knows these Make targets, and this file
+The control repo never learns Terraform or Helm. It knows these targets, invoked as
+**`infra/bin/infra <target> [VAR=value ...]`** — through `scripts/infra.sh` — and this file
 is the interface — a contract like `contracts/infra-outputs.yaml`, not a procedure. Read it
 before writing the infra slice of a deploying change, or before proposing a redesign of the
 deploy path. The reasoning and the accepted costs are in `docs/adr/0004` and
@@ -19,6 +20,11 @@ are `make dev-bootstrap` and `make dev-down`, through `scripts/with-aws.sh`.
 | `fmt` `validate` `lint` | — | — | the infra repo's own gates |
 
 `ENV` is `dev` — the only environment `scripts/manifest.py` allows.
+
+**The exit codes below are `bin/infra`'s, not make's.** GNU make exits 2 for any failing
+recipe, so through `make -C infra` a destroying plan and "no state" both arrive as 2
+(infra's `docs/adr/0003`). The Make targets are for humans; every machine caller here uses
+`bin/infra`, and `check-docs.py [infra-invocation]` holds it.
 
 Four requirements, each because something breaks otherwise:
 

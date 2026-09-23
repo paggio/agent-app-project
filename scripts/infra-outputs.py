@@ -55,7 +55,7 @@ def env_name(output: str) -> str:
 
 def main() -> int:
     ap = argparse.ArgumentParser()
-    ap.add_argument("--actual", help="JSON emitted by `make -C infra outputs`")
+    ap.add_argument("--actual", help="JSON emitted by `infra/bin/infra outputs`")
     ap.add_argument("--contract", default="contracts/infra-outputs.yaml")
     ap.add_argument("--json", dest="json_out")
     ap.add_argument("--require", action="append", default=[], metavar="NAME",
@@ -123,7 +123,7 @@ def main() -> int:
             text = fh.read().strip()
         actual = json.loads(text) if text else {}
     except json.JSONDecodeError as exc:
-        print(f"infra-outputs: `make -C infra outputs` did not emit valid JSON: {exc}",
+        print(f"infra-outputs: `infra/bin/infra outputs` did not emit valid JSON: {exc}",
               file=sys.stderr)
         print(f"infra-outputs: it must print a flat JSON object of output name -> value, "
               f"and NOTHING else — a stray echo in the recipe lands here", file=sys.stderr)
