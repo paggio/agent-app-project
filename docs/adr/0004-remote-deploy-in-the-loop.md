@@ -1,6 +1,6 @@
 # 0004 — Deploying to a real environment inside the verify loop
 
-**Status:** accepted
+**Status:** accepted — where the remote pass runs, and its lock, superseded by 0018
 **Date:** 2026-08-20
 **Relation to 0002:** extends it. Nothing in 0002 is superseded; its costs were written for
 a Docker-only world, and the costs below are of a different kind.
