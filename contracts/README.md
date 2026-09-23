@@ -16,9 +16,9 @@ fill it in when the first real event exists, because an invented contract is wor
 contract.
 
 `infra-outputs.yaml` is real as of `version: 1`. It has **no environment dimension on
-purpose** — the environment lives in the invocation (`make -C infra outputs ENV=staging`),
+purpose** — the environment lives in the invocation (`make -C infra outputs ENV=dev`),
 so the names are invariant and only the values move. A per-environment block would let
-staging promise less than prod, which institutionalises the drift it claims to describe.
+one environment promise less than another, which institutionalises the drift it claims to describe.
 Its `kind` field distinguishes a value from the *name* of something, and has one
 mechanical consequence: `verify.sh` exports only `kind: value` outputs into the
 environment a smoke suite can interpolate, so a secret reference can never be

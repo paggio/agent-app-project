@@ -5,8 +5,8 @@
 # first — otherwise a deploy ordering that is normally harmless becomes an outage.
 #
 # THERE IS NO ENVIRONMENT DIMENSION HERE, ON PURPOSE. The environment lives in the
-# invocation — `make -C infra outputs ENV=staging` prints the flat JSON object for that
-# environment. A per-environment block here would let staging promise less than prod,
+# invocation — `make -C infra outputs ENV=dev` prints the flat JSON object for that
+# environment. A per-environment block here would let one environment promise less than prod,
 # which institutionalises the drift it claims to describe. What consumers need is that
 # the NAMES are invariant and only the values move. The contract is schema; environments
 # are data.
@@ -32,7 +32,7 @@ outputs:
     type: string
     kind: value
     consumers: [smoke, frontend]
-    example: "https://staging.agentapp.example.test"
+    example: "https://d1234abcd.cloudfront.net"
 
   api_path_prefix:
     description: >
@@ -87,6 +87,38 @@ outputs:
     consumers: [smoke]
     example: "000000000000.dkr.ecr.eu-west-1.amazonaws.com/frontend"
 
+  proxy_image_repository:
+    description: >
+      Where scripts/publish.sh pushes the proxy image — the single-origin proxy the
+      frontend repo builds from its Dockerfile.proxy. Created by bootstrap.
+    type: string
+    kind: value
+    consumers: [smoke]
+    example: "000000000000.dkr.ecr.eu-west-1.amazonaws.com/agentapp/frontend-proxy"
+
+  deployed_proxy_image:
+    description: >
+      The proxy image the environment is actually running, read from the cluster, not from
+      a Terraform variable. Cross-checked against the frontend SHA of the deploy set.
+    type: string
+    kind: value
+    consumers: [smoke]
+    example: "000000000000.dkr.ecr.eu-west-1.amazonaws.com/agentapp/frontend-proxy:d20f93b91281"
+
+  cluster_name:
+    description: The EKS cluster serving the environment, for `aws eks update-kubeconfig`.
+    type: string
+    kind: value
+    consumers: [smoke]
+    example: "agentapp-dev"
+
+  aws_region:
+    description: The region every resource of the environment lives in.
+    type: string
+    kind: value
+    consumers: [smoke]
+    example: "eu-west-1"
+
   signup_code_secret_ref:
     description: >
       Where the deployed backend reads SIGNUP_CODE from. A name, never a value — which is
@@ -96,4 +128,4 @@ outputs:
     type: string
     kind: secret_ref
     consumers: [backend]
-    example: "/agentapp/staging/signup-code"
+    example: "agentapp/dev/signup-code"
