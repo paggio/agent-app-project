@@ -53,10 +53,23 @@ jobs:
           submodules: false
 
       # Whatever infra main is: teardown reads the state, not the commit that wrote it.
+      # Destroy with the infra that deployed dev — a feat/ head mid-change, not main.
+      # verify-remote.sh records it before every apply; main only when nothing was.
+      - name: The infra that deployed dev
+        id: deployed
+        run: |
+          uri="s3://agentapp-tfstate-$(aws sts get-caller-identity --query Account --output text)-$AWS_REGION/dev/deployed-set.json"
+          if aws s3 cp --quiet "$uri" deployed-set.json; then
+            sha="$(jq -er '.repos.infra.sha' deployed-set.json)" \
+              || { echo "::error::$uri names no infra sha"; exit 2; }
+          else
+            sha=main; echo "::warning::no $uri — destroying with infra main"
+          fi
+          echo "infra=$sha" >> "$GITHUB_OUTPUT"; echo "infra: $sha"
       - uses: actions/checkout@v4
         with:
           repository: Paggio/infra
-          ref: main
+          ref: ${{ steps.deployed.outputs.infra }}
           ssh-key: ${{ secrets.DEPLOY_KEY_INFRA }}
           path: infra
 
