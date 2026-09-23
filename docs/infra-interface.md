@@ -12,6 +12,7 @@ are `make dev-bootstrap` and `make dev-down`, through `scripts/with-aws.sh`.
 | `plan` | `ENV`, `BACKEND_IMAGE`, `FRONTEND_IMAGE`, `PROXY_IMAGE` | the plan, and where it was saved | 0 additive · **3 contains a destroy or replace** · 1 failed · 2 usage |
 | `deploy` | the same | apply and rollout log | 0 **applied and the new revision is serving** · 1 failed · 2 usage |
 | `outputs` | `ENV` | **a flat JSON object, and nothing else** | 0 · 1 no state for `ENV` · 2 usage |
+| `registries` | `ENV` | the three `*_image_repository` values from the **bootstrap** state, as one flat JSON object | 0 · 1 not bootstrapped · 2 usage |
 | `bootstrap` | `ENV` | log, ending with the deployer role ARN | one-time, local; state backend, registries, the deployer role. Survives `destroy`. |
 | `destroy` | `ENV`, `CONFIRM=<env>` | log | 0 everything outside bootstrap is gone · never called by a loop |
 | `leftovers` | `ENV` | one line per billable resource still tagged for `ENV` | 0 none · 1 some remain |

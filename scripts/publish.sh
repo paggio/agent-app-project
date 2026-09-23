@@ -9,8 +9,8 @@
 # that can see every repo at the SHAs scripts/deploy-set.py resolved, so it is the only
 # place that can tag an image with the commit that was asserted. docs/adr/0018 §5.
 #
-# The registries are infra OUTPUTS (`*_image_repository`), created by a one-time
-# `make -C infra bootstrap` — "where images live" is a fact about the environment, not a
+# The registries are `make -C infra registries` (`*_image_repository`), created by a
+# one-time `make -C infra bootstrap` — "where images live" is a fact about the environment, not a
 # constant here. Tags are immutable in ECR, so a tag that already exists is the image
 # that commit built and is not rebuilt: a re-run of /dev-push costs an apply, not a build.
 set -euo pipefail
@@ -49,18 +49,25 @@ head_of() {
   fi
 }
 
-# An image must exist before the apply that references it, so bootstrap -> outputs ->
-# push -> plan -> apply is the only order that terminates.
-if [ -z "$OUTPUTS" ]; then
-  OUTPUTS="$(mktemp)"
-  make -s -C infra outputs ENV="$ENV_NAME" > "$OUTPUTS" 2>/dev/null || true
-fi
-if [ ! -s "$OUTPUTS" ]; then
-  say "\`make -C infra outputs ENV=$ENV_NAME\` produced nothing."
+# The registries come from `make -C infra registries`, which reads the BOOTSTRAP state.
+# They used to come from `outputs`, which exits 1 until envs/<env> has state — true after
+# bootstrap and again after every `dev-down` — so the first /dev-push could never publish
+# and therefore never apply: bootstrap -> registries -> push -> plan -> apply is the only
+# order that terminates. --outputs is still accepted and only fills what registries lacks.
+REGISTRIES="$(mktemp)"
+if ! make -s -C infra registries ENV="$ENV_NAME" > "$REGISTRIES" 2>/dev/null || [ ! -s "$REGISTRIES" ]; then
+  say "\`make -C infra registries ENV=$ENV_NAME\` produced nothing."
   say "The environment must be bootstrapped before anything can be published to it:"
   say "  make -C infra bootstrap ENV=$ENV_NAME"
   exit 1
 fi
+if [ -n "$OUTPUTS" ] && [ -s "$OUTPUTS" ]; then
+  MERGED="$(mktemp)"
+  python3 -c 'import json,sys; d=json.load(open(sys.argv[2])); d.update({k:v for k,v in json.load(open(sys.argv[1])).items() if k.endswith("_image_repository") and v}); json.dump(d,open(sys.argv[3],"w"))' \
+    "$OUTPUTS" "$REGISTRIES" "$MERGED"
+  REGISTRIES="$MERGED"
+fi
+OUTPUTS="$REGISTRIES"
 
 # One line per image: <image> <repo> <tag> <source> <registry> <context> <dockerfile>
 PLAN="$(python3 - "$SET" "$OUTPUTS" <<'PY'
