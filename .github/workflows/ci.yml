@@ -64,9 +64,24 @@ jobs:
       - name: Every suite is well-formed
         run: ./scripts/smoke.py --lint smoke/*.yaml changes/*/smoke.yaml
 
+  workflows:
+    # dev-push.yml holds deploy credentials and runs only from main, so a broken expression
+    # or shell block is found by the first /dev-push after the merge — too late. actionlint
+    # runs shellcheck over every `run:` block as well; ubuntu-latest ships shellcheck.
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          submodules: false
+      - name: Workflows are well-formed
+        run: |
+          bash <(curl -sSL https://raw.githubusercontent.com/rhysd/actionlint/v1.7.7/scripts/download-actionlint.bash) 1.7.7
+          ./actionlint -color
+
   # Not armed yet, and each needs a decision rather than a copy-paste:
   # - secret scanning. docs/init/README.md calls it non-negotiable and it runs nowhere in
   #   this org yet. It belongs in all four repos at once, with one tool, so it is its own
   #   change.
   # - shellcheck over scripts/. Worth it; expect a backlog of warnings on first run, which
-  #   is exactly the "unverified gate" trap if landed unread.
+  #   is exactly the "unverified gate" trap if landed unread. (The workflows' own `run:`
+  #   blocks are already covered, by actionlint above.)

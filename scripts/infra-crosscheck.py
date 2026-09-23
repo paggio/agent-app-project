@@ -8,7 +8,7 @@ code this run just verified locally?
 
   infra-crosscheck.py --outputs <infra-outputs.json> \
       --contract contracts/openapi.yaml --strip-prefix /api \
-      --backend-sha <sha> --frontend-sha <sha>
+      --deploy-set deploy-set.json
 
 Two checks, both cheap, both closing a silent pass.
 
@@ -26,8 +26,8 @@ Two checks, both cheap, both closing a silent pass.
    pass asserts whatever image happened to be deployed while the local pass asserted the
    code under test. Under a repair loop that means attempt 2's fix is invisible remotely
    and the run could report `verified` for an environment running last week's backend.
-   Comparing the deployed tags against the submodule SHAs turns "the remote pass tested
-   this change" from an assumption into a checked fact.
+   Comparing the deployed tags against the deploy set (scripts/deploy-set.py) turns "the
+   remote pass tested these commits" from an assumption into a checked fact.
 """
 from __future__ import annotations
 
@@ -48,8 +48,7 @@ def main() -> int:
     ap.add_argument("--outputs", required=True)
     ap.add_argument("--contract", default="contracts/openapi.yaml")
     ap.add_argument("--strip-prefix", default="")
-    ap.add_argument("--backend-sha", default="")
-    ap.add_argument("--frontend-sha", default="")
+    ap.add_argument("--deploy-set", required=True)
     args = ap.parse_args()
 
     out = json.load(open(args.outputs))
@@ -74,27 +73,33 @@ def main() -> int:
             f"assert the wrong paths.")
 
     # ---- 2. the images actually running ---------------------------------------------
-    for name, sha, repo in (("deployed_backend_image", args.backend_sha, "chatbot-backend"),
-                            ("deployed_frontend_image", args.frontend_sha, "frontend")):
-        if not sha:
-            continue
-        ref = out.get(name) or ""
-        tag = ref.rsplit(":", 1)[-1] if ":" in ref else ""
-        if not tag:
-            problems.append(f"{name}: {ref!r} carries no tag, so what is running cannot be "
-                            f"identified")
-        elif not sha.startswith(tag):
-            problems.append(
-                f"{name}: the environment is running {tag!r} but {repo} is at "
-                f"{sha[:12]!r}. The remote pass would assert code this run did not verify "
-                f"locally.")
+    # backend and frontend are promised by the contract, so a missing output is a failure.
+    # An image the contract does not promise yet cannot be checked, and says so.
+    PROMISED = {"backend", "frontend"}
+    ds = json.load(open(args.deploy_set))
+    for repo, entry in (ds.get("repos") or {}).items():
+        for image, want in (entry.get("images") or {}).items():
+            name = f"deployed_{image}_image"
+            ref = out.get(name) or ""
+            tag = ref.rsplit(":", 1)[-1] if ":" in ref else ""
+            if not ref and image not in PROMISED:
+                print(f"infra-crosscheck: warning — {name} is not reported, so {image} "
+                      f"cannot be checked against {want}", file=sys.stderr)
+            elif not tag:
+                problems.append(f"{name}: {ref!r} carries no tag, so what is running cannot "
+                                f"be identified")
+            elif tag != want:
+                problems.append(
+                    f"{name}: the environment is running {tag!r} but the deploy set says "
+                    f"{repo} {entry.get('source')} {want!r}. The remote pass would assert "
+                    f"commits nobody asked for.")
 
     for p in problems:
         print(f"infra-crosscheck: {p}", file=sys.stderr)
     if problems:
         return 1
     print(f"infra-crosscheck: prefix {norm(promised)} agrees with the contract and with "
-          f"smoke; deployed images match the submodule SHAs")
+          f"smoke; deployed images match the deploy set")
     return 0
 
 

@@ -17,6 +17,8 @@ TODO.md
 # transcripts. Regenerated on every run and often large; report.md is the durable part
 # and is meant to be read in place, not committed.
 changes/*/runs/
+# ./scripts/verify-remote.sh run by hand, outside a change.
+runs/
 
 # The joined stack's shared provider credentials. Read only by compose's `env_file:`, and
 # never by a script here — docs/adr/0016. The .example beside it IS committed.

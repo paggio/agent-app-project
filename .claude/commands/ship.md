@@ -109,13 +109,11 @@ failing assertion plus that service's container log back to the repo named in th
 `--max-attempts N` · `--no-repair` for one pass and a report · `--verify-only` to skip
 dispatch and just assert what is checked out · `--keep-up` to leave the stack running.
 
-**If the change deploys** (`deploy.infra: true`): read `docs/infra-interface.md` first.
-The environment must be named in `change.yaml` and must be one you meant; `prod` is not in
-the allowlist and adding it is a reviewed commit here. The same suite is asserted twice,
-local then deployed, from one file — `local` and `remote` are the only tags and untagged
-runs in both. The attempt budget is 1, because an attempt is a real `terraform apply`.
-`--plan-only` shows what an apply would do; `--no-infra` stays local and can only ever
-report `verified-local`.
+**This loop never touches AWS.** Its best outcome is `verified-local`. If the change
+deploys (`deploy.infra: true`, `environment: dev`), the remote pass is phase 5b, in CI —
+read `docs/infra-interface.md` before writing the infra slice. The same suite is asserted
+twice from one file: `local` and `remote` are the only tags, and untagged steps run in
+both.
 
 ## 5 — Pull requests, and the report
 
@@ -136,12 +134,28 @@ Route on the outcome:
 
 | Outcome | What it means, and what to do |
 | --- | --- |
-| `verified` | Deployed and asserted, locally and remotely. Nothing to fix. |
-| `verified-local` | Passed locally; **no remote environment was touched**. The best outcome a change with `deploy.infra: false` can reach — a full pass, and not evidence about a deployment. Not shippable for a change that is supposed to deploy. |
+| `verified` | Deployed to `dev` by phase 5b and asserted there, after a local pass. Nothing to fix. Only a `dev-push` run's `verify-remote.json` says this. |
+| `verified-local` | Passed locally; **no remote environment was touched**. The best outcome this loop can reach, and all a change with `deploy.infra: false` needs. With `deploy.infra: true`, go to 5b. |
+| `deployed-partial` | A `/dev-push-<repo>` run: one repo rebuilt, the others carried at what `dev` ran. Evidence about that repo, never `verified`. |
 | `contract-gap` | A slice reported it cannot be built against the frozen contract, and named the gap. Do NOT patch around it: go back to phase 2, re-freeze, update `freeze_sha`, re-run. |
 | `failed` | Read `runs/<ts>/attempt-*/failure-*.md` — that is exactly what the agents were given. Then `/ship-correct <change>: <what is wrong>`, which turns the objection into a failing assertion and routes it to the repo answerable. An assertion is fixed here, never in a product repo. |
 | `blocked` | A precondition was unmet, so nothing was dispatched and nothing deployed. There is no deploy evidence to read. Fix what the dispatcher named. |
 | `unattributable` | The failure could not be pinned on a slice. Check `verify.json`'s `fault`: `harness` means it is this repo's bug. |
+
+### 5b — The remote pass, when the change deploys
+
+```
+./scripts/dev-push.sh <change>
+```
+
+It comments `/dev-push` on the change's control PR — the path a reviewer uses — and waits:
+CI resolves the deploy set (each slice at `feat/<change>`, every other repo at the lock),
+builds what is missing, applies, and asserts both suites through the CloudFront origin.
+The verdict and the evidence land in `changes/<change>/runs/dev-push-<id>/`; the table of
+exactly which commits were deployed is posted on the PR. Exit 2 is a refusal, not a
+failure — most often an expired session: `make login && make push-gh-creds`, then again.
+
+**`dev` bills while it is up.** Nothing here tears it down; say in the report that it is up.
 
 **Do not merge anything.** Merging is a human decision, in dependency order — the repo
 whose change is backward compatible on its own goes first. Record that order in `STATUS.md`.

@@ -1,18 +1,23 @@
 # What the control repo requires of `infra/`
 
-The control repo never learns Terraform. It knows six Make targets, and this file is the
-interface — a contract like `contracts/infra-outputs.yaml`, not a procedure. Read it before
-writing the infra slice of a deploying change, or before proposing a redesign of the deploy
-path. The reasoning and the accepted costs are in `docs/adr/0004`.
+The control repo never learns Terraform or Helm. It knows these Make targets, and this file
+is the interface — a contract like `contracts/infra-outputs.yaml`, not a procedure. Read it
+before writing the infra slice of a deploying change, or before proposing a redesign of the
+deploy path. The reasoning and the accepted costs are in `docs/adr/0004` and
+`docs/adr/0018`. The caller is `scripts/verify-remote.sh`, in CI; the only local callers
+are `make dev-bootstrap` and `make dev-down`, through `scripts/with-aws.sh`.
 
 | Target | Args | stdout | Exit |
 | --- | --- | --- | --- |
-| `plan` | `ENV`, `BACKEND_IMAGE`, `FRONTEND_IMAGE` | the plan, and where it was saved | 0 additive · **3 contains a destroy or replace** · 1 failed · 2 usage |
-| `deploy` | the same | apply log | 0 **applied and the new revision is serving** · 1 failed · 2 usage |
+| `plan` | `ENV`, `BACKEND_IMAGE`, `FRONTEND_IMAGE`, `PROXY_IMAGE` | the plan, and where it was saved | 0 additive · **3 contains a destroy or replace** · 1 failed · 2 usage |
+| `deploy` | the same | apply and rollout log | 0 **applied and the new revision is serving** · 1 failed · 2 usage |
 | `outputs` | `ENV` | **a flat JSON object, and nothing else** | 0 · 1 no state for `ENV` · 2 usage |
-| `bootstrap` | `ENV` | log | one-time; creates the state backend and registries. Never called by the loop. |
-| `destroy` | `ENV`, `CONFIRM=<env>` | log | never called by the loop, under any flag |
+| `bootstrap` | `ENV` | log, ending with the deployer role ARN | one-time, local; state backend, registries, the deployer role. Survives `destroy`. |
+| `destroy` | `ENV`, `CONFIRM=<env>` | log | 0 everything outside bootstrap is gone · never called by a loop |
+| `leftovers` | `ENV` | one line per billable resource still tagged for `ENV` | 0 none · 1 some remain |
 | `fmt` `validate` `lint` | — | — | the infra repo's own gates |
+
+`ENV` is `dev` — the only environment `scripts/manifest.py` allows.
 
 Four requirements, each because something breaks otherwise:
 
@@ -23,8 +28,15 @@ Four requirements, each because something breaks otherwise:
 - **`ENV` has no default.** Unset means exit 2 listing the valid environments. A default
   `ENV` is how prod gets applied by a typo.
 - **`deploy` does not return 0 until the new revision is serving,** or the remote pass races
-  the rollout and the failure lands on whichever step ran first. This is the remote analogue
-  of `stack.sh up --wait`.
+  the rollout and the failure lands on whichever step ran first — `terraform apply`, then
+  `helm upgrade --install --atomic --wait`. This is the remote analogue of
+  `stack.sh up --wait`.
+- **`destroy` leaves nothing that bills, and `leftovers` proves it.** Controller-created
+  resources — load balancers, volumes, ENIs — are what a plain `terraform destroy` misses;
+  `destroy` removes the release first, and `leftovers` asks the tagging API rather than the
+  state, because the state is exactly what does not know about them.
+- **Every resource carries `Project`, `Environment`, `ManagedBy`, `Repository`** through
+  provider `default_tags`, so `leftovers` and the Resource Group see all of it.
 
 **Exit 3 from `plan` is the guardrail this design leans on hardest.** It stands between "a
 repair agent rewrote a module on attempt 2" and "the database was replaced". The control
@@ -41,28 +53,30 @@ freeze the promise, then implement it.
 `kind` decides whether an output reaches the smoke environment. Only `kind: value` is
 exported, as `INFRA_<NAME>`. A `secret_ref` promises a *name*; if you want to export one,
 what you actually want is for the deployed app to read it, which is the app's environment
-and not smoke's. Before any apply, `verify.sh` runs `infra-outputs.py --contract-only`, so a
+and not smoke's. Before any apply, `verify-remote.sh` runs `infra-outputs.py --contract-only`, so a
 contract that still promises nothing fails in preflight rather than after spending an apply.
 
-## The first infra change is a special case
+## The first infra change
 
-It should be `deploy.infra: **false**` with an `infra` slice. You cannot smoke a deploy
-interface that does not exist yet, and its acceptance criteria *are* the interface — all
-testable without an AWS account: `make -n plan|deploy|outputs` succeed; `outputs` with no
-state exits non-zero; `plan` with no `ENV` exits 2; `plan` exits 3 for a destroying fixture.
+Its interface criteria are testable without an AWS account — `make -n plan|deploy|outputs`
+succeed; `outputs` with no state exits non-zero; `plan` with no `ENV` exits 2; `plan` exits
+3 for a destroying fixture — and belong in the infra repo's own tests. What only a deploy
+can show is `/dev-push`'s, once `make dev-bootstrap` has run.
 
 ## Safety, because the suite mutates a shared environment
 
 - Every identity a step creates is namespaced with `${SMOKE_RUN_ID}` and confined to
   `smoke-*@auth.test`. `.test` is RFC 2606 reserved, so a smoke run can never collide with a
   real user, and preflight refuses a suite containing any other address shape.
-- `verify.sh` refuses a remote pass when `SIGNUP_CODE` or `SMOKE_PASSWORD` came from the
-  committed placeholder in `stack/dev.env`. Either the register steps would 403 and route a
-  nonexistent bug to the backend, or the placeholder really is deployed and registration is
-  open with a committed code.
-- One run per environment, held for the whole run. Terraform's state lock stops state
-  corruption; it does not stop two runs interleaving their smoke data against one origin.
-- The loop never calls `destroy`. A half-applied environment is evidence.
+- The remote suite never registers with a committed placeholder. `SMOKE_PASSWORD` is
+  generated per run; `SIGNUP_CODE` is read from `signup_code_secret_ref` after the deploy —
+  a Secrets Manager ARN or an SSM parameter name the deployer role can read. Otherwise the
+  register steps 403 and route a nonexistent bug to the backend, or the placeholder really
+  is deployed and registration is open with a committed code.
+- One run per environment: `concurrency: env-dev` within a repo, the state lock across
+  repos, and a re-read of what `dev` runs after the suite. Terraform's lock alone stops
+  state corruption, not two runs interleaving against one origin.
+- No loop calls `destroy`. A half-applied environment is evidence.
 - `prod` is absent from the allowlist in `scripts/manifest.py`. What actually stops a
   production deploy is credentials — these are guardrails against absent-mindedness, not a
   security boundary, and must not be read as one.

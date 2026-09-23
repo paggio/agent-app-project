@@ -1,0 +1,338 @@
+# The remote pass: deploy a resolved set of commits to `dev` and assert it through the
+# CloudFront origin. docs/adr/0018 is the decision; scripts/verify-remote.sh is the oracle.
+#
+#   /dev-push                    a PR comment — the change's control PR, or a product PR
+#   /dev-push-<backend|frontend|infra>    rebuild only that repo, carry the rest
+#   ... --allow-destroy          let the plan destroy or replace a resource
+#   workflow_dispatch lock=true  every repo at the dispatched ref's gitlinks (/realign, dev-up)
+#
+# Product repos call this file (`uses: Paggio/agent-app-project/.github/workflows/
+# dev-push.yml@main`, `secrets: inherit`). A called workflow sees the CALLER's `github`
+# context, so the same trigger parsing serves both, with github.repository naming the repo
+# whose PR is under test.
+#
+# issue_comment runs the DEFAULT BRANCH's copy of this file, so a change to it takes effect
+# only once merged — on purpose: a PR cannot rewrite the workflow that holds deploy
+# credentials. It does run PR code (the scripts, the suites), gated to OWNER/MEMBER/
+# COLLABORATOR comments. GitHub Free has no Environments for private repos, so the gate is
+# this `if` and the credentials are DEV_-prefixed repository secrets.
+name: dev-push
+
+on:
+  issue_comment:
+    types: [created]
+  workflow_dispatch:
+    inputs:
+      change:
+        description: "NNNN-slug — deploy the change's slices at feat/<change> (the dispatched ref must carry the change)"
+        type: string
+        default: ""
+      lock:
+        description: "every repo at the dispatched ref's gitlinks"
+        type: boolean
+        default: false
+      only:
+        description: "backend | frontend | infra — rebuild only that repo"
+        type: string
+        default: ""
+      allow_destroy:
+        type: boolean
+        default: false
+  workflow_call:
+
+permissions:
+  contents: read
+  pull-requests: write
+  issues: write
+
+jobs:
+  dev-push:
+    if: >-
+      github.event_name == 'workflow_dispatch' ||
+      (github.event.issue.pull_request &&
+       startsWith(github.event.comment.body, '/dev-push') &&
+       contains(fromJSON('["OWNER","MEMBER","COLLABORATOR"]'), github.event.comment.author_association))
+    runs-on: ubuntu-latest
+    timeout-minutes: 90
+    # One deploy at a time, never cancelled mid-apply. Per REPOSITORY: a product repo's run
+    # is a separate group, so scripts/verify-remote.sh re-reads what dev runs after the
+    # suite and fails if another run replaced it underneath.
+    concurrency:
+      group: env-dev
+      cancel-in-progress: false
+    env:
+      OWNER: Paggio
+      CONTROL: agent-app-project
+      GH_TOKEN: ${{ github.token }}
+    steps:
+      - name: Resolve the trigger
+        id: trigger
+        env:
+          EVENT: ${{ github.event_name }}
+          BODY: ${{ github.event.comment.body }}
+          PR: ${{ github.event.issue.number }}
+          COMMENT_ID: ${{ github.event.comment.id }}
+          REPO: ${{ github.repository }}
+          IN_CHANGE: ${{ inputs.change }}
+          IN_LOCK: ${{ inputs.lock }}
+          IN_ONLY: ${{ inputs.only }}
+          IN_ALLOW: ${{ inputs.allow_destroy }}
+          REF_SHA: ${{ github.sha }}
+        run: |
+          set -euo pipefail
+          repo_name="${REPO#*/}"
+          allow=false; only=""
+          if [ "$EVENT" = "issue_comment" ]; then
+            # The job `if` let anything starting with /dev-push through; this is the grammar.
+            re='^/dev-push(-(backend|frontend|infra))?( --allow-destroy)?[[:space:]]*$'
+            [[ "$BODY" =~ $re ]] || { echo "::error::not a /dev-push command: $BODY"; exit 2; }
+            only="${BASH_REMATCH[2]}"; [ -n "${BASH_REMATCH[3]}" ] && allow=true
+            gh api "repos/$REPO/issues/comments/$COMMENT_ID/reactions" -f content=eyes --silent || true
+            head_ref="$(gh pr view "$PR" -R "$REPO" --json headRefName --jq .headRefName)"
+            head_sha="$(gh pr view "$PR" -R "$REPO" --json headRefOid --jq .headRefOid)"
+            if [ "$repo_name" = "$CONTROL" ]; then
+              control_ref="$head_sha"
+              # A change's control PR is feat/<change>. Any other control PR — a realign, a
+              # harness change — deploys its own gitlinks.
+              case "$head_ref" in
+                feat/*) mode=change; change="${head_ref#feat/}" ;;
+                *) mode=lock; change="" ;;
+              esac
+              product=""
+            else
+              control_ref=main; mode=product; change=""; product="$repo_name@$head_sha"
+            fi
+          else
+            PR=""; control_ref="$REF_SHA"; product=""
+            only="$IN_ONLY"; allow="$IN_ALLOW"
+            if [ -n "$IN_CHANGE" ]; then mode=change; change="$IN_CHANGE"
+            elif [ "$IN_LOCK" = "true" ]; then mode=lock; change=""
+            else echo "::error::workflow_dispatch needs change=<NNNN-slug> or lock=true"; exit 2; fi
+          fi
+          case "$only" in ""|backend|frontend|infra) ;; *) echo "::error::only: $only"; exit 2 ;; esac
+          case "$only" in backend) only=chatbot-backend ;; esac
+          {
+            echo "mode=$mode"; echo "change=$change"; echo "product=$product"; echo "only=$only"
+            echo "allow_destroy=$allow"; echo "pr=$PR"; echo "control_ref=$control_ref"
+          } >> "$GITHUB_OUTPUT"
+          # What this run is FOR, written before anything can refuse, so scripts/dev-push.sh
+          # can tell its own run from another PR's even when this one never reached a verdict.
+          # Outside the workspace: the checkouts below clean it.
+          jq -n --arg mode "$mode" --arg change "$change" --arg product "$product" \
+            --arg only "$only" --arg pr "$PR" --arg repo "$REPO" --arg ref "$control_ref" \
+            '{mode:$mode, change:$change, product:$product, only:$only, pr:$pr, repo:$repo, control_ref:$ref}' \
+            > "$RUNNER_TEMP/trigger.json"
+
+      # An expired session is the harness refusing, not a failed deploy routed to infra.
+      - name: The pushed session is still alive
+        env:
+          EXPIRES: ${{ secrets.DEV_AWS_CREDENTIALS_EXPIRE_AT }}
+          ROLE: ${{ vars.DEV_AWS_DEPLOYER_ROLE_ARN }}
+        run: |
+          [ -n "$EXPIRES" ] || { echo "::error::no DEV_AWS_CREDENTIALS_EXPIRE_AT — run \`make login && make push-gh-creds\`"; exit 2; }
+          [ -n "$ROLE" ] || { echo "::error::no DEV_AWS_DEPLOYER_ROLE_ARN — run \`make gh-setup --role-arn <bootstrap's deployer role>\`"; exit 2; }
+          left=$(( ( $(date -d "$EXPIRES" +%s) - $(date +%s) ) / 60 ))
+          echo "session expires $EXPIRES ($left min)"
+          [ "$left" -ge 30 ] || { echo "::error::the pushed AWS session expires in $left min — run \`make login && make push-gh-creds\`"; exit 2; }
+
+      # The pushed SSO session is used for one call: assuming the least-privilege deployer.
+      - uses: aws-actions/configure-aws-credentials@v4
+        with:
+          aws-access-key-id: ${{ secrets.DEV_AWS_ACCESS_KEY_ID }}
+          aws-secret-access-key: ${{ secrets.DEV_AWS_SECRET_ACCESS_KEY }}
+          aws-session-token: ${{ secrets.DEV_AWS_SESSION_TOKEN }}
+          aws-region: ${{ vars.DEV_AWS_REGION }}
+          role-to-assume: ${{ vars.DEV_AWS_DEPLOYER_ROLE_ARN }}
+          role-chaining: true
+          role-duration-seconds: 3600
+          role-session-name: dev-push-${{ github.run_id }}
+
+      - uses: actions/checkout@v4
+        with:
+          repository: ${{ env.OWNER }}/${{ env.CONTROL }}
+          ref: ${{ steps.trigger.outputs.control_ref }}
+          ssh-key: ${{ secrets.DEPLOY_KEY_AGENT_APP_PROJECT }}
+          # Persisted, this key becomes core.sshCommand in .git/config, and every later
+          # `git ls-remote` here offers it first: GitHub accepts it and answers "Repository
+          # not found" for the other repos. deploy-set.py also sets GIT_SSH_COMMAND per repo.
+          persist-credentials: false
+          # manifest.py checks the freeze SHA is an ancestor, which needs history.
+          fetch-depth: 0
+          submodules: false
+
+      # One host alias per repo, so `git ls-remote` presents that repo's own deploy key.
+      # With every key in one agent, GitHub authenticates the first and refuses the rest.
+      - name: Deploy-key aliases for ls-remote
+        env:
+          K_BACKEND: ${{ secrets.DEPLOY_KEY_CHATBOT_BACKEND }}
+          K_EVAL: ${{ secrets.DEPLOY_KEY_CHATBOT_EVAL }}
+          K_FRONTEND: ${{ secrets.DEPLOY_KEY_FRONTEND }}
+          K_INFRA: ${{ secrets.DEPLOY_KEY_INFRA }}
+        run: |
+          set -euo pipefail
+          mkdir -p ~/.ssh && chmod 700 ~/.ssh
+          ssh-keyscan -t ed25519 github.com >> ~/.ssh/known_hosts 2>/dev/null
+          for pair in chatbot-backend:K_BACKEND chatbot-eval:K_EVAL frontend:K_FRONTEND infra:K_INFRA; do
+            repo="${pair%%:*}"; var="${pair#*:}"
+            printf '%s\n' "${!var}" > ~/.ssh/"$repo"; chmod 600 ~/.ssh/"$repo"
+            printf 'Host github.com-%s\n  HostName github.com\n  User git\n  IdentityFile ~/.ssh/%s\n  IdentitiesOnly yes\n' \
+              "$repo" "$repo" >> ~/.ssh/config
+          done
+          echo "DEPLOY_SET_URL_TEMPLATE=git@github.com-{repo}:$OWNER/{repo}.git" >> "$GITHUB_ENV"
+          echo "DEPLOY_SET_KEY_TEMPLATE=$HOME/.ssh/{repo}" >> "$GITHUB_ENV"
+
+      - uses: astral-sh/setup-uv@v5
+      - uses: hashicorp/setup-terraform@v3
+        with:
+          terraform_version: 1.14.8
+          # The wrapper decorates stdout, and `make outputs` must print JSON and nothing else.
+          terraform_wrapper: false
+      - uses: azure/setup-helm@v4
+        with:
+          version: v4.2.0
+      - uses: azure/setup-kubectl@v4
+        with:
+          version: v1.34.1
+      - uses: docker/setup-buildx-action@v3
+
+      # Pass one: the full set, to learn which infra commit reads the current state.
+      - name: Resolve the deploy set (first pass)
+        id: first
+        env:
+          MODE: ${{ steps.trigger.outputs.mode }}
+          CHANGE: ${{ steps.trigger.outputs.change }}
+          PRODUCT: ${{ steps.trigger.outputs.product }}
+        run: |
+          set -euo pipefail
+          mkdir -p evidence
+          case "$MODE" in
+            change) args=(--change "$CHANGE") ;;
+            product) args=(--product-pr "$PRODUCT") ;;
+            lock) args=(--lock) ;;
+          esac
+          printf '%s\n' "${args[@]}" > evidence/.trigger-args
+          ./scripts/deploy-set.py "${args[@]}" --json evidence/deploy-set-full.json >/dev/null
+          echo "infra_sha=$(jq -r '.repos.infra.sha' evidence/deploy-set-full.json)" >> "$GITHUB_OUTPUT"
+
+      - uses: actions/checkout@v4
+        with:
+          repository: ${{ env.OWNER }}/infra
+          ref: ${{ steps.first.outputs.infra_sha }}
+          ssh-key: ${{ secrets.DEPLOY_KEY_INFRA }}
+          path: infra
+
+      # What dev runs now: the tags an --only push carries, and what this run replaces.
+      # No state yet is a first deploy, not an error.
+      - name: What dev runs now
+        run: |
+          set +e
+          make -s -C infra outputs ENV=dev > evidence/previous-outputs.json 2> evidence/previous-outputs.err
+          rc=$?
+          # Exit 1 is the interface's "no state for ENV" — a first deploy. Anything else is
+          # a broken read, and treating it as "nothing deployed" would carry nothing.
+          case "$rc" in
+            0) ;;
+            1) echo '{}' > evidence/previous-outputs.json ;;
+            *) cat evidence/previous-outputs.err; echo "::error::make outputs exited $rc"; exit 2 ;;
+          esac
+
+      - name: Resolve the deploy set
+        id: set
+        env:
+          ONLY: ${{ steps.trigger.outputs.only }}
+        run: |
+          set -euo pipefail
+          mapfile -t args < evidence/.trigger-args
+          ./scripts/deploy-set.py "${args[@]}" ${ONLY:+--only "$ONLY"} \
+            --current evidence/previous-outputs.json \
+            --json evidence/deploy-set.json --markdown evidence/deploy-set.md
+          for r in chatbot-backend frontend; do
+            src="$(jq -r --arg r "$r" '.repos[$r].source' evidence/deploy-set.json)"
+            sha="$(jq -r --arg r "$r" '.repos[$r].sha' evidence/deploy-set.json)"
+            echo "${r//-/_}_build=$([ "$src" = built ] && echo true || echo false)" >> "$GITHUB_OUTPUT"
+            echo "${r//-/_}_sha=$sha" >> "$GITHUB_OUTPUT"
+          done
+
+      - uses: actions/checkout@v4
+        if: steps.set.outputs.chatbot_backend_build == 'true'
+        with:
+          repository: ${{ env.OWNER }}/chatbot-backend
+          ref: ${{ steps.set.outputs.chatbot_backend_sha }}
+          ssh-key: ${{ secrets.DEPLOY_KEY_CHATBOT_BACKEND }}
+          path: chatbot-backend
+      - uses: actions/checkout@v4
+        if: steps.set.outputs.frontend_build == 'true'
+        with:
+          repository: ${{ env.OWNER }}/frontend
+          ref: ${{ steps.set.outputs.frontend_sha }}
+          ssh-key: ${{ secrets.DEPLOY_KEY_FRONTEND }}
+          path: frontend
+
+      # The chained deployer session lasts an hour and this job may not. verify-remote.sh
+      # re-assumes the role from the pushed session before each stage that reaches AWS.
+      - name: Remote pass
+        id: verify
+        env:
+          CHANGE: ${{ steps.trigger.outputs.change }}
+          ALLOW: ${{ steps.trigger.outputs.allow_destroy }}
+          BASE_AWS_ACCESS_KEY_ID: ${{ secrets.DEV_AWS_ACCESS_KEY_ID }}
+          BASE_AWS_SECRET_ACCESS_KEY: ${{ secrets.DEV_AWS_SECRET_ACCESS_KEY }}
+          BASE_AWS_SESSION_TOKEN: ${{ secrets.DEV_AWS_SESSION_TOKEN }}
+          DEPLOYER_ROLE_ARN: ${{ vars.DEV_AWS_DEPLOYER_ROLE_ARN }}
+        run: |
+          set -uo pipefail
+          # A fresh password per run: the suites register with it, and a committed one
+          # would be a password registered in a real environment. Masked before use.
+          SMOKE_PASSWORD="smoke-$(openssl rand -hex 12)"
+          echo "::add-mask::$SMOKE_PASSWORD"
+          export SMOKE_PASSWORD
+          extra=()
+          [ -n "$CHANGE" ] && extra+=(--change "$CHANGE")
+          [ "$ALLOW" = "true" ] && extra+=(--allow-destroy)
+          ./scripts/verify-remote.sh --deploy-set evidence/deploy-set.json --env dev \
+            --previous evidence/previous-outputs.json --run-dir evidence/run "${extra[@]}"
+          echo "rc=$?" >> "$GITHUB_OUTPUT"
+
+      - name: Record what this run was for
+        if: always()
+        run: mkdir -p evidence; cp "$RUNNER_TEMP/trigger.json" evidence/ 2>/dev/null || true
+
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: dev-push-evidence
+          path: evidence/
+          retention-days: 30
+
+      - name: Report on the pull request
+        if: always()
+        env:
+          PR: ${{ steps.trigger.outputs.pr }}
+          REPO: ${{ github.repository }}
+          RUN_URL: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}
+        run: |
+          set -uo pipefail
+          vr=evidence/run/verify-remote.json
+          {
+            if [ -f "$vr" ]; then
+              jq -r '"### /dev-push — **\(.outcome)**\n\n" +
+                     "\(.assertions.passed) passed, \(.assertions.failed) failed" +
+                     (if .assertions.change_suite then ", \(.assertions.from_change_suite) from `\(.assertions.change_suite)`" else "" end) +
+                     "\n\n" + (if .base then "Origin: \(.base)\n\n" else "" end) +
+                     (if .failed_stage then "Failed at: `\(.failed_stage)`" + (if (.owners_failing|length) > 0 then " — answerable: \(.owners_failing|join(", "))" else "" end) + "\n\n" else "" end) +
+                     (if .replaced then "Replaced: " + ([.replaced | to_entries[] | "`\(.value)`"] | join(", ")) + "\n\n" else "" end)' "$vr"
+            else
+              echo "### /dev-push — **refused before the remote pass began**"
+              echo
+            fi
+            [ -f evidence/deploy-set.md ] && cat evidence/deploy-set.md && echo
+            echo "[run]($RUN_URL) · evidence artifact \`dev-push-evidence\`"
+          } > evidence/comment.md
+          cat evidence/comment.md >> "$GITHUB_STEP_SUMMARY"
+          if [ -n "$PR" ]; then gh pr comment "$PR" -R "$REPO" --body-file evidence/comment.md || true; fi
+
+      - name: Verdict
+        if: always()
+        env:
+          RC: ${{ steps.verify.outputs.rc }}
+        run: exit "${RC:-2}"

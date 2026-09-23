@@ -17,23 +17,30 @@ PHOENIX_BASE ?= http://localhost:6006
 MSG          ?= hello
 SVC          ?=
 CHANGE       ?=
+ONLY         ?=
+VIA          ?=
+ROLE_ARN     ?=
 
 REPOS := chatbot-backend chatbot-eval frontend infra
 
 .DEFAULT_GOAL := help
 .PHONY: help up down restart ps logs rebuild config urls open health chat smoke verify iterate \
-        e2e eval creds phoenix-durability repos lock prs check check-docs init clean
+        e2e eval creds phoenix-durability repos lock prs check check-docs init clean \
+        login push-gh-creds gh-setup dev-bootstrap dev-push dev-up dev-down dev-status
 
 help: ## Show this list
 	@echo "The full local stack — backend, datastores, frontend, proxy — on one origin."
 	@echo
 	@echo "  Cross-repo work is /ship, then /ship-correct or /ship-iterate before a"
 	@echo "  merge, then /realign after one. These are the hand tools underneath them."
+	@echo "  The remote pass is /dev-push, a PR comment — make dev-push starts it from here."
 	@echo
 	@grep -hE '^[a-zA-Z0-9_-]+:.*?## ' $(MAKEFILE_LIST) \
 		| awk -F':.*?## ' '{printf "  \033[1m%-12s\033[0m %s\n", $$1, $$2}'
 	@echo
 	@echo "  Variables: PROXY_PORT=$(PROXY_PORT) BASE=$(BASE)"
+	@echo "             CHANGE=<change-dir> ONLY=backend|frontend|infra for dev-push,"
+	@echo "             VIA=ci for dev-down, ROLE_ARN=<arn> for gh-setup"
 	@echo "             CHANGE=<change-dir> for verify/iterate, MSG=\"...\" for chat,"
 	@echo "             SVC=<service> for logs/rebuild"
 
@@ -147,6 +154,39 @@ eval: ## One eval run against the running stack: make eval [JUDGE=bedrock]
 # § "A gap in the oracle".
 phoenix-durability: ## Prove a trace survives restarting Phoenix, and show the log lines
 	@./scripts/phoenix-durability.sh
+
+# ── the dev environment in AWS ───────────────────────────────────────────────────────
+# docs/adr/0018. Deploys run in CI, never from here: these start them, wait for them, and
+# hand the session to them. The only commands that reach AWS from this machine are the
+# bootstrap and a local teardown, through scripts/with-aws.sh.
+
+login: ## Log in with SSO and write the session into stack/secrets.env
+	@./scripts/login.sh
+
+push-gh-creds: ## Copy the current session into the GitHub repos that can deploy
+	@./scripts/push-gh-creds.sh
+
+gh-setup: ## One-time: deploy keys, reusable-workflow access, the deployer role ARN
+	@./scripts/gh-setup.sh $(if $(ROLE_ARN),--role-arn $(ROLE_ARN),)
+
+dev-bootstrap: ## One-time: state bucket, registries, deployer role, budget (local apply)
+	@./scripts/with-aws.sh $(MAKE) -C infra bootstrap ENV=dev
+
+dev-push: ## Deploy a change's PR to dev and wait for the verdict: make dev-push CHANGE=0007-x
+	@test -n "$(CHANGE)" || { echo "usage: make dev-push CHANGE=<change-dir> [ONLY=backend]"; exit 2; }
+	@./scripts/dev-push.sh $(CHANGE) $(if $(ONLY),--only $(ONLY),)
+
+dev-up: ## Bring dev up at main's lock (every repo at the pinned SHAs)
+	@./scripts/dev-push.sh --lock --ref main
+
+dev-down: ## Take dev to zero and prove nothing billable is left; VIA=ci runs it in Actions
+	@./scripts/dev-down.sh $(if $(VIA),--via $(VIA),)
+
+dev-status: ## The last deploys and teardowns, and what dev runs now
+	@gh run list -R Paggio/agent-app-project --workflow dev-push.yml --limit 5
+	@gh run list -R Paggio/agent-app-project --workflow dev-down.yml --limit 3
+	@./scripts/with-aws.sh $(MAKE) -s -C infra outputs ENV=dev 2>/dev/null \
+		|| echo "  (no outputs: dev is down, infra is not checked out, or the session expired)"
 
 # ── across the repos ─────────────────────────────────────────────────────────────────
 # Read-only, and they stay that way: implementation happens in a session started inside

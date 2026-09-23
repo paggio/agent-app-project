@@ -191,7 +191,7 @@ one is missed** — so work down the list rather than trusting a grep:
 
 | Where | What |
 | --- | --- |
-| `.claude/settings.json` | `Edit(./<path>/**)` and `Write(./<path>/**)` deny rules |
+| `.claude/settings.json` | `Edit(./<path>/**)` deny rule (covers Write too) |
 | `.claude/hooks/no-subrepo-edits.sh` | the `SUB` alternation |
 | `scripts/test-hooks.py` | a BLOCK case and an ALLOW case for the new path — this is the probe that holds the two above honest |
 | `scripts/manifest.py` | `REPOS`, so it may be a slice |
@@ -261,7 +261,8 @@ Nothing here is done until each of these has actually been observed, not assumed
 - [ ] `make check` is green: `check-docs.py`, the hook probe, every change validating, and
       each product repo's own lint and typecheck.
 - [ ] One deliberately small cross-repo change has been driven end to end through `/ship`,
-      reaching `verified` with assertions from its own suite, and `/realign` afterwards.
+      reaching `verified-local` with assertions from its own suite — `verified` once a
+      `/dev-push` on its PR is green — and `/realign` afterwards.
 - [ ] `contracts/` cannot be edited from a product repo, and the control session cannot
       write into a submodule — `./scripts/test-hooks.py` proves the second in both
       directions.

@@ -268,13 +268,18 @@ LOOP_CALLS = {
     "vendor-contracts.sh": ("fanout.sh",),
     "slice-result.py": ("fanout.sh",),
     "harvest-contract.py": ("verify.sh",),
-    "smoke.py": ("verify.sh",),
+    "smoke.py": ("verify.sh", "verify-remote.sh"),
     "service-owner.sh": ("verify.sh",),
-    "infra-outputs.py": ("verify.sh",),
-    "infra-crosscheck.py": ("verify.sh",),
-    "publish.sh": ("verify.sh",),
+    # The remote half, since docs/adr/0018. A caller with a `/` is repo-relative: the loop
+    # that runs these is a workflow, and a workflow that stopped calling the oracle would
+    # still post a comment.
+    "infra-outputs.py": ("verify-remote.sh",),
+    "infra-crosscheck.py": ("verify-remote.sh",),
+    "publish.sh": ("verify-remote.sh",),
+    "verify-remote.sh": (".github/workflows/dev-push.yml",),
+    "deploy-set.py": (".github/workflows/dev-push.yml",),
     "stack.sh": ("verify.sh",),
-    "dev-env.sh": ("verify.sh", "stack.sh"),
+    "dev-env.sh": ("verify.sh", "stack.sh", "verify-remote.sh"),
 }
 
 
@@ -285,12 +290,12 @@ def check_loop_calls() -> None:
             continue
         found = []
         for caller in callers:
-            path = os.path.join(ROOT, "scripts", caller)
+            path = os.path.join(ROOT, caller if "/" in caller else os.path.join("scripts", caller))
             try:
                 if script in open(path, errors="replace").read():
                     found.append(caller)
             except OSError:
-                fail("loop-calls", f"LOOP_CALLS names scripts/{caller} as a caller of "
+                fail("loop-calls", f"LOOP_CALLS names {caller} as a caller of "
                                    f"{script}, and it does not exist")
         if not found:
             fail("loop-calls",
@@ -504,6 +509,36 @@ def check_status_headings() -> None:
                  f"spells it differently makes STATUS.md unreadable across changes.")
 
 
+# --- PR commands are a second namespace, held to the workflow that parses them ---------
+# `/dev-push` is a pull-request comment read by .github/workflows/dev-push.yml, not a file in
+# .claude/commands/. check_commands and check_gate_messages would report every mention as a
+# missing command — and an allowlist typed here would drift from the grammar the workflow
+# actually accepts, which is the one thing a reader of `/dev-push-eval` needs to be true.
+# So the accepted set is READ from the workflow's own regex.
+DEV_PUSH_WORKFLOW = os.path.join(ROOT, ".github", "workflows", "dev-push.yml")
+
+
+def pr_commands() -> set[str]:
+    try:
+        text = open(DEV_PUSH_WORKFLOW).read()
+    except OSError:
+        return set()
+    m = re.search(r"re='\^/(dev-push)\(-\(([a-z|-]+)\)\)\?", text)
+    if not m:
+        return set()
+    return {m.group(1)} | {f"{m.group(1)}-{v}" for v in m.group(2).split("|")}
+
+
+def check_pr_commands() -> None:
+    if not os.path.exists(DEV_PUSH_WORKFLOW):
+        return
+    if not pr_commands():
+        fail("pr-commands",
+             ".github/workflows/dev-push.yml has no `re='^/dev-push(-(a|b))?...'` grammar "
+             "this check can read. Prose naming /dev-push is held to that line; without it "
+             "every mention is unverifiable.")
+
+
 def check_gate_messages() -> None:
     """A gate's failure message is the prose an agent reads under the most pressure.
 
@@ -524,6 +559,7 @@ def check_gate_messages() -> None:
     """
     have_cmd = {os.path.basename(p)[:-3]
                 for p in glob.glob(os.path.join(ROOT, ".claude", "commands", "*.md"))}
+    have_cmd |= pr_commands()
     have_skill = {os.path.basename(p)
                   for p in glob.glob(os.path.join(ROOT, ".claude", "skills", "*"))}
     named_skill = re.compile(r"\bthe ([a-z][a-z0-9]*(?:-[a-z0-9]+)+) skill\b")
@@ -667,6 +703,7 @@ def check_commands() -> None:
     cmd_dir = os.path.join(ROOT, ".claude", "commands")
     have = {os.path.basename(p)[:-3]
             for p in glob.glob(os.path.join(cmd_dir, "*.md"))}
+    pr = pr_commands()
 
     routing = ""
     for name in ("CLAUDE.md", "README.md"):
@@ -679,7 +716,7 @@ def check_commands() -> None:
         text = open(path).read()
         for n, line in enumerate(text.splitlines(), 1):
             for named in re.findall(r"`/([a-z][a-z0-9-]*)`", line):
-                if named in have:
+                if named in have or named in pr:
                     continue
                 # `/api` is a URL prefix, not a command. A token this file also uses as a
                 # path segment is a path; a slash command never appears as `/ship/`.
@@ -1283,6 +1320,88 @@ def check_dev_env_inline_comments() -> None:
                  f"comment. Put it on its own line above.")
 
 
+
+# --- the deploy workflows, held to the scripts that feed them -------------------------
+# docs/adr/0018. Three defects this design makes easy, each silent until a real deploy:
+#
+# [environments] GitHub Free has no Environments for private repos. A job that names one
+#   gets it created empty, and every secret it reads resolves to "" — a deploy that fails
+#   at runtime, or worse, a guard that compares against nothing. And a workflow that
+#   passes an ENV the allowlist does not hold is a deploy target nobody reviewed.
+# [workflow-secrets] every secret and variable a workflow reads must be one a hand tool
+#   writes. A name nobody sets is an empty string at runtime, and the expiry gate reading
+#   an empty DEV_AWS_CREDENTIALS_EXPIRE_AT is precisely the refusal that must never pass.
+# [release-main-only] the one rule prod must already have on the day it arrives.
+WORKFLOW_WRITERS = ("scripts/push-gh-creds.sh", "scripts/gh-setup.sh")
+
+
+def _workflows() -> dict[str, str]:
+    out = {}
+    for p in sorted(glob.glob(os.path.join(ROOT, ".github", "workflows", "*.yml"))):
+        out[rel(p)] = open(p).read()
+    return out
+
+
+def _environments() -> set[str]:
+    src = open(os.path.join(ROOT, "scripts", "manifest.py")).read()
+    m = re.search(r"^ENVIRONMENTS = \((.*?)\)", src, re.M)
+    return set(re.findall(r'"([a-z0-9-]+)"', m.group(1) if m else ""))
+
+
+def check_environments() -> None:
+    envs = _environments()
+    if "prod" in envs:
+        fail("environments", "scripts/manifest.py ENVIRONMENTS holds prod. prod is released "
+                             "by release-prod.yml from main, never by the dev loop — "
+                             "docs/adr/0018.")
+    for path, text in _workflows().items():
+        if re.search(r"^\s+environment:", text, re.M):
+            fail("environments",
+                 f"{path} names a GitHub Environment. These repos are private on GitHub "
+                 f"Free, which has none: the job would read every secret as empty. Use the "
+                 f"DEV_-prefixed repository secrets — docs/adr/0018 §6.")
+        for env in set(re.findall(r"(?:\bENV=|--env )([a-z0-9-]+)", text)):
+            if env not in envs:
+                fail("environments",
+                     f"{path} deploys to ENV={env}, which scripts/manifest.py ENVIRONMENTS "
+                     f"does not allow ({', '.join(sorted(envs))}). Adding one is a reviewed "
+                     f"commit there first.")
+
+
+def check_workflow_secrets() -> None:
+    written: set[str] = {"GITHUB_TOKEN"}
+    for w in WORKFLOW_WRITERS:
+        try:
+            src = open(os.path.join(ROOT, w)).read()
+        except OSError:
+            fail("workflow-secrets", f"{w} is missing; it writes what the workflows read")
+            continue
+        written |= set(re.findall(r'"(DEV_AWS_[A-Z_]+)"', src))
+        written |= set(re.findall(r"\b(DEV_AWS_[A-Z_]+)\b", src))
+        m = re.search(r'^REPOS="([^"]*)"', src, re.M)
+        if m and "DEPLOY_KEY_" in src:
+            written |= {"DEPLOY_KEY_" + r.upper().replace("-", "_") for r in m.group(1).split()}
+    for path, text in _workflows().items():
+        for kind, name in re.findall(r"\$\{\{\s*(secrets|vars)\.([A-Za-z0-9_]+)", text):
+            if name not in written:
+                fail("workflow-secrets",
+                     f"{path} reads {kind}.{name}, and neither {' nor '.join(WORKFLOW_WRITERS)} "
+                     f"writes it. At runtime it is an empty string — set it in one of those "
+                     f"scripts, or stop reading it.")
+
+
+def check_release_main_only() -> None:
+    path = os.path.join(ROOT, ".github", "workflows", "release-prod.yml")
+    try:
+        text = open(path).read()
+    except OSError:
+        fail("release-main-only", ".github/workflows/release-prod.yml is missing. It is "
+                                  "where prod's main-only rule lives — docs/adr/0018 §1.")
+        return
+    if not re.search(r"github\.ref\s*!=\s*'refs/heads/main'", text):
+        fail("release-main-only", "release-prod.yml does not refuse a ref other than "
+                                  "refs/heads/main. That guard is the whole of its job.")
+
 def main() -> int:
     ap = argparse.ArgumentParser()
     ap.add_argument("--warnings-are-errors", action="store_true")
@@ -1297,7 +1416,8 @@ def main() -> int:
               check_lane_vocabulary, check_status_headings, check_retro_ledger,
               check_image_tags, check_dev_env_duplicates,
               check_provider_credentials, check_dev_env_inline_comments,
-              report_readme_divergence)
+              check_pr_commands, check_environments, check_workflow_secrets,
+              check_release_main_only, report_readme_divergence)
     for fn in checks:
         try:
             fn()
