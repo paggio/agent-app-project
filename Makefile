@@ -170,7 +170,7 @@ gh-setup: ## One-time: deploy keys, reusable-workflow access, the deployer role 
 	@./scripts/gh-setup.sh $(if $(ROLE_ARN),--role-arn $(ROLE_ARN),)
 
 dev-bootstrap: ## One-time: state bucket, registries, deployer role, budget (local apply)
-	@./scripts/with-aws.sh $(MAKE) -C infra bootstrap ENV=dev
+	@./scripts/with-aws.sh ./scripts/infra.sh bootstrap ENV=dev
 
 dev-push: ## Deploy a change's PR to dev and wait for the verdict: make dev-push CHANGE=0007-x
 	@test -n "$(CHANGE)" || { echo "usage: make dev-push CHANGE=<change-dir> [ONLY=backend]"; exit 2; }
@@ -185,7 +185,7 @@ dev-down: ## Take dev to zero and prove nothing billable is left; VIA=ci runs it
 dev-status: ## The last deploys and teardowns, and what dev runs now
 	@gh run list -R Paggio/agent-app-project --workflow dev-push.yml --limit 5
 	@gh run list -R Paggio/agent-app-project --workflow dev-down.yml --limit 3
-	@./scripts/with-aws.sh $(MAKE) -s -C infra outputs ENV=dev 2>/dev/null \
+	@./scripts/with-aws.sh ./scripts/infra.sh outputs ENV=dev 2>/dev/null \
 		|| echo "  (no outputs: dev is down, infra is not checked out, or the session expired)"
 
 # ── across the repos ─────────────────────────────────────────────────────────────────

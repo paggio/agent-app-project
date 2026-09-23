@@ -129,7 +129,7 @@ def main() -> int:
     trig.add_argument("--lock", action="store_true")
     ap.add_argument("--ref", default="HEAD", help="the control-repo commit under test")
     ap.add_argument("--only", choices=REPOS)
-    ap.add_argument("--current", help="`make -C infra outputs` of what dev runs now")
+    ap.add_argument("--current", help="`infra/bin/infra outputs` of what dev runs now")
     ap.add_argument("--json", dest="json_out")
     ap.add_argument("--markdown", dest="md_out")
     args = ap.parse_args()

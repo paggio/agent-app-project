@@ -6,9 +6,9 @@
 #
 #     --change C         assert the baseline AND changes/C's suite. Without it, the
 #                        baseline only — the `--lock` redeploy /realign runs.
-#     --previous FILE    `make -C infra outputs` from before the deploy, recorded as what
+#     --previous FILE    `infra/bin/infra outputs` from before the deploy, recorded as what
 #                        this run replaced
-#     --allow-destroy    proceed when `make -C infra plan` reports a destroy or replace
+#     --allow-destroy    proceed when `infra/bin/infra plan` reports a destroy or replace
 #     --run-dir DIR      where to write logs and json (default: runs/remote-<ts>)
 #     --dry-run          preflight only, then print the stages; touches no cloud
 #
@@ -229,10 +229,10 @@ for r, e in json.load(open(sys.argv[1]))['repos'].items():
     if e.get('source') == 'built' and (e.get('images') or r == 'infra'):
         print(r, e['sha'])" "$SET")
 
-for t in plan deploy outputs; do
-  make -C infra -n "$t" ENV="$ENV_NAME" >/dev/null 2>&1 \
-    || fail_stage "preflight: infra declares no '$t' target — see docs/infra-interface.md" "infra"
-done
+# The entry point whose exit codes are the interface. Missing means infra predates it —
+# this harness's call, not the slice's: nothing dispatched here could have added it.
+[ -x infra/bin/infra ] \
+  || fail_stage "preflight: infra/bin/infra is missing — infra predates the entry point docs/infra-interface.md names" "" harness
 record_stage preflight pass
 
 if [ "$DRY" = "1" ]; then
@@ -257,7 +257,7 @@ record_stage publish pass
 stage "infra: plan"
 refresh_aws
 set +e
-make -C infra plan ENV="$ENV_NAME" "${IMAGE_ARGS[@]}" 2>&1 | tee "$RUN_DIR/infra-plan.txt"
+./scripts/infra.sh plan ENV="$ENV_NAME" "${IMAGE_ARGS[@]}" 2>&1 | tee "$RUN_DIR/infra-plan.txt"
 PLAN_RC=${PIPESTATUS[0]}
 set -e
 case "$PLAN_RC" in
@@ -278,12 +278,12 @@ stage "infra: deploy"
 refresh_aws
 # The interface promises this returns only once the new revision is serving, or the suite
 # races the rollout and the failure lands on whichever step ran first.
-make -C infra deploy ENV="$ENV_NAME" "${IMAGE_ARGS[@]}" 2>&1 | tee "$RUN_DIR/infra-deploy.log" \
+./scripts/infra.sh deploy ENV="$ENV_NAME" "${IMAGE_ARGS[@]}" 2>&1 | tee "$RUN_DIR/infra-deploy.log" \
   || fail_stage "infra: deploy failed" "infra"
 record_stage deploy pass
 
 refresh_aws
-make -s -C infra outputs ENV="$ENV_NAME" > "$RUN_DIR/infra-outputs.json" 2>"$RUN_DIR/infra-outputs.err" || {
+./scripts/infra.sh outputs ENV="$ENV_NAME" > "$RUN_DIR/infra-outputs.json" 2>"$RUN_DIR/infra-outputs.err" || {
   note "$(head -5 "$RUN_DIR/infra-outputs.err" 2>/dev/null || true)"
   fail_stage "infra: outputs target failed" "infra"; }
 
@@ -364,7 +364,7 @@ esac
 # this run did not deploy. Re-read what runs and cross-check it again.
 stage "remote: still running the deploy set"
 refresh_aws
-make -s -C infra outputs ENV="$ENV_NAME" > "$RUN_DIR/infra-outputs-after.json" 2>/dev/null \
+./scripts/infra.sh outputs ENV="$ENV_NAME" > "$RUN_DIR/infra-outputs-after.json" 2>/dev/null \
   && ./scripts/infra-crosscheck.py --outputs "$RUN_DIR/infra-outputs-after.json" \
        --contract contracts/openapi.yaml --strip-prefix "$INFRA_API_PATH_PREFIX" \
        --deploy-set "$SET" >/dev/null \

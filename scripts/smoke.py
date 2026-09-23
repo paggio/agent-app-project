@@ -276,7 +276,7 @@ def lint_steps(steps: list[dict[str, Any]]) -> list[str]:
         # exit 2 partway through a suite, which read as "assertions failed" with no owner.
         blob = json.dumps({k: v for k, v in step.items() if k != "_suite"}, default=str)
         for name in VAR.findall(blob):
-            # INFRA_* are produced by `make -C infra outputs` and exported by verify.sh
+            # INFRA_* are produced by `infra/bin/infra outputs` and exported by verify.sh
             # only after the outputs pass their contract check, so they cannot be
             # resolved at lint time and must not be reported as undeclared.
             if name.startswith("INFRA_"):

@@ -1402,6 +1402,38 @@ def check_release_main_only() -> None:
         fail("release-main-only", "release-prod.yml does not refuse a ref other than "
                                   "refs/heads/main. That guard is the whole of its job.")
 
+
+# --- infra-invocation: make collapses the interface's exit codes ---------------------
+# GNU make exits 2 for any failing recipe. /dev-push run 35880296151 refused a first
+# deploy because `make outputs` turned "no state for dev" (1) into 2, and `plan`'s 3
+# (destroys) could never have arrived either. Machine callers go through
+# scripts/infra.sh -> infra/bin/infra, whose exit code IS the interface.
+INFRA_MACHINE_TARGETS = ("plan", "deploy", "outputs", "registries", "destroy", "leftovers")
+
+
+def check_infra_invocation() -> None:
+    pat = re.compile(r"\bmake\b[^\n|;&`]*-C\s+infra\b[^\n|;&`]*\b("
+                     + "|".join(INFRA_MACHINE_TARGETS) + r")\b")
+    files = sorted(glob.glob(os.path.join(ROOT, "scripts", "*"))
+                   + glob.glob(os.path.join(ROOT, ".github", "workflows", "*.yml")))
+    for path in files:
+        if not os.path.isfile(path):
+            continue
+        rel = os.path.relpath(path, ROOT)
+        for n, line in enumerate(open(path, errors="replace"), 1):
+            stripped = line.lstrip()
+            # Comments and quoted prose may NAME the old invocation; only code runs it.
+            if stripped.startswith("#") or '"' in line or "'" in line:
+                continue
+            m = pat.search(line)
+            if m:
+                fail("infra-invocation",
+                     f"{rel}:{n} runs `make -C infra {m.group(1)}`. make exits 2 for any "
+                     f"failing recipe, so the interface's codes never arrive; call "
+                     f"./scripts/infra.sh {m.group(1)} ... (infra/bin/infra). "
+                     f"docs/infra-interface.md.")
+
+
 def main() -> int:
     ap = argparse.ArgumentParser()
     ap.add_argument("--warnings-are-errors", action="store_true")
@@ -1417,7 +1449,8 @@ def main() -> int:
               check_image_tags, check_dev_env_duplicates,
               check_provider_credentials, check_dev_env_inline_comments,
               check_pr_commands, check_environments, check_workflow_secrets,
-              check_release_main_only, report_readme_divergence)
+              check_release_main_only, check_infra_invocation,
+              report_readme_divergence)
     for fn in checks:
         try:
             fn()

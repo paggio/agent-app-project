@@ -69,9 +69,9 @@ jobs:
           version: v4.2.0
       - uses: azure/setup-kubectl@v4
         with:
-          version: v1.34.1
+          version: v1.36.0
 
       - name: Destroy
-        run: make -C infra destroy ENV=dev CONFIRM=dev
+        run: ./scripts/infra.sh destroy ENV=dev CONFIRM=dev
       - name: Nothing billable is left
-        run: make -C infra leftovers ENV=dev
+        run: ./scripts/infra.sh leftovers ENV=dev
