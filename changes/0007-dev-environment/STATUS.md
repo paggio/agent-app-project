@@ -26,7 +26,7 @@ agent-app-project, then `/realign`, which pins and redeploys `dev` from the lock
 ### Remote — `verified`
 
 - dev-push run 35900953903 on the final heads: **58 passed, 0 failed, 8 of 8 from
-  `smoke.yaml`**, through `https://d3560p6j05etw0.cloudfront.net`. Evidence:
+  `smoke.yaml`**, through `https://d38ei0kc8u02rn.cloudfront.net` (a fresh distribution after the rebuild; run 35895167466 used d3560p6j05etw0). Evidence:
   `runs/dev-push-35900953903/`. The first green run (35895167466) was on infra `cd2527c`.
 - Deploy set: chatbot-backend `7bf1af6` (gitlink), frontend `e7a092a`, infra `0742451`.
 
