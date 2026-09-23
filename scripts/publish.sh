@@ -4,12 +4,12 @@
 #   ./scripts/publish.sh --deploy-set deploy-set.json --env dev \
 #       [--outputs infra-outputs.json] [--json published.json] [--dry-run]
 #
-# WHY THIS LIVES HERE. `make -C infra deploy` cannot build the app: that repo has no
+# WHY THIS LIVES HERE. `infra/bin/infra deploy` cannot build the app: that repo has no
 # access to application source and must not have any. The control repo is the only place
 # that can see every repo at the SHAs scripts/deploy-set.py resolved, so it is the only
 # place that can tag an image with the commit that was asserted. docs/adr/0018 §5.
 #
-# The registries are `make -C infra registries` (`*_image_repository`), created by a
+# The registries are `infra/bin/infra registries` (`*_image_repository`), created by a
 # one-time `make -C infra bootstrap` — "where images live" is a fact about the environment, not a
 # constant here. Tags are immutable in ECR, so a tag that already exists is the image
 # that commit built and is not rebuilt: a re-run of /dev-push costs an apply, not a build.
@@ -49,14 +49,14 @@ head_of() {
   fi
 }
 
-# The registries come from `make -C infra registries`, which reads the BOOTSTRAP state.
+# The registries come from `infra/bin/infra registries`, which reads the BOOTSTRAP state.
 # They used to come from `outputs`, which exits 1 until envs/<env> has state — true after
 # bootstrap and again after every `dev-down` — so the first /dev-push could never publish
 # and therefore never apply: bootstrap -> registries -> push -> plan -> apply is the only
 # order that terminates. --outputs is still accepted and only fills what registries lacks.
 REGISTRIES="$(mktemp)"
-if ! make -s -C infra registries ENV="$ENV_NAME" > "$REGISTRIES" 2>/dev/null || [ ! -s "$REGISTRIES" ]; then
-  say "\`make -C infra registries ENV=$ENV_NAME\` produced nothing."
+if ! ./scripts/infra.sh registries ENV="$ENV_NAME" > "$REGISTRIES" 2>/dev/null || [ ! -s "$REGISTRIES" ]; then
+  say "\`infra/bin/infra registries ENV=$ENV_NAME\` produced nothing."
   say "The environment must be bootstrapped before anything can be published to it:"
   say "  make -C infra bootstrap ENV=$ENV_NAME"
   exit 1

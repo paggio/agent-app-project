@@ -17,8 +17,8 @@ CONTROL="Paggio/agent-app-project"
 
 case "${1:-}" in
   "")
-    ./scripts/with-aws.sh make -C infra destroy ENV=dev CONFIRM=dev
-    ./scripts/with-aws.sh make -C infra leftovers ENV=dev
+    ./scripts/with-aws.sh ./scripts/infra.sh destroy ENV=dev CONFIRM=dev
+    ./scripts/with-aws.sh ./scripts/infra.sh leftovers ENV=dev
     echo "dev-down: dev is down and nothing billable is tagged for it" ;;
   --via)
     [ "${2:-}" = "ci" ] || { echo "usage: dev-down.sh [--via ci]" >&2; exit 2; }

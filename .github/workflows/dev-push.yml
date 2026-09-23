@@ -226,14 +226,14 @@ jobs:
       - name: What dev runs now
         run: |
           set +e
-          make -s -C infra outputs ENV=dev > evidence/previous-outputs.json 2> evidence/previous-outputs.err
+          ./scripts/infra.sh outputs ENV=dev > evidence/previous-outputs.json 2> evidence/previous-outputs.err
           rc=$?
           # Exit 1 is the interface's "no state for ENV" — a first deploy. Anything else is
           # a broken read, and treating it as "nothing deployed" would carry nothing.
           case "$rc" in
             0) ;;
             1) echo '{}' > evidence/previous-outputs.json ;;
-            *) cat evidence/previous-outputs.err; echo "::error::make outputs exited $rc"; exit 2 ;;
+            *) cat evidence/previous-outputs.err; echo "::error::infra outputs exited $rc"; exit 2 ;;
           esac
 
       - name: Resolve the deploy set

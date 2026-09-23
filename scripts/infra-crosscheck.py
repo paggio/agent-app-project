@@ -22,7 +22,7 @@ Two checks, both cheap, both closing a silent pass.
    the same prefix: what infra configured, what the contract declares, and what smoke.py
    strips before matching. Two of the three legs need no deploy at all.
 
-2. THE IMAGES. `make -C infra deploy` cannot build the app, so without this the remote
+2. THE IMAGES. `infra/bin/infra deploy` cannot build the app, so without this the remote
    pass asserts whatever image happened to be deployed while the local pass asserted the
    code under test. Under a repair loop that means attempt 2's fix is invisible remotely
    and the run could report `verified` for an environment running last week's backend.
