@@ -34,6 +34,9 @@ Four requirements, each because something breaks otherwise:
   An empty object is the input that produces a vacuous pass.
 - **`ENV` has no default.** Unset means exit 2 listing the valid environments. A default
   `ENV` is how prod gets applied by a typo.
+- **A failed `deploy` leaves its evidence before it rolls back**: `describe`, `logs
+  --previous` and events for every unready pod, into `$DEPLOY_EVIDENCE_DIR`. A rollback
+  deletes the pods, and with them the only record of why they died.
 - **`deploy` does not return 0 until the new revision is serving,** or the remote pass races
   the rollout and the failure lands on whichever step ran first — `terraform apply`, then
   `helm upgrade --install --atomic --wait`. This is the remote analogue of
