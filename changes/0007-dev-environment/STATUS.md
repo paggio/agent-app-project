@@ -19,4 +19,6 @@ agent-app-project, then `/realign`.
 ## Deploy verification
 
 <!-- iterate:begin -->
+- **verified-local** — 20260923T132833Z, 1 attempt(s)
+- report: `changes/0007-dev-environment/runs/20260923T132833Z/report.md`
 <!-- iterate:end -->
