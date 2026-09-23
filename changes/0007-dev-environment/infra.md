@@ -1,0 +1,228 @@
+# 0007 — infra slice
+
+`infra/` is an empty scaffold. This slice makes it the repo that owns the `dev`
+environment on AWS: Terraform for everything AWS, one Helm chart for everything in the
+cluster, and the Make interface the control repo drives. You cannot see the control repo;
+everything you need is here and in `contracts/` (vendored, read-only).
+
+Account `740172916922`, region `eu-west-1`. It is a **shared company sandbox**: other
+people's VPCs, roles and buckets live in it. Never import, modify or delete anything this
+repo did not create, and never manage the account's existing GitHub OIDC provider.
+
+## The interface you must satisfy
+
+The control repo knows only these Make targets. `ENV` has no default: unset → exit 2
+listing the valid environments (`dev` only). Logs go to **stderr**; only `outputs` writes
+stdout.
+
+| Target | Args | Contract |
+| --- | --- | --- |
+| `bootstrap` | `ENV`, `BUDGET_EMAIL` | one-time, local. Applies `bootstrap/`. Idempotent. |
+| `plan` | `ENV`, `BACKEND_IMAGE`, `FRONTEND_IMAGE`, `PROXY_IMAGE` | saves the plan to `.plans/<env>.tfplan`; exit 0 additive · **3 contains a destroy or replace** · 1 failed · 2 usage |
+| `deploy` | the same | applies the saved plan, then `helm upgrade --install --atomic --wait`; exit 0 **only once the new revision is serving** |
+| `outputs` | `ENV` | **one flat JSON object on stdout and nothing else**; exit 1 when `ENV` has no state (never `{}`) |
+| `destroy` | `ENV`, `CONFIRM=<env>` | `helm uninstall`, wait for PVC volumes to go, then `terraform destroy`. Refuses unless `CONFIRM == ENV`. |
+| `leftovers` | `ENV` | lists billable resources still tagged `Project=agentapp,Environment=<env>` (Resource Groups Tagging API, plus EBS volumes, ENIs, load balancers, EIPs, NAT gateways, log groups found by tag). exit 0 when none, 1 when any. |
+| `kubeconfig` | `ENV` | writes a kubeconfig for the cluster to stderr's advice / `$KUBECONFIG` |
+| `fmt` `validate` `lint` `test` | — | this repo's gates |
+
+`deployed_*_image` outputs come from **what the cluster is running** (`kubectl get deploy
+<name> -o jsonpath='{..image}'`), not from Terraform variables. A deploy that did not roll
+out must not be able to report the new tag.
+
+`contracts/infra-outputs.yaml` lists every output `outputs` must print, with its `kind`.
+Print all of them, no more.
+
+## Layout
+
+```
+bootstrap/          one-time: state bucket, ECR, deployer role, budget, cost export
+envs/dev/           the environment root module (backend key dev/terraform.tfstate)
+modules/network     VPC
+modules/cluster     EKS + node group + add-ons + access entries + pod identities
+modules/data        RDS, the documents bucket, secrets
+modules/edge        internal ALB + target group + CloudFront (VPC origin)
+charts/agentapp/    the Helm chart for everything in the cluster
+Makefile            the interface above
+.github/workflows/  static gates, and the /dev-push caller
+docs/architecture.md, docs/adr/, CLAUDE.md   filled in
+```
+
+Every `plan`/`apply`/`destroy` passes `-lock-timeout=20m`: deploys can arrive from more
+than one repo's workflow, and they must queue on the state lock rather than fail.
+
+Terraform `>= 1.11` (native S3 lock), AWS provider `~> 6`, `terraform-aws-modules/vpc`
+`~> 6`, `terraform-aws-modules/eks` `~> 21`. Pin chart and module versions.
+
+**Tags.** Provider `default_tags` in every root: `Project=agentapp`,
+`Environment=<env>`, `ManagedBy=terraform`, `Repository=infra` (`bootstrap` in
+`bootstrap/`). Resources created by Kubernetes controllers (EBS volumes, ENIs) must carry
+them too — set them in the EBS CSI StorageClass `tagSpecification`s and the LB controller's
+`defaultTags`. `leftovers` depends on it.
+
+## bootstrap/ — survives teardown, costs cents
+
+Local state first, then `-migrate-state` into the bucket it creates. `make bootstrap`
+does both.
+
+- **State bucket** `agentapp-tfstate-740172916922-eu-west-1`: versioned, SSE-S3, public
+  access blocked, TLS-only bucket policy, noncurrent versions expire after 90 days.
+  `use_lockfile = true`, no DynamoDB.
+- **ECR**: `agentapp/chatbot-backend`, `agentapp/frontend`, `agentapp/frontend-proxy`.
+  `IMMUTABLE` tags, scan on push, AES256, lifecycle keeps the 20 newest images.
+- **`agentapp-dev-deployer` role** (path `/agentapp/`), max session 1h. Trust: principals
+  in this account whose `aws:PrincipalArn` is `ArnLike`
+  `arn:aws:iam::740172916922:role/aws-reserved/sso.amazonaws.com/*/AWSReservedSSO_AdministratorAccess_*`.
+  Permissions scoped to what `envs/dev` and the chart need: EC2/VPC, EKS, RDS, S3 on
+  `agentapp-*` buckets, ECR on `agentapp/*`, Secrets Manager on `agentapp/*`, CloudFront,
+  ELBv2, CloudWatch Logs, KMS use, tagging read. IAM writes **only** on roles and
+  policies under path `/agentapp/`, and `iam:PassRole` only for those.
+  Least privilege is the goal; write the policy as a document you would defend in review.
+- **Budget** `agentapp-dev` — $100/month, actual 50/80/100% and forecast 100% alerts to
+  `BUDGET_EMAIL` (a variable, never committed). The account is a linked account and cannot
+  activate cost-allocation tags, so this budget is filtered by nothing better than the
+  services this stack uses; say so in its description.
+- **Cost export**: a CUR 2.0 Data Export (`aws_bcmdataexports_export`) with resource IDs,
+  daily, Parquet, into `agentapp-cost-740172916922-eu-west-1`; an Athena workgroup and a
+  saved query "agentapp dev cost by service and resource" that joins on the resource ids of
+  resources tagged `Project=agentapp`. `make cost` runs it and prints a table. Data lands
+  with ~24h delay; say so.
+- **Resource Group** `agentapp-dev` by tag query, and a **CloudWatch dashboard**
+  `agentapp-dev`: node CPU/memory, RDS CPU/connections/free storage, ALB requests/5xx/target
+  response time, CloudFront requests/error rate.
+
+## envs/dev
+
+**network.** VPC `10.42.0.0/16`, 2 AZs, public + private subnets, internet gateway (a VPC
+origin requires one), **one** NAT gateway, S3 gateway endpoint. Private subnets tagged for
+internal ELBs.
+
+**cluster.** EKS **1.36**, `authentication_mode = "API"`, public endpoint (GitHub-hosted
+runners must reach it; IAM auth only), private endpoint on, control-plane logging
+`api`,`audit`,`authenticator` with 7-day retention. Access entries with
+`AmazonEKSClusterAdminPolicy`: the deployer role, and the SSO AdministratorAccess role
+(resolve its exact ARN with a data source; do not hardcode the random suffix).
+One managed node group, **Spot**, types `t3a.large t3.large m5.large m6i.large`,
+min 2 / desired 2 / max 3, **single AZ** (EBS-backed StatefulSets are pinned to their
+volume's AZ), IMDSv2 required, gp3 root. Add-ons: VPC CNI (network policy enforcement
+**on**), CoreDNS, kube-proxy, EKS Pod Identity agent, EBS CSI driver, and the AWS Load
+Balancer Controller (Helm, via Pod Identity). **Not EKS Auto Mode**: its TargetGroupBinding
+deletes the target group it binds, which fights Terraform owning it.
+Pod Identity roles: `backend` (S3 on the documents bucket; `bedrock:InvokeModel*` on the
+`eu.anthropic.claude-haiku-4-5-20251001-v1:0` inference profile and its foundation models),
+`external-secrets` (read `agentapp/dev/*`), `aws-load-balancer-controller`, `ebs-csi`.
+
+**data.** RDS PostgreSQL 17, `db.t4g.micro`, single-AZ, 20 GB gp3, encrypted,
+`manage_master_user_password = true`, private subnets, SG from the node SG only,
+`skip_final_snapshot = true`, `deletion_protection = false`, backup retention 1 day —
+`dev` forgets its data on destroy, on purpose. Initial database `chatbot`. Documents bucket
+`agentapp-dev-documents-740172916922`: SSE-S3, public access blocked, `force_destroy = true`.
+Secrets Manager `agentapp/dev/signup-code` (random, 32 chars).
+
+**edge.** Terraform owns all of it, so `terraform destroy` removes all of it and no
+controller ever creates a load balancer:
+- internal ALB in the private subnets, HTTP :80 listener, idle timeout 300s; target group
+  `ip`, port 8080, health check `/healthz`; SG ingress only from the managed prefix list
+  `com.amazonaws.global.cloudfront.origin-facing`.
+- `aws_cloudfront_vpc_origin` → the ALB, `http-only`.
+- the distribution: default behaviour → the VPC origin, viewer `redirect-to-https`,
+  compress on. `/api/*` → CachingDisabled (`4135ea2d-6df8-44a3-9df3-4b5a84be39ad`) and
+  origin request policy **AllViewer** (`216adef6-5c7f-47e4-b989-5492eafa07d3`), all methods.
+  **AllViewer, not AllViewerExceptHostHeader**: the backend's CSRF guard compares `Origin`
+  with `Host`/`X-Forwarded-Host`, so the viewer's host must reach it or every POST from a
+  browser is refused. `/assets/*` → CachingOptimized. Default → CachingDisabled + AllViewer
+  (the shell is `no-cache`). A response headers policy adding HSTS (1 year),
+  `X-Content-Type-Options`, `Referrer-Policy`. PriceClass_100. Origin response timeout 60s.
+- the output `app_base_url` is `https://<distribution domain>`.
+
+Known sharp edges: a VPC origin cannot be updated in place while a distribution uses it
+(provider issue #40905) — design so it never needs to be; VPC-origin create/delete takes
+~15 min and its ENIs can hold the subnets; `destroy` must tolerate that with a bounded
+retry, not a failure.
+
+## charts/agentapp
+
+One chart, namespace `agentapp`. Values file per environment (`values-dev.yaml`); image
+references come from `--set` at deploy time, never committed.
+
+| Workload | Kind | Notes |
+| --- | --- | --- |
+| `backend` | Deployment, 2 replicas, HPA 2–4 on CPU | `chatbot-backend` image, port 8000, service `backend` |
+| `frontend` | Deployment, 2 replicas | port 8080, service `frontend` |
+| `proxy` | Deployment, 2 replicas | `frontend-proxy` image, port 8080, service `proxy`; `BACKEND_UPSTREAM=backend:8000`, `FRONTEND_UPSTREAM=frontend:8080`; a `TargetGroupBinding` (`elbv2.k8s.aws/v1beta1`, `targetType: ip`) onto the Terraform target group |
+| `opensearch` | StatefulSet, 1 | the same image and settings the backend's compose file uses (security plugin off, single-node); 10 GiB gp3 PVC; reachable only from `backend` |
+| `phoenix` | Deployment, 1 | `arizephoenix/phoenix:version-20.4.0`, DB `phoenix` on the RDS instance (a pre-install/pre-upgrade hook Job creates it idempotently); ClusterIP only — never behind the ALB |
+
+Backend environment — the complete set it reads (you cannot see its repo, so this is the
+list):
+
+| Variable | dev value |
+| --- | --- |
+| `APP_ENV` | `dev` |
+| `LOG_LEVEL` / `LOG_FORMAT` | `INFO` / `json` |
+| `CHAT_MODEL` | `bedrock` |
+| `BEDROCK_MODEL_ID` / `BEDROCK_MAX_TOKENS` | `eu.anthropic.claude-haiku-4-5-20251001-v1:0` / `1024` |
+| `AWS_REGION` | `eu-west-1` |
+| `DATABASE_URL` | from a Secret (below) |
+| `SIGNUP_CODE` | from a Secret — fails closed when empty |
+| `SESSION_COOKIE_SECURE` | `true` (the origin is https) |
+| `HISTORY_MAX_MESSAGES` | `20` |
+| `DOCUMENT_MAX_BYTES` | `10485760` — CloudFront, the ALB and Caddy must all accept this body size |
+| `OPENSEARCH_URL` | `http://opensearch:9200` |
+| `DOCUMENT_BUCKET` | the documents bucket |
+| `S3_REGION` | `eu-west-1` |
+| `S3_ENDPOINT_URL`, `S3_ACCESS_KEY_ID`, `S3_SECRET_ACCESS_KEY` | **unset** — with all three absent the backend uses the default chain, i.e. the pod identity |
+| `EMBEDDING_MODEL` / `RETRIEVAL_ROUTER` | `local` / `heuristic` |
+| `RETRIEVAL_LEXICAL_WEIGHT` / `RETRIEVAL_DENSE_WEIGHT` | `0.5` / `0.5` |
+| `OTEL_EXPORTER_OTLP_ENDPOINT` | `http://phoenix:6006` |
+| `PHOENIX_PROJECT_NAME` / `OTEL_SERVICE_NAME` | `chatbot-backend` / `chatbot-backend` |
+| `IMAGE_TAG` | the deployed image's tag (the 12-char SHA) |
+| `DEV_ACCOUNT_EMAIL` / `DEV_ACCOUNT_PASSWORD` | **unset** in dev |
+
+It applies its own migrations at startup and creates nothing else; `/healthz` is liveness
+and needs no dependency. No redis: the backend does not use it.
+
+OpenSearch, as the backend's local stack runs it: `opensearchproject/opensearch:2.19.1`,
+`discovery.type=single-node`, `DISABLE_SECURITY_PLUGIN=true`,
+`DISABLE_INSTALL_DEMO_CONFIG=true`, `OPENSEARCH_JAVA_OPTS=-Xms512m -Xmx512m`, data at
+`/usr/share/opensearch/data`, memlock and nofile 65536 limits (an init container sets
+`vm.max_map_count=262144`), ready when `/_cluster/health?wait_for_status=yellow` answers.
+The security plugin is off, so the NetworkPolicy is its only access control — keep it tight.
+
+Secrets: **External Secrets Operator** (installed by Terraform, Pod Identity) syncs
+`agentapp/dev/signup-code` and the RDS-managed master secret; the `DATABASE_URL`
+ExternalSecret templates `postgresql://{user}:{password}@{host}:5432/chatbot?sslmode=require`.
+No secret value is ever in a values file, a `--set`, or Terraform output.
+
+Every workload: `runAsNonRoot`, `readOnlyRootFilesystem` where the image allows (emptyDir
+for what it must write), all capabilities dropped, `seccompProfile: RuntimeDefault`,
+requests and limits, liveness and readiness probes, a PodDisruptionBudget where replicas >
+1. NetworkPolicies: default deny ingress in the namespace; allow ALB→proxy, proxy→frontend,
+proxy→backend, backend→opensearch, backend→phoenix. Size requests so the whole release
+fits in ~6 GiB.
+
+## Gates and CI in this repo
+
+`make lint` = `terraform fmt -check -recursive`, `tflint`, `trivy config` (or `checkov`)
+with no HIGH/CRITICAL unaddressed (a finding you accept gets an inline skip with a reason),
+`helm lint`, `helm template … | kubeconform -strict`. `make test` = the Make interface
+itself: `plan` without `ENV` exits 2; `outputs` for an environment with no state exits
+non-zero; `destroy` without `CONFIRM` refuses; `make -n plan|deploy|outputs ENV=dev` succeed.
+`make validate` = `terraform validate` in every root with `-backend=false`. None of these
+need AWS credentials. `.github/workflows/ci.yml` runs them on every PR.
+
+`.github/workflows/dev-push.yml`: a caller of the control repo's reusable workflow,
+`Paggio/agent-app-project/.github/workflows/dev-push.yml@main`, on `issue_comment`
+`/dev-push` or `/dev-push-infra`, passing `product_pr: infra@<pr head sha>` and
+`secrets: inherit`.
+
+## How this slice is verified
+
+Offline, by your own gates above. Then remotely, by the control repo's `/dev-push`: the
+steps with `owner: infra` in the change's `smoke.yaml` assert HTTPS, HSTS, a `Secure`
+session cookie, a browser-shaped POST accepted through CloudFront, and the backend
+reporting the deployed image tag and `bedrock`. You cannot run that pass; make it
+succeed first time by getting the details above right.
+
+Out of scope: prod, a custom domain, WAF, the eval as a Kubernetes Job, redis, managed
+OpenSearch. Say so in `docs/architecture.md`.
