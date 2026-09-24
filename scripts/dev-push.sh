@@ -6,8 +6,9 @@
 #
 # A change: comments `/dev-push[-<repo>]` on the change's control PR, so the run a lane
 # starts is the run a reviewer sees in the PR. `--lock`: dispatches the workflow on a ref
-# with lock semantics — every repo at that ref's gitlinks — which is what /realign runs on
-# its own branch, and what `make dev-up` runs on main. docs/adr/0018 §3, §11.
+# with lock semantics — every repo at that ref's gitlinks — which is what `make dev-up` runs
+# on main. A realign PR gets the same from a `/dev-push` comment, which only the user
+# posts. docs/adr/0018 §3, §11.
 #
 # The evidence lands in changes/<change>/runs/dev-push-<run id>/ (or runs/ for --lock):
 # deploy-set.json, verify-remote.json, the logs.
@@ -28,7 +29,7 @@ while [ $# -gt 0 ]; do
     --ref) REF="$2"; shift ;;
     --allow-destroy) ALLOW=" --allow-destroy" ;;
     --no-wait) WAIT=0 ;;
-    -h|--help) sed -n '2,17p' "${BASH_SOURCE[0]}"; exit 0 ;;
+    -h|--help) sed -n '2,18p' "${BASH_SOURCE[0]}"; exit 0 ;;
     -*) echo "dev-push: unknown option $1" >&2; exit 2 ;;
     *) CHANGE="$1" ;;
   esac

@@ -1,0 +1,217 @@
+# Run chatbot-eval against what `dev` runs and post the verdict on the PR. Deploys nothing.
+# docs/adr/0018 §13; scripts/eval-remote.sh is the oracle.
+#
+#   /dev-eval                    a PR comment — a control PR, or a product PR via workflow_call
+#   /dev-eval --judge heuristic  the deterministic judge; no Bedrock
+#
+# The harness runs from control `main`, never from the PR: an in-flight control branch
+# predates these scripts, and the PR's commits are read as data (deploy-set.py --ref).
+# The eval runs at the commit a deploy of this PR would build (feat/<change> when
+# chatbot-eval is a slice, else the gitlink), against whatever `dev` runs — the comment
+# says what that is, and warns when it is not this PR's deploy set.
+#
+# Same guard, credentials and concurrency as dev-push.yml: a comment by OWNER/MEMBER/
+# COLLABORATOR, DEV_AWS_* repository secrets, one job at a time on env-dev.
+name: dev-eval
+
+on:
+  issue_comment:
+    types: [created]
+  workflow_call:
+
+permissions:
+  contents: read
+  pull-requests: write
+  issues: write
+
+jobs:
+  dev-eval:
+    if: >-
+      github.event.issue.pull_request &&
+      startsWith(github.event.comment.body, '/dev-eval') &&
+      contains(fromJSON('["OWNER","MEMBER","COLLABORATOR"]'), github.event.comment.author_association)
+    runs-on: ubuntu-latest
+    timeout-minutes: 45
+    # Not cancelled in progress, and serialised with deploys: an eval must not run while
+    # dev is being replaced underneath it.
+    concurrency:
+      group: env-dev
+      cancel-in-progress: false
+    env:
+      OWNER: Paggio
+      CONTROL: agent-app-project
+      GH_TOKEN: ${{ github.token }}
+    steps:
+      - name: Resolve the trigger
+        id: trigger
+        env:
+          BODY: ${{ github.event.comment.body }}
+          PR: ${{ github.event.issue.number }}
+          COMMENT_ID: ${{ github.event.comment.id }}
+          REPO: ${{ github.repository }}
+        run: |
+          set -euo pipefail
+          re='^/dev-eval( --judge (bedrock|heuristic))?[[:space:]]*$'
+          [[ "$BODY" =~ $re ]] || { echo "::error::not a /dev-eval command: $BODY"; exit 2; }
+          judge="${BASH_REMATCH[2]:-bedrock}"
+          gh api "repos/$REPO/issues/comments/$COMMENT_ID/reactions" -f content=eyes --silent || true
+          head_ref="$(gh pr view "$PR" -R "$REPO" --json headRefName --jq .headRefName)"
+          head_sha="$(gh pr view "$PR" -R "$REPO" --json headRefOid --jq .headRefOid)"
+          repo_name="${REPO#*/}"
+          if [ "$repo_name" = "$CONTROL" ]; then
+            ref="$head_sha"; product=""
+            case "$head_ref" in feat/*) mode=change; change="${head_ref#feat/}" ;; *) mode=lock; change="" ;; esac
+          else
+            ref=main; mode=product; change=""; product="$repo_name@$head_sha"
+          fi
+          {
+            echo "mode=$mode"; echo "change=$change"; echo "product=$product"; echo "ref=$ref"
+            echo "judge=$judge"; echo "pr=$PR"
+          } >> "$GITHUB_OUTPUT"
+          # What this run is for, before anything can refuse — scripts/dev-eval.sh finds its
+          # run by this, never by timing.
+          jq -n --arg mode "$mode" --arg change "$change" --arg product "$product" \
+            --arg pr "$PR" --arg repo "$REPO" --arg ref "$ref" --arg judge "$judge" \
+            '{mode:$mode, change:$change, product:$product, pr:$pr, repo:$repo, control_ref:$ref, judge:$judge}' \
+            > "$RUNNER_TEMP/trigger.json"
+
+      # main's harness; every branch (PR heads included) for deploy-set.py --ref.
+      - uses: actions/checkout@v4
+        with:
+          repository: ${{ env.OWNER }}/${{ env.CONTROL }}
+          ref: main
+          ssh-key: ${{ secrets.DEPLOY_KEY_AGENT_APP_PROJECT }}
+          persist-credentials: false
+          fetch-depth: 0
+          submodules: false
+
+      - name: The pushed session is still alive
+        env:
+          EXPIRES: ${{ secrets.DEV_AWS_CREDENTIALS_EXPIRE_AT }}
+          ROLE: ${{ vars.DEV_AWS_DEPLOYER_ROLE_ARN }}
+        run: ./scripts/ci-session.sh
+
+      - uses: aws-actions/configure-aws-credentials@v4
+        with:
+          aws-access-key-id: ${{ secrets.DEV_AWS_ACCESS_KEY_ID }}
+          aws-secret-access-key: ${{ secrets.DEV_AWS_SECRET_ACCESS_KEY }}
+          aws-session-token: ${{ secrets.DEV_AWS_SESSION_TOKEN }}
+          aws-region: ${{ vars.DEV_AWS_REGION }}
+          role-to-assume: ${{ vars.DEV_AWS_DEPLOYER_ROLE_ARN }}
+          role-chaining: true
+          role-duration-seconds: 3600
+          role-session-name: dev-eval-${{ github.run_id }}
+
+      - name: Deploy-key aliases for ls-remote
+        env:
+          K_BACKEND: ${{ secrets.DEPLOY_KEY_CHATBOT_BACKEND }}
+          K_EVAL: ${{ secrets.DEPLOY_KEY_CHATBOT_EVAL }}
+          K_FRONTEND: ${{ secrets.DEPLOY_KEY_FRONTEND }}
+          K_INFRA: ${{ secrets.DEPLOY_KEY_INFRA }}
+        run: ./scripts/ci-deploy-keys.sh
+
+      - uses: astral-sh/setup-uv@v5
+      - uses: hashicorp/setup-terraform@v3
+        with:
+          terraform_version: 1.14.8
+          terraform_wrapper: false
+      # `outputs` reads the deployed images from the cluster.
+      - uses: azure/setup-kubectl@v4
+        with:
+          version: v1.36.0
+
+      - name: What this PR would deploy, and what dev runs
+        id: set
+        env:
+          MODE: ${{ steps.trigger.outputs.mode }}
+          CHANGE: ${{ steps.trigger.outputs.change }}
+          PRODUCT: ${{ steps.trigger.outputs.product }}
+          REF: ${{ steps.trigger.outputs.ref }}
+        run: |
+          set -euo pipefail
+          mkdir -p evidence
+          case "$MODE" in
+            change) args=(--change "$CHANGE") ;;
+            product) args=(--product-pr "$PRODUCT") ;;
+            lock) args=(--lock) ;;
+          esac
+          ./scripts/deploy-set.py "${args[@]}" --ref "$REF" --json evidence/deploy-set.json >/dev/null
+          echo "eval_sha=$(jq -r '.repos["chatbot-eval"].sha' evidence/deploy-set.json)" >> "$GITHUB_OUTPUT"
+          uri="s3://agentapp-tfstate-$(aws sts get-caller-identity --query Account --output text)-$AWS_REGION/dev/deployed-set.json"
+          if aws s3 cp --quiet "$uri" evidence/deployed-set.json; then
+            echo "infra_sha=$(jq -er '.repos.infra.sha' evidence/deployed-set.json)" >> "$GITHUB_OUTPUT"
+          else
+            echo "::error::no $uri — nothing has been deployed to dev. Comment /dev-push first."
+            exit 2
+          fi
+
+      # The infra commit that deployed dev reads its state; main's may not (dev-down.yml).
+      - uses: actions/checkout@v4
+        with:
+          repository: ${{ env.OWNER }}/infra
+          ref: ${{ steps.set.outputs.infra_sha }}
+          ssh-key: ${{ secrets.DEPLOY_KEY_INFRA }}
+          path: infra
+      - uses: actions/checkout@v4
+        with:
+          repository: ${{ env.OWNER }}/chatbot-eval
+          ref: ${{ steps.set.outputs.eval_sha }}
+          ssh-key: ${{ secrets.DEPLOY_KEY_CHATBOT_EVAL }}
+          path: chatbot-eval
+
+      - name: The eval
+        id: eval
+        env:
+          EVAL_SHA: ${{ steps.set.outputs.eval_sha }}
+          JUDGE: ${{ steps.trigger.outputs.judge }}
+        run: |
+          set -uo pipefail
+          ./scripts/eval-remote.sh --eval-dir chatbot-eval --eval-sha "$EVAL_SHA" --judge "$JUDGE" \
+            --set evidence/deploy-set.json --deployed evidence/deployed-set.json --run-dir evidence/run
+          echo "rc=$?" >> "$GITHUB_OUTPUT"
+
+      - name: Record what this run was for
+        if: always()
+        run: mkdir -p evidence; cp "$RUNNER_TEMP/trigger.json" evidence/ 2>/dev/null || true
+
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: dev-eval-evidence
+          path: evidence/
+          retention-days: 30
+
+      - name: Report on the pull request
+        if: always()
+        env:
+          PR: ${{ steps.trigger.outputs.pr }}
+          REPO: ${{ github.repository }}
+          RUN_URL: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}
+        run: |
+          set -uo pipefail
+          er=evidence/run/eval-remote.json
+          {
+            if [ -f "$er" ]; then
+              jq -r '"### /dev-eval — **\(.outcome)**\n\n" +
+                     "chatbot-eval `\((.eval_sha // "?")[0:12])` · judge \(.judge) · backend \(.backend_base_url // "?")\n\n" +
+                     (if .reason then "Refused: \(.reason)\n\n" else "" end) +
+                     (if .experiment_url then "Experiment: \(.experiment_url)\n\n" else "" end) +
+                     (if .deployed_is_this_pr == false then "> **dev is not running this PR'"'"'s deploy set** — comment `/dev-push` first to evaluate this PR.\n\n" else "" end) +
+                     (if .deployed then "dev runs: " + ([.deployed | to_entries[] | "\(.key) `\((.value // "?")[0:12])`"] | join(" · ")) + "\n\n" else "" end)' "$er"
+              if [ -s evidence/run/eval.out ]; then
+                echo '```'; cat evidence/run/eval.out; echo '```'; echo
+              fi
+            else
+              echo "### /dev-eval — **refused before the eval began**"
+              echo
+            fi
+            echo "[run]($RUN_URL) · evidence artifact \`dev-eval-evidence\`"
+          } > evidence/comment.md
+          cat evidence/comment.md >> "$GITHUB_STEP_SUMMARY"
+          if [ -n "$PR" ]; then gh pr comment "$PR" -R "$REPO" --body-file evidence/comment.md || true; fi
+
+      - name: Verdict
+        if: always()
+        env:
+          RC: ${{ steps.eval.outputs.rc }}
+        run: exit "${RC:-2}"

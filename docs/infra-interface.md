@@ -83,6 +83,9 @@ can show is `/dev-push`'s, once `make dev-bootstrap` has run.
   a Secrets Manager ARN or an SSM parameter name the deployer role can read. Otherwise the
   register steps 403 and route a nonexistent bug to the backend, or the placeholder really
   is deployed and registration is open with a committed code.
+- `/dev-eval` (`scripts/eval-remote.sh`) reads `phoenix_base_url`, and the bearer key from
+  `phoenix_api_key_secret_ref` — a plain string, or a JSON secret with one string value —
+  with the deployer role. It registers `eval-<run>@auth.test` per run.
 - One run per environment: `concurrency: env-dev` within a repo, the state lock across
   repos, and a re-read of what `dev` runs after the suite. Terraform's lock alone stops
   state corruption, not two runs interleaving against one origin.

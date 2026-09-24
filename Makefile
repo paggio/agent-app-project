@@ -26,7 +26,7 @@ REPOS := chatbot-backend chatbot-eval frontend infra
 .DEFAULT_GOAL := help
 .PHONY: help up down restart ps logs rebuild config urls open health chat smoke verify iterate \
         e2e eval creds phoenix-durability repos lock prs check check-docs init clean \
-        login push-gh-creds gh-setup dev-bootstrap dev-push dev-up dev-down dev-status
+        login push-gh-creds gh-setup dev-bootstrap dev-push dev-eval dev-up dev-down dev-status
 
 help: ## Show this list
 	@echo "The full local stack — backend, datastores, frontend, proxy — on one origin."
@@ -176,6 +176,10 @@ dev-push: ## Deploy a change's PR to dev and wait for the verdict: make dev-push
 	@test -n "$(CHANGE)" || { echo "usage: make dev-push CHANGE=<change-dir> [ONLY=backend]"; exit 2; }
 	@./scripts/dev-push.sh $(CHANGE) $(if $(ONLY),--only $(ONLY),)
 
+dev-eval: ## Run the eval against what dev runs, from a change's PR: make dev-eval CHANGE=0007-x
+	@test -n "$(CHANGE)" || { echo "usage: make dev-eval CHANGE=<change-dir> [JUDGE=heuristic]"; exit 2; }
+	@./scripts/dev-eval.sh $(CHANGE) $(if $(JUDGE),--judge $(JUDGE),)
+
 dev-up: ## Bring dev up at main's lock (every repo at the pinned SHAs)
 	@./scripts/dev-push.sh --lock --ref main
 
@@ -235,7 +239,9 @@ check: ## This repo's gates, then each product repo's read-only ones
 	@echo "  every change validates"
 	@for r in $(REPOS); do \
 		echo "── $$r"; \
-		if [ -f $$r/Makefile ]; then $(MAKE) -C $$r lint typecheck || exit 1; \
+		if [ -f $$r/Makefile ]; then \
+			t=lint; grep -q '^typecheck:' $$r/Makefile && t='lint typecheck'; \
+			$(MAKE) -C $$r $$t || exit 1; \
 		else echo "  (no Makefile yet — nothing to gate)"; fi; \
 	done
 

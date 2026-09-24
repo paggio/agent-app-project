@@ -205,28 +205,26 @@ lane knows this, and nothing else ever says the change shipped.
 Then push it and open the pull request (`gh pr create`), and do not merge it. Say in the
 body what moved, what the harvest said and what you did about it, and what you promoted.
 
-## 5b — Deploy the pin, and assert it where it runs
+## 5b — Hand the deploy to the user
+
+Do **not** deploy. On the realign pull request, post exactly one comment:
 
 ```
-./scripts/dev-push.sh --lock --ref chore/realign-<change>
+gh pr comment <pr> --body "Deploy expected before merge: comment \`/dev-push\` here to deploy these gitlinks to \`dev\` and assert the baseline through CloudFront. Needs a live session: \`make login && make push-gh-creds\`."
 ```
 
-Every repo at this branch's gitlinks — the bump under review — deployed to `dev`, and the
-baseline asserted through the CloudFront origin. **This is not optional after a product
-merge.** A squash merge mints new SHAs, so the images a PR's `/dev-push` verified are never
-the merged ones, and until this runs nothing has asserted the merged code deployed
-together: "shipped" (`docs/adr/0002`) is this run, not the merge. Commenting `/dev-push` on
-the realign PR does the same thing.
-
-It needs a live session (`make login && make push-gh-creds`), and it brings `dev` up if it
-was down. Put the verdict and the run URL in the pull request body. Skip it only in the
-step-0 case where nothing product-side moved, and say so.
+Only the user comments `/dev-push`: it bills, and it replaces whatever `dev` runs. That run
+deploys every repo at this branch's gitlinks — the bump under review — and it is still
+**not optional after a product merge**. A squash merge mints new SHAs, so the images a PR's
+`/dev-push` verified are never the merged ones: "shipped" (`docs/adr/0002`) is that run, not
+the merge, and this pull request is not ready to merge until it is green. Skip the comment
+only in the step-0 case where nothing product-side moved, and say so.
 
 ## 6 — Report
 
 Say, in this order: which submodules moved and to what; whether the contract still matches
 what is served, and what you did about it if not; the baseline result with its assertion
-count, locally and against `dev` (5b), and whether `dev` is still up; what was promoted into the baseline; and anything you deliberately left alone.
+count locally, and that the `dev` deploy is **pending, triggered by you** (5b); what was promoted into the baseline; and anything you deliberately left alone.
 
 ## 7 — The retrospective
 

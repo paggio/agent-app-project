@@ -334,7 +334,9 @@ The whole life of a change that deploys:
 | `make login && make push-gh-creds` | you, once per working session | CI holds a session that dies with yours |
 | `/dev-push` on the control PR | the lane (phase 5b), or you | `verified`: the PR's exact commits ran together in AWS and both suites held through CloudFront |
 | merge, in `STATUS.md` order | a human | nothing yet — see below |
-| `/realign` | the lane | the merged commits, pinned, deployed from the lock and asserted there |
+| `/realign` | the lane | the merged commits, pinned in a PR that asks for its deploy |
+| `/dev-push` on the realign PR | you | the merged commits deployed together from the lock and asserted there — "shipped" |
+| `/dev-eval` on any PR, optional | you | `chatbot-eval` scored what `dev` runs; the experiment is in `dev`'s Phoenix |
 | `make dev-down` | you, when idle | nothing bills but bootstrap — `leftovers` says so |
 
 **Which commits a deploy builds.** Not the gitlinks: mid-change they name the last merged
@@ -359,9 +361,11 @@ repo and carries the others at what `dev` already runs; that is `deployed-partia
 - a squash merge mints new SHAs, so the images `/dev-push` verified are not the ones on
   `main`, and nothing has yet asserted the merged code deployed together;
 - `dev` is last-writer-wins, so after a PR's `/dev-push` it runs unmerged code. The lock is
-  what `dev` should run when no PR is under test, and `/realign` is what puts it back.
+  what `dev` should run when no PR is under test, and the realign PR's `/dev-push` is what
+  puts it back. `/realign` asks for that run in a PR comment and never starts it: it bills,
+  and it replaces what `dev` runs.
 
-A single-repo change is the same: its PR's `/dev-push` proves the PR, `/realign` proves `main`.
+A single-repo change is the same: its PR's `/dev-push` proves the PR, the realign PR's proves `main`.
 
 **The credentials, end to end.** `make login` is SSO, and rewrites the four credential lines
 of `stack/secrets.env`, expiry included. `make push-gh-creds` copies that session into
@@ -406,7 +410,7 @@ mistaking one for another causes nearly every submodule mistake in this layout:
 | the gitlink in the parent's `HEAD` | what the parent *records* | the last merged commit | the merged `main` |
 | what is checked out | what is *on disk* | the feature branch | the same merged `main` |
 | `repos.lock` | the human-readable duplicate | the same as the gitlink | the same merged `main` |
-| what `dev` runs | what is *deployed* | the last `/dev-push`'s deploy set | the lock, once `/realign` redeploys it |
+| what `dev` runs | what is *deployed* | the last `/dev-push`'s deploy set | the lock, once the realign PR's `/dev-push` runs |
 
 The gitlink and the lock move together, in one `/realign` commit, and a deploy refuses when
 they disagree. Only the last row is read off something other than git — the PR comment and

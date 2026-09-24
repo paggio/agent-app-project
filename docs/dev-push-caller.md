@@ -39,3 +39,9 @@ What it needs, all written by the control repo's hand tools, never by hand:
 A called workflow sees the caller's `github` context, so `github.repository` is how the
 control repo knows whose PR is under test. The author-association gate lives in the called
 file, so it cannot be dropped here by accident.
+
+## `/dev-eval`
+
+The same shape calls `dev-eval.yml` (`docs/adr/0018` §13): swap `dev-push` for `dev-eval` in
+the name, the `startsWith` and the `uses:` line. No caller exists yet; add one only in a
+repo whose PRs should be evaluated against `dev` — chatbot-eval's own, first.
