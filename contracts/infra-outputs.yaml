@@ -129,3 +129,23 @@ outputs:
     kind: secret_ref
     consumers: [backend]
     example: "agentapp/dev/signup-code"
+
+  phoenix_base_url:
+    description: >
+      The Phoenix UI and API of the environment, on its own HTTPS origin — never under
+      app_base_url, so the app's session cookie never reaches it. Phoenix authentication is
+      on: an unauthenticated API request is refused. The eval files its experiments here.
+    type: string
+    kind: value
+    consumers: [smoke, eval]
+    example: "https://d5678efgh.cloudfront.net"
+
+  phoenix_api_key_secret_ref:
+    description: >
+      The secret holding a bearer key Phoenix accepts, read as PHOENIX_API_KEY by what
+      writes to it: the deployed backend's trace exporter and a CI eval run. A name, never
+      a value.
+    type: string
+    kind: secret_ref
+    consumers: [backend, eval]
+    example: "arn:aws:secretsmanager:eu-west-1:000000000000:secret:agentapp/dev/phoenix-api-key"
