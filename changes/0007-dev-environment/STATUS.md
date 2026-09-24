@@ -7,6 +7,12 @@ eval against `dev` from a PR). Contract re-frozen at `bf2a6b8` (two additive out
 Infra slice only; frontend unchanged. The `/dev-eval` workflow and the `/realign` change
 (the deploy is the user's to trigger) are control-repo harness work, in their own PR.
 
+- Harness: [#30](https://github.com/paggio/agent-app-project/pull/30) merged (`/dev-eval`, `/realign` hands the deploy to the user). README: [#29](https://github.com/paggio/agent-app-project/pull/29), open.
+- Local: `runs/20260924T103206Z` — verified-local, 71/0. Infra `611df58`; frontend unchanged at `e7a092a`.
+- Remote: [dev-push 35988704468](https://github.com/Paggio/agent-app-project/actions/runs/35988704468) — **verified**, 60/0, 10 from this suite (criterion 9). App `https://dqmnl2n7vowos.cloudfront.net`, Phoenix `https://d2fbe2mr91k6re.cloudfront.net`.
+- `/dev-eval --judge heuristic` (criterion 10): [35989985453](https://github.com/paggio/agent-app-project/actions/runs/35989985453) breached — every turn 500 while Bedrock returned `ServiceUnavailableException` (10:56–11:05 UTC); [35991167434](https://github.com/paggio/agent-app-project/actions/runs/35991167434) **passed**, 18 examples, routing 1.000, recall 0.950.
+- Deferred: the Bedrock judge needs `make -C infra bootstrap ENV=dev` (deployer `bedrock:InvokeModel`); the backend answers an upstream model outage with a bare 500 — a chatbot-backend single-repo PR.
+
 ## Contract freeze
 
 - SHA: recorded in `change.yaml`
@@ -26,8 +32,8 @@ agent-app-project, then `/realign`, which pins and redeploys `dev` from the lock
 ## Deploy verification
 
 <!-- iterate:begin -->
-- **verified-local** — 20260923T132833Z, 1 attempt(s)
-- report: `changes/0007-dev-environment/runs/20260923T132833Z/report.md`
+- **verified-local** — 20260924T103206Z, 1 attempt(s)
+- report: `changes/0007-dev-environment/runs/20260924T103206Z/report.md`
 <!-- iterate:end -->
 
 ### Remote — `verified`
