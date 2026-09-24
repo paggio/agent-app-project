@@ -23,11 +23,11 @@ Infra slice only; frontend unchanged. The `/dev-eval` workflow and the `/realign
 | Repo | Branch | PR | CI | Merged |
 | --- | --- | --- | --- | --- |
 | frontend | `feat/0007-dev-environment` @ `e7a092a` | [frontend#8](https://github.com/paggio/frontend/pull/8) | ☑ | ☐ |
-| infra | `feat/0007-dev-environment` @ `0742451` | [infra#1](https://github.com/paggio/infra/pull/1) | ☑ | ☐ |
+| infra | `feat/0007-dev-environment` @ `611df58` | [infra#1](https://github.com/paggio/infra/pull/1) | ☑ | ☐ |
 | agent-app-project | `feat/0007-dev-environment` | [#24](https://github.com/paggio/agent-app-project/pull/24) | ☑ | ☐ |
 
 Merge order: frontend (the proxy image is backward compatible locally) → infra →
-agent-app-project, then `/realign`, which pins and redeploys `dev` from the lock.
+agent-app-project, then `/realign`, which pins and opens its PR; you comment `/dev-push` on it.
 
 ## Deploy verification
 
