@@ -1,120 +1,78 @@
 # agent-app-project
 
-Control repo for a multi-tier system developed primarily through AI coding agents. It holds
-the one thing that cannot live inside any single product repo: the interface between them.
+The control repo for four product repos, each a git submodule. It owns what no single repo
+can: the contracts between them, the cross-repo changes, and the proof they work together.
+`dev` is the one AWS environment: CI deploys PRs there, and it costs money while it is up.
 
-| Repo | Submodule path | Contents | Deploy cadence |
-| --- | --- | --- | --- |
-| [`agent-app-project`](https://github.com/Paggio/agent-app-project) | — | contracts, change briefs, cross-cutting docs, orchestration | n/a |
-| [`chatbot-backend`](https://github.com/Paggio/chatbot-backend) | `chatbot-backend/` | API service | per merge |
-| [`chatbot-eval`](https://github.com/Paggio/chatbot-eval) | `chatbot-eval/` | one-shot eval run: fixture corpus, question set, Phoenix experiments | on a schedule |
-| [`frontend`](https://github.com/Paggio/frontend) | `frontend/` | web client | per merge |
-| [`infra`](https://github.com/Paggio/infra) | `infra/` | IaC | reviewed, gated |
+## The paths
 
-## Clone
+```mermaid
+flowchart TD
+    start([A piece of work]) --> q{Touches more than one repo,<br/>or contracts/?}
+    q -- no --> one["Work inside that repo<br/>cd &lt;repo&gt; && claude"]
+    one --> onemerge[Its own PR, its own CI]
+    onemerge -- CI: contract touched --> ship
+    onemerge -- merged --> realign
+    q -- yes --> ship["/ship<br/>what you want, the checks that prove it,<br/>the contract locked before anyone builds"]
+    ship --> loop["Local loop<br/>agents build each repo,<br/>smoke suite on the joined stack"]
+    loop --> prs[One PR per repo<br/>smoke suite green locally]
+    prs --> push["You comment /dev-push on the PR<br/>CI deploys to dev in AWS"]
+    prs --> ok
+    push --> ok{Smoke green on dev,<br/>and what you wanted?}
+    ok -- smoke fails --> correct["/ship-correct"] --> loop
+    ok -- not what I want --> iterate["/ship-iterate"] --> loop
+    ok -- yes --> merge[You merge, in dependency order]
+    merge --> realign["/realign<br/>record merged commits in repos.lock,<br/>re-check contract, regression suite, opens a PR"]
+    realign --> push2["You comment /dev-push on that PR<br/>the merged code, deployed together"]
+    push2 --> done([Shipped: deployed together,<br/>smoke passing])
+```
+
+Around every deploy:
+
+- **Before any `/dev-push`:** `make login && make push-gh-creds`. This hands CI your
+  short-lived AWS session. There are no long-lived keys in GitHub.
+- **While `dev` is up:** comment /dev-eval on any PR deployed to `dev` to run the eval
+  against it. Run `make dev-down` when you are done, to bring cost back to near zero.
+
+Merging is always your decision. The dependency order is recorded in the change's
+`STATUS.md`: the repo that is backward compatible on its own merges first. If `/realign`
+goes red, the failing check names the repo answerable. Fix it there, in a session inside
+that repo, then run `/realign` again.
+
+## The repos
+
+| Repo | Contents |
+| --- | --- |
+| [`chatbot-backend`](https://github.com/Paggio/chatbot-backend) | API service |
+| [`chatbot-eval`](https://github.com/Paggio/chatbot-eval) | eval runs: corpus, questions, Phoenix experiments |
+| [`frontend`](https://github.com/Paggio/frontend) | web client and edge proxy |
+| [`infra`](https://github.com/Paggio/infra) | Terraform and the Helm chart for `dev` on AWS |
 
 ```bash
 git clone --recurse-submodules git@github.com:Paggio/agent-app-project.git
-# or, after a plain clone:
-git submodule update --init --recursive
 ```
 
-## Where the work happens
+## The lanes
 
-**One repo.** Around 80% of the work, and it costs nothing: no orchestration, no fan-out,
-no contract pass. That repo's CI fails if the work turns out to touch contract surface,
-which is the signal to come back here.
+A lane is one slash command in `claude`, run from this repo. Run one lane per session.
+`<change>` is the change's directory under `changes/`, e.g. `0007-dev-environment`.
 
-```bash
-cd chatbot-backend   # or chatbot-eval, frontend, infra
-claude
-```
+| When | Run |
+| --- | --- |
+| One repo, no interface change | nothing here: `cd <repo> && claude` |
+| Two or more repos, or any contract change | `/ship "<what you want>"` |
+| PRs open, nothing merged, and the result is wrong | `/ship-correct <change>: <what is wrong>` |
+| PRs open, nothing merged, and you want something different | `/ship-iterate <change>: <what to change>` |
+| PRs have merged | `/realign` |
 
-**Anything spanning repos** — including any change to `contracts/` on its own.
+Each lane ends with a review of the tooling in this repo: its scripts, its commands and its
+agent rules. That review may open one PR fixing the tooling.
 
-```bash
-claude
-> /ship "authenticate the chat endpoint and point the UI at it"
-```
+## Where to read next
 
-One command, five phases: it writes the change artifact (`changes/NNNN-<slug>/` — brief,
-acceptance criteria as executable smoke steps, one slice file per repo), freezes the
-contract in a commit of its own, gates on `manifest.py --validate`, dispatches a session
-into each product repo and loops deploy-assert-repair until the criteria hold through one
-origin, then opens the pull requests. **That last loop is what "shipped" means** — the repos
-deployed together with the suite passing, not three PRs existing. See `docs/adr/0002`.
-
-Nothing is merged for you. Merging is a human decision, in dependency order.
-
-**Not what you asked for.** Either the loop never went green, or it did, the pull requests
-are open, and you have now looked at the thing. Same objection: something you wanted is not
-true of what was built.
-
-```bash
-> /ship-correct 0004-rag-knowledge-base: citations repeat when two chunks come from one document
-```
-
-You say what is wrong; the lane does the triage. It settles whether the criterion was
-missing or too weak to fail, writes the step that fails against what is already built, and
-routes it to the repo `verify.json` names answerable — then runs the loop against the
-branches that exist. **The objection has to become an assertion**, because a dislike that
-never becomes a criterion is one the next change silently re-breaks. See `docs/adr/0012`.
-
-**Changed your mind before it merged.** Same window, but the requirement itself is what you
-now want different.
-
-```bash
-> /ship-iterate 0004-rag-knowledge-base: also accept PDFs, and drop the summary column
-```
-
-Amends the brief, the criteria and the slice briefs in that order, re-freezes the contract
-if the interface moved, then runs the same loop against the branches that already exist —
-so the open pull requests update rather than multiply. It refuses once anything has merged,
-because at that point the criteria describe what is running and a new change is the honest
-record. See `docs/adr/0010`.
-
-**Before the merge, deployed.** A change that deploys is not shipped on a local pass:
-
-```bash
-make login && make push-gh-creds     # once per working session
-```
-
-then comment `/dev-push` on its control PR (`/ship` does it for you). CI deploys exactly
-the PR's commits to `dev` in AWS, asserts both suites through the CloudFront origin, and
-posts the verdict and the deploy set on the PR. `/dev-push-backend` rebuilds one repo.
-`make dev-down` takes `dev` to zero; `make dev-up` brings it back at the lock. See
-`docs/adr/0018` and `concept.md` § 5.5.
-
-**After the merge.**
-
-```bash
-> /realign
-```
-
-Bumps the submodules to their merged `main`, pins their SHAs in `repos.lock`, re-checks
-`contracts/` against what the services actually serve, re-runs the baseline suite, and
-promotes the assertions worth keeping forever into `smoke/baseline.yaml`, then redeploys
-`dev` from the new pin and asserts the baseline there. This is also the
-lane a single-repo deploy needs on its own — it is the only check that can fail on the seam.
-
-**Every lane ends by grading itself.** The last phase of `/ship`, `/ship-correct`,
-`/ship-iterate` and `/realign` dispatches the `harness-retro` agent: a separate session that
-audits the state the lane left behind — submodule pointers, the contract against what is
-served, the assertions and their count, whether anything actually reached a remote
-environment — and then grades the harness itself. Where the instructions misled, where a
-gate protected nothing, where the effort was out of proportion to the risk. If something
-clears its bar it opens one pull request here, on a `harness/` branch, for a human to merge.
-If nothing does, it says so and opens nothing. See `docs/adr/0009`.
-
-## Where things live
-
-- `concept.md` — the reasoning behind this layout, and the parts of it that are load-bearing.
-- `docs/adr/` — decisions and their accepted costs. Read before proposing a redesign.
+- `concept.md` — how the whole system works, and why. The reference.
+- `CLAUDE.md` — the rules an agent follows here.
+- `docs/adr/` — decisions and their costs. Read these before proposing a redesign.
 - `docs/infra-interface.md` — what this repo requires of `infra/`.
-- `docs/dev-push-caller.md` — the workflow a product repo carries so `/dev-push` works there.
-- `docs/init/` — how the repos were created from zero, and how a new one is attached.
-- `retros/` — what each lane's retrospective found, and the reason the next one does not
-  raise the same thing twice.
-- `CLAUDE.md` — additive agent context. Never load-bearing; every product repo is
-  self-describing in isolation.
-- `make help` — the hand tools for running and inspecting the joined system.
+- `docs/dev-push-caller.md` — how a product repo gets `/dev-push`.
+- `make help` — the tools for running and inspecting the joined stack.
