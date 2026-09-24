@@ -43,10 +43,10 @@ say "commented \`$BODY\` on $CONTROL#$PR"
 
 # Found by what trigger.json says the run was for, never by timing — as dev-push.sh does.
 OUT_ROOT="changes/$CHANGE/runs"
-DEADLINE=$(( $(date +%s) + 90 * 60 ))
+DEADLINE=$(( $(date +%s) + 150 * 60 ))
 SEEN=" "; RUN=""; OUT=""
 while [ -z "$RUN" ]; do
-  [ "$(date +%s)" -lt "$DEADLINE" ] || refuse "no dev-eval run for this trigger finished within 90 minutes"
+  [ "$(date +%s)" -lt "$DEADLINE" ] || refuse "no dev-eval run for this trigger finished within 150 minutes"
   CANDIDATES="$(gh run list -R "$CONTROL" --workflow dev-eval.yml --event issue_comment --limit 30 \
       --json databaseId,createdAt \
       --jq "[.[] | select(.createdAt >= \"$SINCE\")] | sort_by(.createdAt) | .[].databaseId")"
@@ -64,8 +64,8 @@ try:
     t = json.load(open(sys.argv[1]))
 except Exception:
     sys.exit(1)
-sys.exit(0 if t.get("change") == sys.argv[2] and t.get("pr") == sys.argv[3] else 1)' \
-      "$TMP_OUT/trigger.json" "$CHANGE" "$PR"
+sys.exit(0 if (t.get("change"), t.get("pr"), t.get("judge")) == tuple(sys.argv[2:5]) else 1)' \
+      "$TMP_OUT/trigger.json" "$CHANGE" "$PR" "${JUDGE:-bedrock}"
   then RUN="$NEXT"; OUT="$TMP_OUT"
   else rm -rf "$TMP_OUT"
   fi

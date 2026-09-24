@@ -10,8 +10,8 @@
 # chatbot-eval is a slice, else the gitlink), against whatever `dev` runs — the comment
 # says what that is, and warns when it is not this PR's deploy set.
 #
-# Same guard, credentials and concurrency as dev-push.yml: a comment by OWNER/MEMBER/
-# COLLABORATOR, DEV_AWS_* repository secrets, one job at a time on env-dev.
+# Same guard and credentials as dev-push.yml: a comment by OWNER/MEMBER/
+# COLLABORATOR, DEV_AWS_* repository secrets. One eval at a time (group dev-eval).
 name: dev-eval
 
 on:
@@ -32,10 +32,11 @@ jobs:
       contains(fromJSON('["OWNER","MEMBER","COLLABORATOR"]'), github.event.comment.author_association)
     runs-on: ubuntu-latest
     timeout-minutes: 45
-    # Not cancelled in progress, and serialised with deploys: an eval must not run while
-    # dev is being replaced underneath it.
+    # Its own group: sharing env-dev would let a queued eval cancel a queued deploy (a group
+    # holds one pending run). Not serialised with deploys, so eval-remote.sh re-reads what
+    # dev runs afterwards and refuses a verdict about a set that was replaced mid-run.
     concurrency:
-      group: env-dev
+      group: dev-eval
       cancel-in-progress: false
     env:
       OWNER: Paggio
@@ -136,14 +137,19 @@ jobs:
             lock) args=(--lock) ;;
           esac
           ./scripts/deploy-set.py "${args[@]}" --ref "$REF" --json evidence/deploy-set.json >/dev/null
-          echo "eval_sha=$(jq -r '.repos["chatbot-eval"].sha' evidence/deploy-set.json)" >> "$GITHUB_OUTPUT"
+          eval_sha="$(jq -er '.repos["chatbot-eval"].sha | select(test("^[0-9a-f]{40}$"))' evidence/deploy-set.json)" \
+            || { echo "::error::the deploy set names no chatbot-eval commit"; exit 2; }
+          echo "eval_sha=$eval_sha" >> "$GITHUB_OUTPUT"
           uri="s3://agentapp-tfstate-$(aws sts get-caller-identity --query Account --output text)-$AWS_REGION/dev/deployed-set.json"
-          if aws s3 cp --quiet "$uri" evidence/deployed-set.json; then
-            echo "infra_sha=$(jq -er '.repos.infra.sha' evidence/deployed-set.json)" >> "$GITHUB_OUTPUT"
-          else
-            echo "::error::no $uri — nothing has been deployed to dev. Comment /dev-push first."
+          echo "deployed_uri=$uri" >> "$GITHUB_OUTPUT"
+          if ! aws s3 ls "$uri" >/dev/null 2>&1; then
+            echo "::error::no $uri (or it is unreadable) — nothing has been deployed to dev. Comment /dev-push first."
             exit 2
           fi
+          aws s3 cp --quiet "$uri" evidence/deployed-set.json || { echo "::error::could not read $uri"; exit 2; }
+          infra_sha="$(jq -er '.repos.infra.sha | select(test("^[0-9a-f]{40}$"))' evidence/deployed-set.json)" \
+            || { echo "::error::$uri names no infra commit"; exit 2; }
+          echo "infra_sha=$infra_sha" >> "$GITHUB_OUTPUT"
 
       # The infra commit that deployed dev reads its state; main's may not (dev-down.yml).
       - uses: actions/checkout@v4
@@ -163,12 +169,16 @@ jobs:
         id: eval
         env:
           EVAL_SHA: ${{ steps.set.outputs.eval_sha }}
+          DEPLOYED_URI: ${{ steps.set.outputs.deployed_uri }}
           JUDGE: ${{ steps.trigger.outputs.judge }}
         run: |
           set -uo pipefail
+          # The default shell is bash -e: capture the code, or a breach reads as a refusal.
+          rc=0
           ./scripts/eval-remote.sh --eval-dir chatbot-eval --eval-sha "$EVAL_SHA" --judge "$JUDGE" \
-            --set evidence/deploy-set.json --deployed evidence/deployed-set.json --run-dir evidence/run
-          echo "rc=$?" >> "$GITHUB_OUTPUT"
+            --set evidence/deploy-set.json --deployed evidence/deployed-set.json \
+            --deployed-uri "$DEPLOYED_URI" --run-dir evidence/run || rc=$?
+          echo "rc=$rc" >> "$GITHUB_OUTPUT"
 
       - name: Record what this run was for
         if: always()

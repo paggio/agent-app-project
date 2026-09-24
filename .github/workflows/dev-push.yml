@@ -290,8 +290,9 @@ jobs:
           [ -n "$CHANGE" ] && extra+=(--change "$CHANGE")
           [ "$ALLOW" = "true" ] && extra+=(--allow-destroy)
           ./scripts/verify-remote.sh --deploy-set evidence/deploy-set.json --env dev \
-            --previous evidence/previous-outputs.json --run-dir evidence/run "${extra[@]}"
-          echo "rc=$?" >> "$GITHUB_OUTPUT"
+            --previous evidence/previous-outputs.json --run-dir evidence/run "${extra[@]}" || rc=$?
+          # The default shell is bash -e; without `|| rc=$?` a failed pass reads as a refusal.
+          echo "rc=${rc:-0}" >> "$GITHUB_OUTPUT"
 
       - name: Record what this run was for
         if: always()

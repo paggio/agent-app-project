@@ -102,7 +102,9 @@ no environment variables, no protection rules.
     tag-based Resource Group lists them.
 
 13. **`/dev-eval` on a PR runs `chatbot-eval` against what `dev` runs** (added 2026-09-24).
-    `dev-eval.yml`, same guard, credentials and `concurrency: env-dev` as `dev-push.yml`.
+    `dev-eval.yml`, same guard and credentials as `dev-push.yml`; its own concurrency group, since
+    sharing `env-dev` would let a queued eval cancel a queued deploy — it re-reads what `dev`
+    runs afterwards instead, and refuses if that changed.
     The eval commit is resolved like a deploy set (§4); the backend is whatever `dev`
     runs, read from `deployed-set.json` and named in the comment, with a warning when it is
     not this PR's. It runs on the runner, judged by Bedrock under the deployer role, and

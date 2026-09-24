@@ -8,6 +8,7 @@
 #     --eval-sha SHA     recorded as EVAL_IMAGE_TAG (12 chars) — the evaluator code is a factor
 #     --set FILE         this PR's resolved deploy set, compared with what dev runs
 #     --deployed FILE    deployed-set.json from the state bucket: what dev runs
+#     --deployed-uri URI where that came from; re-read after the eval, refused if it moved
 #     --judge J          bedrock (default) or heuristic
 #     --run-dir DIR      where eval-remote.json and the logs go (default: runs/eval-<ts>)
 #
@@ -22,16 +23,17 @@ set -euo pipefail
 ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 cd "$ROOT"
 
-EVAL_DIR=""; EVAL_SHA=""; SET=""; DEPLOYED=""; JUDGE=bedrock; RUN_DIR=""
+EVAL_DIR=""; EVAL_SHA=""; SET=""; DEPLOYED=""; DEPLOYED_URI=""; JUDGE=bedrock; RUN_DIR=""
 while [ $# -gt 0 ]; do
   case "$1" in
     --eval-dir) EVAL_DIR="$2"; shift ;;
     --eval-sha) EVAL_SHA="$2"; shift ;;
     --set) SET="$2"; shift ;;
     --deployed) DEPLOYED="$2"; shift ;;
+    --deployed-uri) DEPLOYED_URI="$2"; shift ;;
     --judge) JUDGE="$2"; shift ;;
     --run-dir) RUN_DIR="$2"; shift ;;
-    -h|--help) sed -n '2,19p' "${BASH_SOURCE[0]}"; exit 0 ;;
+    -h|--help) sed -n '2,20p' "${BASH_SOURCE[0]}"; exit 0 ;;
     *) echo "eval-remote: unknown option $1" >&2; exit 2 ;;
   esac
   shift
@@ -65,7 +67,9 @@ def shas(s):
 matches = None
 if pr_set and deployed:
     want, have = shas(pr_set), shas(deployed)
-    matches = all(want.get(r) == have.get(r) for r in ("chatbot-backend", "frontend", "infra"))
+    # An empty sha is a repo an --only deploy carried: unknown, so not compared.
+    matches = all(want.get(r) == have.get(r) for r in ("chatbot-backend", "frontend", "infra")
+                  if want.get(r) and have.get(r))
 json.dump({
     "outcome": outcome, "exit": int(rc), "reason": reason or None,
     "eval_sha": sha or None, "judge": judge,
@@ -160,10 +164,37 @@ set +e
   > "$RUN_DIR/eval.out" 2> "$RUN_DIR/eval.err"
 RC=$?
 set -e
+
+# The eval's own output can echo a rejected request body (a 422 carries its input), and
+# ::add-mask:: covers only the job log — not the artifact, not the PR comment.
+python3 - "$RUN_DIR/eval.out" "$RUN_DIR/eval.err" <<'PY'
+import os, sys
+secrets = [os.environ[k] for k in ("PHOENIX_API_KEY", "SIGNUP_CODE", "EVAL_ACCOUNT_PASSWORD") if os.environ.get(k)]
+for path in sys.argv[1:]:
+    text = open(path, errors="replace").read()
+    for s in secrets:
+        text = text.replace(s, "***")
+    open(path, "w").write(text)
+PY
 cat "$RUN_DIR/eval.out"
+
+# Exit 1 is a breach only when the eval reached its verdict. An uncaught exception also
+# exits 1 — that is the eval failing to judge, not the backend scoring badly.
+if [ "$RC" = 1 ] && ! grep -q '^  exit 1 ' "$RUN_DIR/eval.out"; then RC=3; fi
 case "$RC" in
   0) OUTCOME=passed ;;
   1) OUTCOME=breached ;;
-  *) RC=2; OUTCOME=refused; REASON="$(grep -m1 'REFUSED' "$RUN_DIR/eval.err" || tail -1 "$RUN_DIR/eval.err")" ;;
+  *) RC=2; OUTCOME=refused
+     REASON="$(grep -m1 'REFUSED' "$RUN_DIR/eval.err" || grep -m1 -E '^[A-Za-z.]+(Error|Exception):' "$RUN_DIR/eval.err" || tail -1 "$RUN_DIR/eval.err")" ;;
 esac
+
+# A deploy is not serialised with an eval. A verdict about a set dev no longer runs is none.
+if [ -n "$DEPLOYED_URI" ] && [ -n "$DEPLOYED" ]; then
+  now="$(aws s3 cp --quiet "$DEPLOYED_URI" - 2>/dev/null)" || now=""
+  if [ "$(printf '%s' "$now" | python3 -c 'import json,sys;print(json.dumps(json.load(sys.stdin),sort_keys=True))' 2>/dev/null)" \
+       != "$(python3 -c 'import json,sys;print(json.dumps(json.load(open(sys.argv[1])),sort_keys=True))' "$DEPLOYED")" ]; then
+    OUTCOME=refused; REASON="dev was redeployed during the eval (or $DEPLOYED_URI became unreadable); re-run /dev-eval"
+    exit 2
+  fi
+fi
 exit "$RC"
