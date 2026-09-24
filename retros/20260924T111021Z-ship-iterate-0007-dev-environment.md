@@ -5,7 +5,7 @@ run: changes/0007-dev-environment/runs/20260924T103206Z
 date: 2026-09-24
 verdict: coherent-with-warnings
 findings: 2 proposed, 7 recorded, 4 rejected
-pr: none
+pr: https://github.com/paggio/agent-app-project/pull/31
 ---
 
 ## State audit
