@@ -51,19 +51,23 @@ say() { [ "$QUIET" = "1" ] || echo "$@"; }
 DRIFT=0
 for r in $REPOS; do
   # A submodule that is not checked out, or does not vendor contracts at all, is not a
-  # failure: infra vendors only the README today.
+  # failure.
   [ -d "$r/contracts" ] || continue
   for f in $FILES; do
     src="$FROM/$f"
     dst="$r/contracts/$f"
     [ -f "$src" ] || continue
-    # Only refresh what the repo already vendors. Introducing a file it never consumed
-    # would put a promise in its tree that nothing there reads.
-    [ -f "$dst" ] || continue
-    if cmp -s "$src" "$dst"; then continue; fi
+    # Publish what the repo vendors, or reads: a file nothing there names would be a promise
+    # nobody checks. "Already vendors" alone never reached infra, whose tests/contract.sh
+    # reads contracts/infra-outputs.yaml and SKIPPED, green, for want of it (0007).
+    if [ ! -f "$dst" ] && ! git -C "$r" grep -qF "contracts/$f" -- . ':(exclude)contracts' 2>/dev/null; then
+      continue
+    fi
+    if cmp -s "$src" "$dst" 2>/dev/null; then continue; fi
     DRIFT=1
     if [ "$CHECK" = "1" ]; then
-      say "vendor-contracts: $dst is stale"
+      if [ -f "$dst" ]; then say "vendor-contracts: $dst is stale"
+      else say "vendor-contracts: $dst is missing, and $r reads it"; fi
     else
       cp "$src" "$dst"
       say "vendor-contracts: published -> $dst"
