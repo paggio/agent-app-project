@@ -1,5 +1,7 @@
 # 0007 — frontend slice
 
+**Amended 2026-09-24: nothing in this slice changes.** Your branch is done; keep it green.
+
 The app is about to run in Kubernetes behind CloudFront. Two images leave this repo, both
 built from it, both runnable as non-root. Nothing a person sees changes.
 

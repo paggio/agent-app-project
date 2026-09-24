@@ -1,5 +1,12 @@
 # 0007 — status
 
+## Amended, 2026-09-24 — /ship-iterate
+
+Added criteria 9 (Phoenix UI on its own HTTPS origin, auth on) and 10 (`/dev-eval` runs the
+eval against `dev` from a PR). Contract re-frozen at `bf2a6b8` (two additive outputs).
+Infra slice only; frontend unchanged. The `/dev-eval` workflow and the `/realign` change
+(the deploy is the user's to trigger) are control-repo harness work, in their own PR.
+
 ## Contract freeze
 
 - SHA: recorded in `change.yaml`

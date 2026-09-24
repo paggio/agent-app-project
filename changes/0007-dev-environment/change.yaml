@@ -3,7 +3,7 @@
 
 change: 0007-dev-environment
 
-freeze_sha: "6bcd1821fffeec64fb9189662e996211a26594b0"
+freeze_sha: "bf2a6b8a88998476f42f0f963252cc836eca4a86"
 
 # No chatbot-backend slice: the backend is already cloud-ready (S3 default chain, Origin
 # guard on Host) and its /dev-push caller is a single-repo PR. BRIEF.md § Out of scope.

@@ -27,7 +27,13 @@ merges.
 8. `outputs`, `plan`, `destroy` honour `docs/infra-interface.md`: no `ENV` is exit 2,
    no state is non-zero, a destroying plan is exit 3, `destroy` refuses without `CONFIRM`.
 
-Criteria 1, 6 and 8 are processes, not requests; they are proved by running them, and
+9. The Phoenix UI of `dev` is served over HTTPS at `phoenix_base_url`, its own CloudFront
+   origin, with authentication on: the login page loads, an unauthenticated API request is
+   refused with 401, and the deployed backend's traces still land.
+10. `/dev-eval` commented on a control PR runs `chatbot-eval` against `dev` and files the
+    experiment in `dev`'s Phoenix; the PR gets the verdict and the experiment link.
+
+Criteria 1, 6, 8 and 10 are processes, not requests; they are proved by running them, and
 `STATUS.md` records the run. Criterion 7 is proved by `leftovers` finding the resources
 while up and none after `down`.
 
@@ -35,8 +41,12 @@ while up and none after `down`.
 
 - **prod.** `release-prod.yml` refuses and deploys nothing (ADR 0018).
 - **A custom domain.** CloudFront's default certificate; no Route 53 zone exists.
-- **The eval as a Kubernetes Job**, and `/dev-push` from `chatbot-eval` PRs. Nothing
-  deploys the eval yet; a later change.
+- **The eval as a Kubernetes Job**, and `/dev-push` or `/dev-eval` from `chatbot-eval`
+  PRs. `/dev-eval` runs the eval on the CI runner against the deployed origins; nothing
+  deploys the eval.
+- **Phoenix users beyond the admin.** One admin, password in Secrets Manager; the same
+  secret is the bearer key the backend and the eval write with. Per-writer keys are a
+  later change.
 - **The backend repo's `/dev-push` caller.** Nothing in the backend moves here, so it is
   a single-repo PR in that repo, not a slice of this change.
 - **Managed OpenSearch, ElastiCache.** OpenSearch runs in-cluster on EBS; redis is unused.
@@ -49,4 +59,6 @@ while up and none after `down`.
 `contracts/infra-outputs.yaml`, additive: `proxy_image_repository`,
 `deployed_proxy_image`, `cluster_name`, `aws_region` (all `kind: value`); the examples
 move from `staging` to `dev`, and so does `contracts/README.md`'s prose.
+Amended (`/ship-iterate`, 2026-09-24): `phoenix_base_url` (`kind: value`) and
+`phoenix_api_key_secret_ref` (`kind: secret_ref`), additive.
 `contracts/openapi.yaml` does not move.

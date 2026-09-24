@@ -110,3 +110,29 @@ steps:
       Origin: ${SMOKE_ORIGIN}
     expect:
       status: 204
+
+  # ─────────────────────────────────────────────────────────────── phoenix, exposed
+  # Amended 2026-09-24. Phoenix's own origin; locally it is not proxied and auth is off,
+  # so every step here is remote.
+
+  - name: the-phoenix-ui-is-served-over-https
+    owner: infra
+    base: ${INFRA_PHOENIX_BASE_URL}
+    GET: /login
+    contract: false
+    tags: [remote]
+    expect:
+      status: 200
+      headers:
+        content-type: '^text/html'
+        strict-transport-security: 'max-age=[0-9]{7,}'
+
+  - name: the-phoenix-api-refuses-an-anonymous-caller
+    owner: infra
+    # Traces carry users' chat content. An exposed Phoenix with auth off answers 200.
+    base: ${INFRA_PHOENIX_BASE_URL}
+    GET: /v1/projects
+    contract: false
+    tags: [remote]
+    expect:
+      status: 401
