@@ -133,7 +133,8 @@ say '```'
 say ""
 say "## 3. The run"
 if [ -z "$RUN_DIR" ] && [ -n "$CHANGE" ]; then
-  RUN_DIR="$(ls -d "changes/$CHANGE/runs/"*/ 2>/dev/null | sort | tail -1)"
+  # The loop's own runs are timestamps; dev-push-*/dev-eval-* would sort after them.
+  RUN_DIR="$(ls -d "changes/$CHANGE/runs/"[0-9]*/ 2>/dev/null | sort | tail -1)"
   RUN_DIR="${RUN_DIR%/}"
 fi
 

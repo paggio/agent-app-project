@@ -5,7 +5,7 @@
 #   ./scripts/verify-remote.sh --deploy-set deploy-set.json --env dev [options]
 #
 #     --change C         assert the baseline AND changes/C's suite. Without it, the
-#                        baseline only — the `--lock` redeploy /realign runs.
+#                        baseline only — a realign PR's `/dev-push`.
 #     --previous FILE    `infra/bin/infra outputs` from before the deploy, recorded as what
 #                        this run replaced
 #     --allow-destroy    proceed when `infra/bin/infra plan` reports a destroy or replace

@@ -31,7 +31,7 @@ Never run two lanes in one session.
   wrong place.
 - The freeze point is the commit landing `contracts/` alone; its SHA goes in `change.yaml` as `freeze_sha`, nowhere else.
 - "Three PRs exist" is not shipped: shipped means deployed together with the smoke suite
-  passing — `/dev-push` on the PR, then from the lock in `/realign`. `docs/adr/0002`, `0018`.
+  passing — `/dev-push` on the PR, then on the `/realign` PR (you trigger that one). `docs/adr/0002`, `0018`.
 - Every variable a smoke suite interpolates is declared in `stack/dev.env`. Never export one by hand.
 - Exit 1 = the thing under test failed. Exit 2 = the harness refused. See `docs/adr/0003`.
 - NEVER run `docker compose config` on `stack/compose.yml` or paste its output — it inlines
@@ -57,4 +57,4 @@ Never run two lanes in one session.
 
 `make help` lists the hand tools for looking at the running system. `/ship`,
 `/ship-correct`, `/ship-iterate` and `/realign` are how work gets done. Deploys run only in
-CI: `make login && make push-gh-creds` first, `make dev-down` when `dev` is idle.
+CI: `make login && make push-gh-creds`, then `/dev-push` or `/dev-eval` on the PR; `make dev-down` when idle.

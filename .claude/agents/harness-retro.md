@@ -71,7 +71,7 @@ it, or the words **not verified**:
   downloaded `dev-push` run's `verify-remote.json`, in § 4 of the bundle. Was `verified`
   backed by one whose deploy set equals the PR heads as they stand now — or is a
   `verified-local`, a `deployed-partial`, or a stale deploy being read as shipped? After
-  `/realign`: was the pin deployed and the baseline asserted remotely? Is `dev` still up?
+  `/realign`: did the PR ask for its `/dev-push` (the comment), and did the lane leave it to the user?
 - **Pull requests** — facts in `prs.json`, or claims in `fanout.json` that nothing fetched?
 - **Gates** — green against the tree as it stands, not as the lane last saw it.
 

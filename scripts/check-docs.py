@@ -516,9 +516,10 @@ def check_status_headings() -> None:
 # actually accepts, which is the one thing a reader of `/dev-push-eval` needs to be true.
 # So the accepted set is READ from the workflow's own regex.
 DEV_PUSH_WORKFLOW = os.path.join(ROOT, ".github", "workflows", "dev-push.yml")
+DEV_EVAL_WORKFLOW = os.path.join(ROOT, ".github", "workflows", "dev-eval.yml")
 
 
-def pr_commands() -> set[str]:
+def _dev_push_commands() -> set[str]:
     try:
         text = open(DEV_PUSH_WORKFLOW).read()
     except OSError:
@@ -529,14 +530,28 @@ def pr_commands() -> set[str]:
     return {m.group(1)} | {f"{m.group(1)}-{v}" for v in m.group(2).split("|")}
 
 
+def _dev_eval_commands() -> set[str]:
+    try:
+        text = open(DEV_EVAL_WORKFLOW).read()
+    except OSError:
+        return set()
+    return {"dev-eval"} if re.search(r"re='\^/dev-eval[( \[]", text) else set()
+
+
+def pr_commands() -> set[str]:
+    return _dev_push_commands() | _dev_eval_commands()
+
+
 def check_pr_commands() -> None:
-    if not os.path.exists(DEV_PUSH_WORKFLOW):
-        return
-    if not pr_commands():
+    if os.path.exists(DEV_PUSH_WORKFLOW) and not _dev_push_commands():
         fail("pr-commands",
              ".github/workflows/dev-push.yml has no `re='^/dev-push(-(a|b))?...'` grammar "
              "this check can read. Prose naming /dev-push is held to that line; without it "
              "every mention is unverifiable.")
+    if os.path.exists(DEV_EVAL_WORKFLOW) and not _dev_eval_commands():
+        fail("pr-commands",
+             ".github/workflows/dev-eval.yml has no `re='^/dev-eval(...)'` grammar this "
+             "check can read, so every mention of /dev-eval is unverifiable.")
 
 
 def check_gate_messages() -> None:

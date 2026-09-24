@@ -89,15 +89,28 @@ no environment variables, no protection rules.
     `dev` and exits 1 if there are any. `dev` forgets its data on `down`, exactly as the
     local stack does (ADR 0011). No loop calls either.
 
-11. **After a merge, `/realign` redeploys `dev` from the lock** (`dev-push.sh --lock`,
-    dispatched on the realign branch, whose gitlinks are the bump under review) and
-    asserts the baseline remotely. Squash merges mint new SHAs, so the images a PR
-    verified are never the merged ones; this run is what makes "shipped" (ADR 0002) true
-    of merged code.
+11. **After a merge, the realign PR is deployed from the lock** — every repo at its
+    gitlinks, the bump under review — and the baseline asserted remotely. Squash merges
+    mint new SHAs, so the images a PR verified are never the merged ones; this run is what
+    makes "shipped" (ADR 0002) true of merged code. *Amended 2026-09-24:* `/realign` no
+    longer starts it. It opens the PR and comments that a deploy is expected; the user
+    comments `/dev-push` on it. A deploy bills and replaces what `dev` runs, so a lane
+    never starts one it was not asked to.
 
 12. **Every AWS resource is tagged** through provider `default_tags`: `Project=agentapp`,
     `Environment=dev`, `ManagedBy=terraform`, `Repository=<infra|bootstrap>`. A
     tag-based Resource Group lists them.
+
+13. **`/dev-eval` on a PR runs `chatbot-eval` against what `dev` runs** (added 2026-09-24).
+    `dev-eval.yml`, same guard and credentials as `dev-push.yml`; its own concurrency group, since
+    sharing `env-dev` would let a queued eval cancel a queued deploy — it re-reads what `dev`
+    runs afterwards instead, and refuses if that changed.
+    The eval commit is resolved like a deploy set (§4); the backend is whatever `dev`
+    runs, read from `deployed-set.json` and named in the comment, with a warning when it is
+    not this PR's. It runs on the runner, judged by Bedrock under the deployer role, and
+    files the experiment in `dev`'s Phoenix (`phoenix_base_url`, bearer from
+    `phoenix_api_key_secret_ref`). Exit 0 thresholds met · 1 breached · 2 refused (no
+    state, no Phoenix outputs, no session). It deploys nothing.
 
 ## Consequences
 
