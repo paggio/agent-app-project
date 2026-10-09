@@ -60,7 +60,10 @@ def prose_files() -> list[str]:
     for pat in (".claude/**/*.md", "docs/**/*.md", "CLAUDE.md", "README.md",
                 "concept.md", "contracts/README.md", "retros/*.md"):
         out += glob.glob(os.path.join(ROOT, pat), recursive=True)
-    return sorted(set(out))
+    # .claude/worktrees/ holds a forked session's whole checkout of another branch. Read
+    # through `.claude/**`, it failed make check 60 times over files this tree does not own.
+    wt = os.path.join(ROOT, ".claude", "worktrees") + os.sep
+    return sorted(p for p in set(out) if not p.startswith(wt))
 
 
 def rel(p: str) -> str:
