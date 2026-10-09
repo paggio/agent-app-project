@@ -1016,3 +1016,134 @@ steps:
     # nothing. Leaving the jar empty makes that inheritance a decision.
     expect:
       status: 204
+
+
+  # ───────────────────────────────────────── the proxy image and the deployed edge (0007)
+  # Promoted from changes/0007-dev-environment. Last in the file and self-contained: its
+  # own account, its own logout, so the jar ends empty in the remote pass as well.
+  #
+  # Tags re-judged, all carried: every `remote` here asserts a property only a deployed
+  # edge holds — HSTS and a Secure cookie need HTTPS, the Host-forwarding CSRF seam needs
+  # CloudFront, `bedrock` and a real reply need the deployed model, and Phoenix's own
+  # origin with auth on exists only in `dev`. The header steps are untagged: the proxy
+  # sets them on any origin, and remotely they also prove the edge does not strip them.
+
+  - name: the-app-shell-carries-the-proxy-security-headers
+    owner: frontend
+    GET: /
+    contract: false
+    expect:
+      status: 200
+      body_matches: '<div id="root"'
+      headers:
+        x-content-type-options: '^nosniff$'
+        referrer-policy: '^strict-origin-when-cross-origin$'
+
+  - name: an-api-response-carries-the-proxy-security-headers
+    owner: frontend
+    GET: /api/healthz
+    expect:
+      status: 200
+      headers:
+        x-content-type-options: '^nosniff$'
+
+  - name: the-origin-is-https-and-says-so
+    owner: infra
+    # HSTS comes from CloudFront's response headers policy; the local origin is plain http
+    # and must stay that way (SESSION_COOKIE_SECURE=false).
+    GET: /
+    contract: false
+    tags: [remote]
+    expect:
+      status: 200
+      headers:
+        strict-transport-security: 'max-age=[0-9]{7,}'
+
+  - name: a-browser-shaped-register-is-accepted-through-the-edge
+    owner: infra
+    # The CSRF guard compares Origin with the host the backend sees. Through CloudFront
+    # that holds only if the viewer's Host is forwarded; an edge that rewrites it refuses
+    # every browser POST with 403 while every header-less client passes.
+    POST: /api/v1/auth/register
+    tags: [remote]
+    headers:
+      Origin: ${SMOKE_ORIGIN}
+      Sec-Fetch-Site: same-origin
+    body:
+      email: smoke-baseline-edge-${SMOKE_RUN_ID}@auth.test
+      password: "${SMOKE_PASSWORD}"
+      signup_code: "${SIGNUP_CODE}"
+      display_name: Smoke Dev Edge
+    expect:
+      status: 201
+
+  - name: the-session-cookie-is-secure-over-https
+    owner: infra
+    POST: /api/v1/auth/login
+    tags: [remote]
+    headers:
+      Origin: ${SMOKE_ORIGIN}
+    body:
+      email: smoke-baseline-edge-${SMOKE_RUN_ID}@auth.test
+      password: "${SMOKE_PASSWORD}"
+    expect:
+      status: 200
+      cookie: session
+      headers:
+        set-cookie: '(?i)session=[^;]+;.*\bsecure\b'
+
+  - name: the-deployed-backend-reports-its-image-and-model
+    owner: infra
+    # A dev environment that quietly serves `echo` passes every other step.
+    GET: /api/v1/version
+    tags: [remote]
+    expect:
+      status: 200
+      body_matches: '"image_tag":\s*"[0-9a-f]{12}"'
+      json:
+        chat_model: bedrock
+
+  - name: the-deployed-model-answers
+    owner: infra
+    # Bedrock through the pod identity: the permission and the model id both have to be
+    # right, and only a real reply proves it. `echo` would repeat the message.
+    POST: /api/v1/chat
+    tags: [remote]
+    headers:
+      Origin: ${SMOKE_ORIGIN}
+    body:
+      message: Reply with the single word pong.
+    expect:
+      status: 200
+      body_excludes: 'Reply with the single word pong'
+
+  - name: logout-the-edge-account
+    owner: infra
+    POST: /api/v1/auth/logout
+    tags: [remote]
+    headers:
+      Origin: ${SMOKE_ORIGIN}
+    expect:
+      status: 204
+
+  - name: the-phoenix-ui-is-served-over-https
+    owner: infra
+    base: ${INFRA_PHOENIX_BASE_URL}
+    GET: /login
+    contract: false
+    tags: [remote]
+    expect:
+      status: 200
+      headers:
+        content-type: '^text/html'
+        strict-transport-security: 'max-age=[0-9]{7,}'
+
+  - name: the-phoenix-api-refuses-an-anonymous-caller
+    owner: infra
+    # Traces carry users' chat content. An exposed Phoenix with auth off answers 200.
+    base: ${INFRA_PHOENIX_BASE_URL}
+    GET: /v1/projects
+    contract: false
+    tags: [remote]
+    expect:
+      status: 401
