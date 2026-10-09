@@ -1,0 +1,25 @@
+# The machine half of a change. BRIEF.md is for humans and for the implementing agent;
+# this is what the scripts parse.
+
+change: 0007-dev-environment
+
+freeze_sha: "bf2a6b8a88998476f42f0f963252cc836eca4a86"
+
+# No chatbot-backend slice: the backend is already cloud-ready (S3 default chain, Origin
+# guard on Host) and its /dev-push caller is a single-repo PR. BRIEF.md § Out of scope.
+slices:
+  - frontend
+  - infra
+
+deploy:
+  local: true
+  # The remote pass runs in CI via /dev-push (docs/adr/0018); the local loop never
+  # touches AWS.
+  infra: true
+  environment: dev
+
+smoke:
+  file: smoke.yaml
+  base: http://localhost:8080
+  timeout_s: 120
+  e2e: false
