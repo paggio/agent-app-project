@@ -205,11 +205,15 @@ lane knows this, and nothing else ever says the change shipped.
 Then push it and open the pull request (`gh pr create`), and do not merge it. Say in the
 body what moved, what the harvest said and what you did about it, and what you promoted.
 
-## 5b — Deploy the pin, and assert it where it runs
+## 5b — Deploy the pin, assert it where it runs, and evaluate it
 
 ```
-./scripts/dev-push.sh --lock --ref chore/realign-<change>
+./scripts/dev-push.sh --lock --pr <realign pr>
+./scripts/dev-eval.sh --pr <realign pr>        # only once dev-push is verified
 ```
+
+Both comment on the realign pull request (`/dev-push`, `/dev-eval`) rather than dispatching
+the workflow, so the user can follow every deploy from the PR.
 
 Every repo at this branch's gitlinks — the bump under review — deployed to `dev`, and the
 baseline asserted through the CloudFront origin. **Not optional after a product merge:** a
@@ -220,15 +224,20 @@ Exit 2 is a refusal — most often an expired session: `make login && make push-
 then again. Exit 1 is a red seam: the failing step's `owner` names the repo answerable, and
 the fix is a session in that repo, then this lane again — never a weakened assertion here.
 
-Put the verdict and the run URL in the pull request body. The user is asked to review only
-once this is green. Skip it only in the step-0 case where nothing product-side moved, and
+The eval runs `chatbot-eval` against what `dev` now runs. Exit 1 is a breached threshold or
+an errored example: the merged code answers worse, and the eval report names where — a
+session in `chatbot-backend` (or in `chatbot-eval`, if the eval itself is wrong), never a
+threshold lowered here.
+
+Put both verdicts and run URLs in the pull request body. The user is asked to review only
+once both are green. Skip it only in the step-0 case where nothing product-side moved, and
 say so. `dev` bills while it is up: say in the report that it is.
 
 ## 6 — Report
 
 Say, in this order: which submodules moved and to what; whether the contract still matches
 what is served, and what you did about it if not; the baseline result with its assertion
-count, locally and against `dev` (5b), and whether `dev` is still up; what was promoted into the baseline; and anything you deliberately left alone.
+count, locally and against `dev` (5b), the eval verdict, and whether `dev` is still up; what was promoted into the baseline; and anything you deliberately left alone.
 
 ## 7 — The retrospective
 

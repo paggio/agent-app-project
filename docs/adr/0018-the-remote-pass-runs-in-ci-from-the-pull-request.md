@@ -95,7 +95,9 @@ no environment variables, no protection rules.
     makes "shipped" (ADR 0002) true of merged code. *Amended 2026-09-24:* `/realign` no
     longer starts it; the user comments `/dev-push`. *Reverted 2026-10-12:* `/realign`
     starts it again, as `/ship` does, and the user is asked to review only once it is
-    green. A human gate on every deploy made "green" a hand-off rather than a result.
+    green. A human gate on every deploy made "green" a hand-off rather than a result. It
+    comments `/dev-push` on the realign PR (`dev-push.sh --lock --pr`), then `/dev-eval`
+    (§13), so every run a lane starts is visible in the PR.
 
 12. **Every AWS resource is tagged** through provider `default_tags`: `Project=agentapp`,
     `Environment=dev`, `ManagedBy=terraform`, `Repository=<infra|bootstrap>`. A
