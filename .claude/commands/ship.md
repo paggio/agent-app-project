@@ -155,6 +155,12 @@ The verdict and the evidence land in `changes/<change>/runs/dev-push-<id>/`; the
 exactly which commits were deployed is posted on the PR. Exit 2 is a refusal, not a
 failure — most often an expired session: `make login && make push-gh-creds`, then again.
 
+**A red remote pass is not a hand-off.** Route it the way `/ship-correct` routes a red
+`/dev-push` — the failing `owner` in `verify-remote.json` — run
+`./scripts/iterate.sh <change> --only <owner>`, then 5b again. The user is asked to review
+only at `verified`, or when the loop stops on what it cannot fix: `blocked`,
+`contract-gap`, `fault: harness`, or the attempts run out.
+
 **`dev` bills while it is up.** Nothing here tears it down; say in the report that it is up.
 
 **Do not merge anything.** Merging is a human decision, in dependency order — the repo
