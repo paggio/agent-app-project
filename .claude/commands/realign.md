@@ -26,6 +26,21 @@ authoritative. The same argument forbids `git add`ing a submodule path early, an
 So: confirm the PRs are merged before doing anything here. `./scripts/prs.sh --list` shows
 them.
 
+## First — are these instructions current?
+
+```
+git fetch -q origin && git merge-base --is-ancestor origin/main HEAD && git branch --show-current
+```
+
+This file was loaded from whatever the root had checked out. Carry on only if that prints
+`main` or `chore/realign-<change>`. Anything else — a non-zero exit, a `feat/` branch — means
+stop and tell the user to `git switch main && git pull --ff-only` and run `/realign` again;
+a failing `chore/realign-` branch is behind a harness merge, so merge `origin/main` into it
+first. Do not switch and carry on: the instructions already loaded are that branch's. On
+2026-10-09 the root sat on a merged `feat/0007-dev-environment` whose copy of this file
+predated `0d97eb1`, and the lane started a `dev` apply nobody wanted
+(`retros/20261012T083322Z-realign-0007-dev-environment.md`).
+
 ## 0 — Is there anything to realign?
 
 ```
