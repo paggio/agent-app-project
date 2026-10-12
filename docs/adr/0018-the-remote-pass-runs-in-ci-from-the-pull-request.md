@@ -93,9 +93,9 @@ no environment variables, no protection rules.
     gitlinks, the bump under review — and the baseline asserted remotely. Squash merges
     mint new SHAs, so the images a PR verified are never the merged ones; this run is what
     makes "shipped" (ADR 0002) true of merged code. *Amended 2026-09-24:* `/realign` no
-    longer starts it. It opens the PR and comments that a deploy is expected; the user
-    comments `/dev-push` on it. A deploy bills and replaces what `dev` runs, so a lane
-    never starts one it was not asked to.
+    longer starts it; the user comments `/dev-push`. *Reverted 2026-10-12:* `/realign`
+    starts it again, as `/ship` does, and the user is asked to review only once it is
+    green. A human gate on every deploy made "green" a hand-off rather than a result.
 
 12. **Every AWS resource is tagged** through provider `default_tags`: `Project=agentapp`,
     `Environment=dev`, `ManagedBy=terraform`, `Repository=<infra|bootstrap>`. A

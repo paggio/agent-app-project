@@ -205,26 +205,30 @@ lane knows this, and nothing else ever says the change shipped.
 Then push it and open the pull request (`gh pr create`), and do not merge it. Say in the
 body what moved, what the harvest said and what you did about it, and what you promoted.
 
-## 5b — Hand the deploy to the user
-
-Do **not** deploy. On the realign pull request, post exactly one comment:
+## 5b — Deploy the pin, and assert it where it runs
 
 ```
-gh pr comment <pr> --body "Deploy expected before merge: comment \`/dev-push\` here to deploy these gitlinks to \`dev\` and assert the baseline through CloudFront. Needs a live session: \`make login && make push-gh-creds\`."
+./scripts/dev-push.sh --lock --ref chore/realign-<change>
 ```
 
-Only the user comments `/dev-push`: it bills, and it replaces whatever `dev` runs. That run
-deploys every repo at this branch's gitlinks — the bump under review — and it is still
-**not optional after a product merge**. A squash merge mints new SHAs, so the images a PR's
-`/dev-push` verified are never the merged ones: "shipped" (`docs/adr/0002`) is that run, not
-the merge, and this pull request is not ready to merge until it is green. Skip the comment
-only in the step-0 case where nothing product-side moved, and say so.
+Every repo at this branch's gitlinks — the bump under review — deployed to `dev`, and the
+baseline asserted through the CloudFront origin. **Not optional after a product merge:** a
+squash merge mints new SHAs, so the images a PR's `/dev-push` verified are never the merged
+ones. "Shipped" (`docs/adr/0002`) is this run, not the merge.
+
+Exit 2 is a refusal — most often an expired session: `make login && make push-gh-creds`,
+then again. Exit 1 is a red seam: the failing step's `owner` names the repo answerable, and
+the fix is a session in that repo, then this lane again — never a weakened assertion here.
+
+Put the verdict and the run URL in the pull request body. The user is asked to review only
+once this is green. Skip it only in the step-0 case where nothing product-side moved, and
+say so. `dev` bills while it is up: say in the report that it is.
 
 ## 6 — Report
 
 Say, in this order: which submodules moved and to what; whether the contract still matches
 what is served, and what you did about it if not; the baseline result with its assertion
-count locally, and that the `dev` deploy is **pending, triggered by you** (5b); what was promoted into the baseline; and anything you deliberately left alone.
+count, locally and against `dev` (5b), and whether `dev` is still up; what was promoted into the baseline; and anything you deliberately left alone.
 
 ## 7 — The retrospective
 

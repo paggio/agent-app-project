@@ -16,20 +16,20 @@ flowchart TD
     q -- yes --> ship["/ship<br/>what you want, the checks that prove it,<br/>the contract locked before anyone builds"]
     ship --> loop["Local loop<br/>agents build each repo,<br/>smoke suite on the joined stack"]
     loop --> prs[One PR per repo<br/>smoke suite green locally]
-    prs --> push["You comment /dev-push on the PR<br/>CI deploys to dev in AWS"]
+    prs --> push["/ship runs /dev-push on the PR<br/>CI deploys to dev in AWS"]
     prs --> ok
-    push --> ok{Smoke green on dev,<br/>and what you wanted?}
+    push --> ok{You review: green on dev —<br/>is it what you wanted?}
     ok -- smoke fails --> correct["/ship-correct"] --> loop
     ok -- not what I want --> iterate["/ship-iterate"] --> loop
     ok -- yes --> merge[You merge, in dependency order]
     merge --> realign["/realign<br/>record merged commits in repos.lock,<br/>re-check contract, regression suite, opens a PR"]
-    realign --> push2["You comment /dev-push on that PR<br/>the merged code, deployed together"]
+    realign --> push2["/realign runs /dev-push on that PR<br/>the merged code, deployed together"]
     push2 --> done([Shipped: deployed together,<br/>smoke passing])
 ```
 
 Around every deploy:
 
-- **Before any `/dev-push`:** `make login && make push-gh-creds`. This hands CI your
+- **Before a lane deploys:** `make login && make push-gh-creds`. This hands CI your
   short-lived AWS session. There are no long-lived keys in GitHub.
 - **While `dev` is up:** comment /dev-eval on any PR deployed to `dev` to run the eval
   against it. Run `make dev-down` when you are done, to bring cost back to near zero.
