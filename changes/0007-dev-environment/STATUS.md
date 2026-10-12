@@ -42,9 +42,9 @@ agent-app-project, then `/realign`, which pins and opens its PR; you comment `/d
   a slice, so `infra-outputs.yaml` never reached it) and infra#2 (first vendored copy, which
   #31 made required; also pins the CRDs catalog and scopes the budget to eu-west-1).
 - `repos.lock`: chatbot-backend `7bf1af6`, chatbot-eval `1fe285b`, frontend `103e58e`,
-  infra `2afe929`.
+  infra `ecf65b1`.
 - Promoted all 10 steps of `smoke.yaml` into `smoke/baseline.yaml`, tags carried.
-- `dev`: not deployed by this lane; `/dev-push` on the realign PR is the user's.
+- `dev`: see the realign PR for the `dev-push` verdict.
 
 ### Remote — `verified`
 
