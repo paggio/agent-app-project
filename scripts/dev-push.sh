@@ -2,13 +2,14 @@
 # Trigger the remote pass the way a reviewer does, wait for it, and print its verdict.
 #
 #   ./scripts/dev-push.sh <change> [--only backend|frontend|infra] [--allow-destroy] [--no-wait]
+#   ./scripts/dev-push.sh --lock --pr <control PR> [--no-wait]
 #   ./scripts/dev-push.sh --lock [--ref <control branch>] [--no-wait]
 #
 # A change: comments `/dev-push[-<repo>]` on the change's control PR, so the run a lane
 # starts is the run a reviewer sees in the PR. `--lock`: dispatches the workflow on a ref
 # with lock semantics — every repo at that ref's gitlinks — which is what `make dev-up` runs
-# on main. A realign PR gets the same from a `/dev-push` comment, which only the user
-# posts. docs/adr/0018 §3, §11.
+# on main. `--lock --pr N`: comments `/dev-push` on control PR N instead — same lock
+# semantics, visible in the PR; `/realign` uses this. docs/adr/0018 §3, §11.
 #
 # The evidence lands in changes/<change>/runs/dev-push-<run id>/ (or runs/ for --lock):
 # deploy-set.json, verify-remote.json, the logs.
@@ -21,12 +22,13 @@ ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 cd "$ROOT"
 
 CONTROL="Paggio/agent-app-project"
-CHANGE=""; ONLY=""; LOCK=0; REF=""; ALLOW=""; WAIT=1
+CHANGE=""; ONLY=""; LOCK=0; REF=""; PR_ARG=""; ALLOW=""; WAIT=1
 while [ $# -gt 0 ]; do
   case "$1" in
     --only) ONLY="$2"; shift ;;
     --lock) LOCK=1 ;;
     --ref) REF="$2"; shift ;;
+    --pr) PR_ARG="$2"; shift ;;
     --allow-destroy) ALLOW=" --allow-destroy" ;;
     --no-wait) WAIT=0 ;;
     -h|--help) sed -n '2,18p' "${BASH_SOURCE[0]}"; exit 0 ;;
@@ -40,10 +42,21 @@ refuse() { say "$*" >&2; exit 2; }
 
 case "$ONLY" in ""|backend|frontend|infra) ;; *) refuse "--only takes backend, frontend or infra" ;; esac
 { [ "$LOCK" = "1" ] && [ -z "$CHANGE" ]; } || { [ "$LOCK" = "0" ] && [ -n "$CHANGE" ]; } \
-  || refuse "usage: dev-push.sh <change> [--only <repo>] | dev-push.sh --lock [--ref <branch>]"
+  || refuse "usage: dev-push.sh <change> [--only <repo>] | dev-push.sh --lock [--pr <n> | --ref <branch>]"
+[ -z "$PR_ARG" ] || { [ "$LOCK" = "1" ] && [ -z "$REF" ]; } || refuse "--pr goes with --lock, and not with --ref"
 
 SINCE="$(date -u +%Y-%m-%dT%H:%M:%SZ)"
-if [ "$LOCK" = "1" ]; then
+if [ -n "$PR_ARG" ]; then
+  PR="$PR_ARG"
+  head="$(gh pr view "$PR" -R "$CONTROL" --json state,headRefName --jq 'select(.state=="OPEN") | .headRefName')"
+  [ -n "$head" ] || refuse "$CONTROL#$PR is not an open pull request"
+  case "$head" in feat/*) refuse "#$PR is a change PR — use dev-push.sh ${head#feat/}" ;; esac
+  BODY="/dev-push${ONLY:+-$ONLY}$ALLOW"
+  gh pr comment "$PR" -R "$CONTROL" --body "$BODY" >/dev/null
+  EVENT="issue_comment"
+  OUT_ROOT="runs"
+  say "commented \`$BODY\` on $CONTROL#$PR (every repo at its gitlinks)"
+elif [ "$LOCK" = "1" ]; then
   REF="${REF:-main}"
   WANT_REF="$(git ls-remote --heads origin "$REF" | awk -v r="refs/heads/$REF" '$2==r{print $1}')"
   [ -n "$WANT_REF" ] || refuse "$REF is not on origin — push it first; CI deploys what is pushed"
@@ -91,7 +104,9 @@ try:
     t = json.load(open(path))
 except Exception:
     sys.exit(1)
-if lock == "1":
+if lock == "1" and pr:
+    ok = t.get("mode") == "lock" and t.get("pr") == pr
+elif lock == "1":
     ok = t.get("mode") == "lock" and t.get("control_ref") == want_ref
 else:
     ok = t.get("mode") == "change" and t.get("change") == change and t.get("pr") == pr

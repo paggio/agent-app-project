@@ -24,14 +24,14 @@ Never run two lanes in one session.
   they never edit it.
 - Smoke assertions are owned here too. A failing assertion means fix the cause, or change
   the criterion here on purpose — never in a product repo.
-- Harness fixes arrive as a PR from `harness-retro`, which ends each lane. Never slip one into a change.
+- Harness fixes go in the ONE open `harness/` PR (the retro's, or opened from `origin/main` if none). Never slip one into a change.
 - Never commit inside a submodule while it is on `main`, and never assume which ref it is
   on: `git -C <repo> switch -c <branch>` first, every time. `git submodule update` leaves
   a detached HEAD, `/realign` leaves `main`, and a commit on either is a commit in the
   wrong place.
 - The freeze point is the commit landing `contracts/` alone; its SHA goes in `change.yaml` as `freeze_sha`, nowhere else.
 - "Three PRs exist" is not shipped: shipped means deployed together with the smoke suite
-  passing — `/dev-push` on the PR, then on the `/realign` PR (you trigger that one). `docs/adr/0002`, `0018`.
+  passing — `/dev-push` on the PR, then on the `/realign` PR — the lane runs both, and asks for review only once they are green. `docs/adr/0002`, `0018`.
 - Every variable a smoke suite interpolates is declared in `stack/dev.env`. Never export one by hand.
 - Exit 1 = the thing under test failed. Exit 2 = the harness refused. See `docs/adr/0003`.
 - NEVER run `docker compose config` on `stack/compose.yml` or paste its output — it inlines
@@ -57,4 +57,4 @@ Never run two lanes in one session.
 
 `make help` lists the hand tools for looking at the running system. `/ship`,
 `/ship-correct`, `/ship-iterate` and `/realign` are how work gets done. Deploys run only in
-CI: `make login && make push-gh-creds`, then `/dev-push` or `/dev-eval` on the PR; `make dev-down` when idle.
+CI, started by the lanes (`scripts/dev-push.sh`) once `make login && make push-gh-creds` has run; `make dev-down` when idle.

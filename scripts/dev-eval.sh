@@ -2,6 +2,7 @@
 # Trigger an eval run against `dev` the way a reviewer does, wait for it, print its verdict.
 #
 #   ./scripts/dev-eval.sh <change> [--judge bedrock|heuristic] [--no-wait]
+#   ./scripts/dev-eval.sh --pr <control PR> [--judge …] [--no-wait]   (a realign PR)
 #
 # Comments `/dev-eval` on the change's control PR. The run evaluates whatever dev runs — a
 # `/dev-push` of the PR first, if you want this PR's code. Evidence lands in
@@ -15,10 +16,11 @@ ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 cd "$ROOT"
 
 CONTROL="Paggio/agent-app-project"
-CHANGE=""; JUDGE=""; WAIT=1
+CHANGE=""; JUDGE=""; PR=""; WAIT=1
 while [ $# -gt 0 ]; do
   case "$1" in
     --judge) JUDGE="$2"; shift ;;
+    --pr) PR="$2"; shift ;;
     --no-wait) WAIT=0 ;;
     -h|--help) sed -n '2,11p' "${BASH_SOURCE[0]}"; exit 0 ;;
     -*) echo "dev-eval: unknown option $1" >&2; exit 2 ;;
@@ -30,10 +32,18 @@ say() { echo "dev-eval: $*"; }
 refuse() { say "$*" >&2; exit 2; }
 
 case "$JUDGE" in ""|bedrock|heuristic) ;; *) refuse "--judge takes bedrock or heuristic" ;; esac
-[ -n "$CHANGE" ] || refuse "usage: dev-eval.sh <change> [--judge bedrock|heuristic]"
-[ -d "changes/$CHANGE" ] || refuse "no such change: changes/$CHANGE"
-PR="$(gh pr list -R "$CONTROL" --head "feat/$CHANGE" --state open --json number --jq '.[0].number // empty')"
-[ -n "$PR" ] || refuse "no open control PR from feat/$CHANGE"
+{ [ -n "$CHANGE" ] && [ -z "$PR" ]; } || { [ -z "$CHANGE" ] && [ -n "$PR" ]; } \
+  || refuse "usage: dev-eval.sh <change> | dev-eval.sh --pr <n>  [--judge bedrock|heuristic]"
+if [ -n "$CHANGE" ]; then
+  [ -d "changes/$CHANGE" ] || refuse "no such change: changes/$CHANGE"
+  PR="$(gh pr list -R "$CONTROL" --head "feat/$CHANGE" --state open --json number --jq '.[0].number // empty')"
+  [ -n "$PR" ] || refuse "no open control PR from feat/$CHANGE"
+  OUT_ROOT="changes/$CHANGE/runs"
+else
+  [ -n "$(gh pr view "$PR" -R "$CONTROL" --json state --jq 'select(.state=="OPEN") | .state')" ] \
+    || refuse "$CONTROL#$PR is not an open pull request"
+  OUT_ROOT="runs"
+fi
 
 SINCE="$(date -u +%Y-%m-%dT%H:%M:%SZ)"
 BODY="/dev-eval${JUDGE:+ --judge $JUDGE}"
@@ -42,7 +52,6 @@ say "commented \`$BODY\` on $CONTROL#$PR"
 [ "$WAIT" = "1" ] || { say "not waiting — gh run list -R $CONTROL --workflow dev-eval.yml"; exit 0; }
 
 # Found by what trigger.json says the run was for, never by timing — as dev-push.sh does.
-OUT_ROOT="changes/$CHANGE/runs"
 DEADLINE=$(( $(date +%s) + 150 * 60 ))
 SEEN=" "; RUN=""; OUT=""
 while [ -z "$RUN" ]; do
