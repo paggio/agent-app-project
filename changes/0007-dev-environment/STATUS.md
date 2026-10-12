@@ -38,14 +38,13 @@ agent-app-project, then `/realign`, which pins and opens its PR; you comment `/d
 
 ### Merged — 2026-10-09, /realign
 
-- Merged: frontend#8, infra#1, agent-app-project#24; catch-up publish chatbot-eval#2 (was
-  not a slice, so `infra-outputs.yaml` never reached it).
+- Merged: frontend#8, infra#1, agent-app-project#24; catch-up publishes chatbot-eval#2 (not
+  a slice, so `infra-outputs.yaml` never reached it) and infra#2 (first vendored copy, which
+  #31 made required; also pins the CRDs catalog and scopes the budget to eu-west-1).
 - `repos.lock`: chatbot-backend `7bf1af6`, chatbot-eval `1fe285b`, frontend `103e58e`,
-  infra `4394681`.
+  infra `2afe929`.
 - Promoted all 10 steps of `smoke.yaml` into `smoke/baseline.yaml`, tags carried.
-- Open: infra `main` CI is red on kubeconform — the CRDs catalog changed the SecretStore
-  schema on 2026-10-08 (`b7e2015`); pinning the catalog to `f3e4382` passes. An infra
-  single-repo PR.
+- `dev`: not deployed by this lane; `/dev-push` on the realign PR is the user's.
 
 ### Remote — `verified`
 
