@@ -22,9 +22,9 @@ Infra slice only; frontend unchanged. The `/dev-eval` workflow and the `/realign
 
 | Repo | Branch | PR | CI | Merged |
 | --- | --- | --- | --- | --- |
-| frontend | `feat/0007-dev-environment` @ `e7a092a` | [frontend#8](https://github.com/paggio/frontend/pull/8) | ☑ | ☐ |
-| infra | `feat/0007-dev-environment` @ `611df58` | [infra#1](https://github.com/paggio/infra/pull/1) | ☑ | ☐ |
-| agent-app-project | `feat/0007-dev-environment` | [#24](https://github.com/paggio/agent-app-project/pull/24) | ☑ | ☐ |
+| frontend | `feat/0007-dev-environment` @ `e7a092a` | [frontend#8](https://github.com/paggio/frontend/pull/8) | ☑ | ☑ `103e58e` |
+| infra | `feat/0007-dev-environment` @ `611df58` | [infra#1](https://github.com/paggio/infra/pull/1) | ☑ | ☑ `4394681` |
+| agent-app-project | `feat/0007-dev-environment` | [#24](https://github.com/paggio/agent-app-project/pull/24) | ☑ | ☑ `23146aa` |
 
 Merge order: frontend (the proxy image is backward compatible locally) → infra →
 agent-app-project, then `/realign`, which pins and opens its PR; you comment `/dev-push` on it.
@@ -35,6 +35,16 @@ agent-app-project, then `/realign`, which pins and opens its PR; you comment `/d
 - **verified-local** — 20260924T103206Z, 1 attempt(s)
 - report: `changes/0007-dev-environment/runs/20260924T103206Z/report.md`
 <!-- iterate:end -->
+
+### Merged — 2026-10-09, /realign
+
+- Merged: frontend#8, infra#1, agent-app-project#24; catch-up publishes chatbot-eval#2 (not
+  a slice, so `infra-outputs.yaml` never reached it) and infra#2 (first vendored copy, which
+  #31 made required; also pins the CRDs catalog and scopes the budget to eu-west-1).
+- `repos.lock`: chatbot-backend `7bf1af6`, chatbot-eval `1fe285b`, frontend `103e58e`,
+  infra `ecf65b1`.
+- Promoted all 10 steps of `smoke.yaml` into `smoke/baseline.yaml`, tags carried.
+- `dev`: see the realign PR for the `dev-push` verdict.
 
 ### Remote — `verified`
 
