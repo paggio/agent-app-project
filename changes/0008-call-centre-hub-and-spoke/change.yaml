@@ -3,7 +3,7 @@
 
 change: 0008-call-centre-hub-and-spoke
 
-freeze_sha: "1ac59fe26077af2a328ff05b5df8ec3d15c53045"
+freeze_sha: "8a0b003e7e6659324681e29ce8c2c3d567388e78"
 
 slices:
   - chatbot-backend
