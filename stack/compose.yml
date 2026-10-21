@@ -90,6 +90,26 @@ services:
     labels:
       agentapp.owner: chatbot-backend
 
+  # The call pipeline, all chatbot-backend's and all DEFINED in its compose file (change
+  # 0008): the SQS-compatible queue, the worker that indexes calls, and the simulator that
+  # publishes one a minute. Same service-name coupling as above — loud, and ahead of the
+  # submodule until 0008's backend slice lands.
+  elasticmq:
+    labels:
+      agentapp.owner: chatbot-backend
+
+  call-worker:
+    # Embeds with the backend's embedder, so it needs whatever credentials the backend has.
+    env_file:
+      - path: ./secrets.env
+        required: false
+    labels:
+      agentapp.owner: chatbot-backend
+
+  call-simulator:
+    labels:
+      agentapp.owner: chatbot-backend
+
 
   # The eval runner: a ONE-SHOT container that black-box tests the running backend and files
   # the result in Phoenix. Defined in chatbot-eval's own compose file — that is where its
@@ -120,6 +140,8 @@ services:
     # which is what makes `make eval` work without a separate `make up` first.
     depends_on:
       backend:
+        condition: service_healthy
+      call-worker:
         condition: service_healthy
       proxy:
         condition: service_healthy
@@ -154,6 +176,13 @@ services:
       # own marked threads at the start of every run, so a re-run leaves the account as
       # it found it — 36 threads had accumulated over two runs before this.
       EVAL_THREAD_PREFIX: ${EVAL_THREAD_PREFIX:-eval__}
+      # Where the eval publishes its fixture calls, as CallCompleted events — the same queue
+      # the simulator feeds (contracts/events/). ElasticMQ takes any key; the pair below is
+      # used for the SQS client ONLY, so a real AWS session in secrets.env still reaches the
+      # Bedrock judge. Remotely both are unset and the default chain applies.
+      EVAL_CALL_QUEUE_URL: ${EVAL_CALL_QUEUE_URL:-http://elasticmq:9324/000000000000/calls}
+      EVAL_SQS_ACCESS_KEY_ID: ${EVAL_SQS_ACCESS_KEY_ID:-local}
+      EVAL_SQS_SECRET_ACCESS_KEY: ${EVAL_SQS_SECRET_ACCESS_KEY:-local}
       # The eval image's OWN version, recorded in every experiment's metadata as a
       # comparability factor beside fixture_hash. Supplied from outside the image and
       # never invented — the same rule the backend's IMAGE_TAG has. docs/adr/0015.

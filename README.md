@@ -31,6 +31,8 @@ Around every deploy:
 
 - **Before a lane deploys:** `make login && make push-gh-creds`. This hands CI your
   short-lived AWS session. There are no long-lived keys in GitHub.
+- **Signing in to `dev`:** `make -C infra credentials ENV=dev` prints the app and Phoenix
+  logins and how to read their one password.
 - **While `dev` is up:** comment /dev-eval on any PR deployed to `dev` to run the eval
   against it. Run `make dev-down` when you are done, to bring cost back to near zero.
 
@@ -43,8 +45,8 @@ that repo, then run `/realign` again.
 
 | Repo | Contents |
 | --- | --- |
-| [`chatbot-backend`](https://github.com/Paggio/chatbot-backend) | API service |
-| [`chatbot-eval`](https://github.com/Paggio/chatbot-eval) | eval runs: corpus, questions, Phoenix experiments |
+| [`chatbot-backend`](https://github.com/Paggio/chatbot-backend) | API service and its hub-and-spoke graph; the call-ingest worker and the call simulator |
+| [`chatbot-eval`](https://github.com/Paggio/chatbot-eval) | eval runs: documents and call fixtures, questions per route, Phoenix experiments |
 | [`frontend`](https://github.com/Paggio/frontend) | web client and edge proxy |
 | [`infra`](https://github.com/Paggio/infra) | Terraform and the Helm chart for `dev` on AWS |
 

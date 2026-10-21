@@ -1,0 +1,44 @@
+# The machine half of a change. BRIEF.md is for humans and for the implementing agent;
+# this is what the scripts parse.
+
+change: 0008-call-centre-hub-and-spoke
+
+freeze_sha: "1ac59fe26077af2a328ff05b5df8ec3d15c53045"
+
+slices:
+  - chatbot-backend
+  - chatbot-eval
+  - frontend
+  - infra
+
+deploy:
+  local: true
+  # The queue, the worker and simulator Deployments and the dev login exist only on dev.
+  # The remote pass runs in CI via /dev-push (docs/adr/0018).
+  infra: true
+  environment: dev
+
+# The eval is a process; its exit code is the assertion (docs/adr/0014). Both run before
+# smoke, which reads what they left in Phoenix and in the call index.
+jobs:
+  - name: eval-run-meets-its-thresholds
+    service: eval
+    owner: chatbot-eval
+    expect_exit: 0
+    timeout_s: 1200
+  - name: a-breached-threshold-exits-non-zero
+    service: eval
+    owner: chatbot-eval
+    expect_exit: 1
+    timeout_s: 900
+    env:
+      # A mean of per-example 0/1 cannot reach 1.01, whatever the corpus or the model.
+      EVAL_THRESHOLD_ROUTING_ACCURACY: "1.01"
+
+smoke:
+  file: smoke.yaml
+  base: http://localhost:8080
+  # The simulator step waits up to 2 min for the first call to be indexed; Phoenix steps poll.
+  timeout_s: 600
+  # Criterion 17: call sources rendered in a browser.
+  e2e: true

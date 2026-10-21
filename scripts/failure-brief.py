@@ -34,9 +34,9 @@ import sys
 # fails OPEN on telemetry, so a Phoenix that is down must never be the first thing an agent
 # is shown — it is evidence only when it actually complained.
 SERVICES = {
-    "chatbot-backend": {"primary": ["backend"],
+    "chatbot-backend": {"primary": ["backend", "call-worker", "call-simulator"],
                         "supporting": ["postgres", "redis", "opensearch", "minio",
-                                       "phoenix", "phoenix-db"]},
+                                       "phoenix", "phoenix-db", "elasticmq"]},
     "frontend": {"primary": ["frontend", "proxy"], "supporting": []},
     "infra": {"primary": [], "supporting": []},
     # The eval is a CLIENT of the backend, so `backend` is supporting here as well as
@@ -47,8 +47,8 @@ SERVICES = {
     # cause here rather than a fail-open one, but it is still evidence only when it
     # actually complained.
     "chatbot-eval": {"primary": ["eval"],
-                     "supporting": ["backend", "phoenix", "phoenix-db", "opensearch",
-                                    "minio", "proxy"]},
+                     "supporting": ["backend", "call-worker", "elasticmq", "phoenix",
+                                    "phoenix-db", "opensearch", "minio", "proxy"]},
 }
 
 # Health probes run every few seconds against every container, so by the time anything

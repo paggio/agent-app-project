@@ -1,0 +1,512 @@
+# 0008 — call-centre calls, the hub-and-spoke graph, the eval over both.
+# Step schema: changes/0000-example-change/smoke.yaml. Criteria numbers are BRIEF.md's.
+#
+# Locally a step publishes straight to ElasticMQ (the SQS API, unsigned) at ${CALL_QUEUE_BASE};
+# those are `local`. Remotely nothing here can sign an SQS request, so the remote pass proves
+# ingestion through what the SIMULATOR publishes — the untagged steps read the newest call
+# from GET /v1/calls and ask about it, which holds on both origins.
+
+steps:
+  # ─────────────────────────────────────────────────────────────── a session (both passes)
+
+  - name: calls-require-a-session
+    owner: chatbot-backend
+    GET: /api/v1/calls
+    # Criterion 5.
+    expect:
+      status: 401
+      json:
+        error:
+          code: AUTH_REQUIRED
+      body_excludes: '"calls"'
+
+  - name: register-a-calls-reader
+    owner: chatbot-backend
+    POST: /api/v1/auth/register
+    body:
+      email: smoke-calls-${SMOKE_RUN_ID}@auth.test
+      password: "${SMOKE_PASSWORD}"
+      signup_code: "${SIGNUP_CODE}"
+      display_name: Smoke Calls
+    expect:
+      status: [201, 409]
+
+  - name: login-a-calls-reader
+    owner: chatbot-backend
+    POST: /api/v1/auth/login
+    body:
+      email: smoke-calls-${SMOKE_RUN_ID}@auth.test
+      password: "${SMOKE_PASSWORD}"
+    expect:
+      status: 200
+      cookie: session
+
+  - name: the-calls-api-is-reached-through-the-proxy
+    owner: frontend
+    GET: /api/v1/calls
+    # The new path is API, not the SPA fallback: JSON with a `calls` array, never the shell.
+    expect:
+      status: 200
+      headers:
+        content-type: '^application/json'
+      body_matches: '"calls"\s*:\s*\['
+      body_excludes: '<!doctype html'
+
+  # ───────────────────────────────────────────── the simulator feeds the index (criterion 6)
+
+  - name: the-simulator-is-producing-calls
+    owner: chatbot-backend
+    tags: [local]
+    GET: /api/v1/calls
+    # The simulator publishes one call at start and one a minute after. Its ids are
+    # CALL-<yyyymmdd><6-digit sequence>; smoke's and the eval's are not digits-only.
+    retry: {attempts: 40, delay: 3.0}
+    expect:
+      status: 200
+      body_matches: '"call_id"\s*:\s*"CALL-[0-9]{14}"'
+
+  - name: the-deployed-simulator-is-producing-calls
+    owner: infra
+    tags: [remote]
+    GET: /api/v1/calls
+    # Same fact on dev: queue, IAM, worker, simulator and network policy all have to be right.
+    retry: {attempts: 40, delay: 5.0}
+    expect:
+      status: 200
+      body_matches: '"call_id"\s*:\s*"CALL-[0-9]{14}"'
+
+  - name: the-newest-simulated-call
+    owner: chatbot-backend
+    GET: /api/v1/calls
+    # Newest ENDED first. The simulator's calls end "now" and the eval's fixtures at least an
+    # hour ago, so before this suite publishes anything the first entry is the simulator's.
+    expect:
+      status: 200
+      body_matches: '"calls"\s*:\s*\[\s*\{\s*"call_id"\s*:\s*"CALL-[0-9]{14}"'
+    capture:
+      latest_call_id: calls.0.call_id
+      latest_queue: calls.0.queue
+
+  - name: a-simulated-call-carries-its-transcript
+    owner: chatbot-backend
+    GET: /api/v1/calls/${latest_call_id}
+    expect:
+      status: 200
+      json:
+        call:
+          call_id: ${latest_call_id}
+      body_matches: '"transcript"\s*:\s*\[\s*\{\s*"speaker"\s*:\s*"(agent|customer)"'
+      # Criterion 4: the API never returns a phone number, masked or not.
+      body_excludes: '"phone[a-z_]*"\s*:'
+
+  - name: an-unknown-call-is-not-found
+    owner: chatbot-backend
+    GET: /api/v1/calls/CALL-NEVER${SMOKE_RUN_ID}
+    expect:
+      status: 404
+      json:
+        error:
+          code: CALL_NOT_FOUND
+
+  # ─────────────────────────────────────────────────── the coordinator (criteria 7–11)
+
+  - name: a-chat-for-the-coordinator
+    owner: chatbot-backend
+    POST: /api/v1/threads
+    body: {}
+    expect:
+      status: 201
+    capture:
+      coord_thread_id: thread.id
+      # The server's clock, borrowed so the local events below fall inside retention.
+      server_now: thread.created_at
+
+  - name: a-question-naming-a-call-routes-to-the-calls-spoke
+    owner: chatbot-backend
+    POST: /api/v1/threads/${coord_thread_id}/messages
+    body:
+      message: "What was call ${latest_call_id} about, and how did it end?"
+    # Criteria 7 and 8. Not the documents spoke, and the named call is the first source.
+    expect:
+      status: 200
+      json:
+        messages:
+          - role: user
+          - role: assistant
+            route: calls
+            retrieval_consulted: false
+            citations: []
+            call_citations:
+              - marker: 1
+                call_id: ${latest_call_id}
+    retry: {attempts: 3, delay: 3.0}
+
+  - name: a-queue-question-cites-only-that-queue
+    owner: chatbot-backend
+    POST: /api/v1/threads/${coord_thread_id}/messages
+    body:
+      message: "Summarise the most recent ${latest_queue} calls."
+    # Criterion 11. A metadata filter, not similarity: every cited call is from that queue.
+    expect:
+      status: 200
+      json:
+        messages:
+          - role: user
+          - role: assistant
+            route: calls
+            call_citations:
+              - queue: ${latest_queue}
+      body_excludes: '"queue"\s*:\s*"(?!${latest_queue}")'
+    retry: {attempts: 3, delay: 3.0}
+
+  - name: small-talk-routes-to-the-general-spoke
+    owner: chatbot-backend
+    POST: /api/v1/threads/${coord_thread_id}/messages
+    body:
+      message: "Tell me a short joke about penguins."
+    # Criterion 10. This account has no documents and the message names no call.
+    expect:
+      status: 200
+      json:
+        messages:
+          - role: user
+          - role: assistant
+            route: general
+            retrieval_consulted: false
+      body_excludes: '"call_citations"\s*:\s*\[\s*\{|"citations"\s*:\s*\[\s*\{'
+
+  - name: a-document-for-the-coordinator
+    owner: chatbot-backend
+    POST: /api/v1/documents
+    body:
+      filename: coordinator-ledger-${SMOKE_RUN_ID}.md
+      content_type: text/markdown
+      content: "# Brindlemoor Ledger\n\nThe Brindlemoor ledger is audited every ninth lunar month by the Salt Wardens."
+    expect:
+      status: 201
+    capture:
+      coord_document_id: document.id
+
+  - name: a-document-question-routes-to-the-documents-spoke
+    owner: chatbot-backend
+    POST: /api/v1/threads/${coord_thread_id}/messages
+    body:
+      message: "How often is the Brindlemoor ledger audited, according to the ledger?"
+    # Criterion 9. The baseline's retrieval step still holds; this adds `route`.
+    expect:
+      status: 200
+      json:
+        messages:
+          - role: user
+          - role: assistant
+            route: documents
+            retrieval_consulted: true
+            citations:
+              - document_id: ${coord_document_id}
+      body_excludes: '"call_citations"\s*:\s*\[\s*\{'
+    retry: {attempts: 3, delay: 3.0}
+
+  - name: the-transcript-keeps-each-turns-route
+    owner: chatbot-backend
+    GET: /api/v1/threads/${coord_thread_id}
+    # The route is stored on the message, not recomputed: four answers, three spokes, in order.
+    expect:
+      status: 200
+      body_matches: '(?s)"route"\s*:\s*"calls".*"route"\s*:\s*"calls".*"route"\s*:\s*"general".*"route"\s*:\s*"documents"'
+
+  - name: the-coordinator-document-is-removed
+    owner: chatbot-backend
+    DELETE: /api/v1/documents/${coord_document_id}
+    expect:
+      status: 204
+
+  # ───────────────────────────────────────────── ingest, through the queue (criteria 1–4)
+
+  - name: a-call-event-is-accepted-by-the-queue
+    owner: chatbot-backend
+    tags: [local]
+    base: ${CALL_QUEUE_BASE}
+    POST: /000000000000/calls
+    contract: false
+    form:
+      Action: SendMessage
+      MessageBody: '{"schema_version":"1","event_id":"6f0c1d1e-0008-4000-8000-000000000001","call_id":"CALL-SMOKE${SMOKE_RUN_ID}","started_at":"${server_now}","ended_at":"${server_now}","direction":"inbound","queue":"billing","agent":{"id":"AGT-0808","name":"Odile Fenwick"},"customer":{"id":"CUST-080808","name":"Tobias Wren","phone_masked":"+44 *******0808"},"language":"en-GB","outcome":"resolved","csat":4,"tags":["refund"],"transcript":[{"speaker":"customer","text":"I was charged twice for the Larkspur plan in October.","offset_s":0},{"speaker":"agent","text":"I can see the duplicate charge of 14 pounds 20 and I have refunded it.","offset_s":11.5}]}'
+    expect:
+      status: 200
+      body_matches: '<MessageId>'
+
+  - name: the-same-event-redelivered
+    owner: chatbot-backend
+    tags: [local]
+    base: ${CALL_QUEUE_BASE}
+    POST: /000000000000/calls
+    contract: false
+    # At-least-once delivery, simulated: byte-identical, same event_id.
+    form:
+      Action: SendMessage
+      MessageBody: '{"schema_version":"1","event_id":"6f0c1d1e-0008-4000-8000-000000000001","call_id":"CALL-SMOKE${SMOKE_RUN_ID}","started_at":"${server_now}","ended_at":"${server_now}","direction":"inbound","queue":"billing","agent":{"id":"AGT-0808","name":"Odile Fenwick"},"customer":{"id":"CUST-080808","name":"Tobias Wren","phone_masked":"+44 *******0808"},"language":"en-GB","outcome":"resolved","csat":4,"tags":["refund"],"transcript":[{"speaker":"customer","text":"I was charged twice for the Larkspur plan in October.","offset_s":0},{"speaker":"agent","text":"I can see the duplicate charge of 14 pounds 20 and I have refunded it.","offset_s":11.5}]}'
+    expect:
+      status: 200
+      body_matches: '<MessageId>'
+
+  - name: a-call-past-retention-is-published
+    owner: chatbot-backend
+    tags: [local]
+    base: ${CALL_QUEUE_BASE}
+    POST: /000000000000/calls
+    contract: false
+    form:
+      Action: SendMessage
+      MessageBody: '{"schema_version":"1","event_id":"6f0c1d1e-0008-4000-8000-000000000002","call_id":"CALL-OLD${SMOKE_RUN_ID}","started_at":"2020-01-01T09:00:00Z","ended_at":"2020-01-01T09:05:00Z","direction":"inbound","queue":"general","agent":{"id":"AGT-0808","name":"Odile Fenwick"},"customer":{"id":"CUST-080809"},"language":"en-GB","outcome":"resolved","transcript":[{"speaker":"customer","text":"This call is long past retention."}]}'
+    expect:
+      status: 200
+      body_matches: '<MessageId>'
+
+  - name: an-event-with-an-unmasked-phone-number-is-published
+    owner: chatbot-backend
+    tags: [local]
+    base: ${CALL_QUEUE_BASE}
+    POST: /000000000000/calls
+    contract: false
+    form:
+      Action: SendMessage
+      MessageBody: '{"schema_version":"1","event_id":"6f0c1d1e-0008-4000-8000-000000000003","call_id":"CALL-PII${SMOKE_RUN_ID}","started_at":"${server_now}","ended_at":"${server_now}","direction":"inbound","queue":"general","agent":{"id":"AGT-0808","name":"Odile Fenwick"},"customer":{"id":"CUST-080810","phone_masked":"+44 7700 900123"},"language":"en-GB","outcome":"resolved","transcript":[{"speaker":"customer","text":"My number is in the clear."}]}'
+    expect:
+      status: 200
+      body_matches: '<MessageId>'
+
+  - name: a-sentinel-call-is-published-last
+    owner: chatbot-backend
+    tags: [local]
+    base: ${CALL_QUEUE_BASE}
+    POST: /000000000000/calls
+    contract: false
+    form:
+      Action: SendMessage
+      MessageBody: '{"schema_version":"1","event_id":"6f0c1d1e-0008-4000-8000-000000000004","call_id":"CALL-LAST${SMOKE_RUN_ID}","started_at":"${server_now}","ended_at":"${server_now}","direction":"outbound","queue":"sales","agent":{"id":"AGT-0809","name":"Ines Marlow"},"customer":{"id":"CUST-080811"},"language":"en-GB","outcome":"callback_scheduled","csat":null,"transcript":[{"speaker":"agent","text":"Calling back about the Larkspur upgrade you asked for."}]}'
+    expect:
+      status: 200
+      body_matches: '<MessageId>'
+
+  - name: the-published-call-becomes-readable
+    owner: chatbot-backend
+    tags: [local]
+    GET: /api/v1/calls/CALL-SMOKE${SMOKE_RUN_ID}
+    # Criterion 1: metadata and transcript, as published.
+    retry: {attempts: 30, delay: 2.0}
+    expect:
+      status: 200
+      json:
+        call:
+          call_id: CALL-SMOKE${SMOKE_RUN_ID}
+          queue: billing
+          outcome: resolved
+          csat: 4
+          turn_count: 2
+          agent:
+            id: AGT-0808
+            name: Odile Fenwick
+          customer:
+            id: CUST-080808
+          transcript:
+            - speaker: customer
+              text: I was charged twice for the Larkspur plan in October.
+            - speaker: agent
+
+  - name: the-sentinel-is-readable
+    owner: chatbot-backend
+    tags: [local]
+    GET: /api/v1/calls/CALL-LAST${SMOKE_RUN_ID}
+    # Everything published before it has been received by now, which makes the absences
+    # below mean something.
+    retry: {attempts: 30, delay: 2.0}
+    expect:
+      status: 200
+      json:
+        call:
+          call_id: CALL-LAST${SMOKE_RUN_ID}
+          csat: null
+
+  - name: a-redelivered-event-is-one-call
+    owner: chatbot-backend
+    tags: [local]
+    GET: /api/v1/calls
+    # Criterion 2.
+    expect:
+      status: 200
+      body_matches: 'CALL-SMOKE${SMOKE_RUN_ID}"'
+      body_excludes: 'CALL-SMOKE${SMOKE_RUN_ID}"(?:.|\n)*CALL-SMOKE${SMOKE_RUN_ID}"'
+
+  - name: a-call-past-retention-is-never-readable
+    owner: chatbot-backend
+    tags: [local]
+    GET: /api/v1/calls/CALL-OLD${SMOKE_RUN_ID}
+    # Criterion 3.
+    expect:
+      status: 404
+      json:
+        error:
+          code: CALL_NOT_FOUND
+
+  - name: an-unmasked-phone-number-is-never-stored
+    owner: chatbot-backend
+    tags: [local]
+    GET: /api/v1/calls/CALL-PII${SMOKE_RUN_ID}
+    # Criterion 4.
+    expect:
+      status: 404
+      json:
+        error:
+          code: CALL_NOT_FOUND
+
+  - name: refused-events-land-in-the-dead-letter-queue
+    owner: chatbot-backend
+    tags: [local]
+    base: ${CALL_QUEUE_BASE}
+    GET: /000000000000/calls-dlq?Action=GetQueueAttributes&AttributeName.1=ApproximateNumberOfMessages
+    contract: false
+    # Criterion 4: the refused event is kept, not dropped. The past-retention one is refused
+    # too, so at least two.
+    retry: {attempts: 10, delay: 2.0}
+    expect:
+      status: 200
+      body_matches: '<Name>ApproximateNumberOfMessages</Name>\s*<Value>([2-9]|[1-9][0-9]+)</Value>'
+
+  - name: a-question-about-the-published-call-cites-it
+    owner: chatbot-backend
+    tags: [local]
+    POST: /api/v1/threads/${coord_thread_id}/messages
+    body:
+      message: "Why did the customer on call CALL-SMOKE${SMOKE_RUN_ID} get a refund?"
+    expect:
+      status: 200
+      json:
+        messages:
+          - role: user
+          - role: assistant
+            route: calls
+            call_citations:
+              - marker: 1
+                call_id: CALL-SMOKE${SMOKE_RUN_ID}
+                queue: billing
+                agent_name: Odile Fenwick
+      body_matches: 'charged twice'
+
+  - name: logout-the-calls-reader
+    owner: chatbot-backend
+    POST: /api/v1/auth/logout
+    expect:
+      status: 204
+
+  # ─────────────────────────────────────────────── the eval, after its two jobs (12–16)
+
+  - name: the-eval-dataset
+    owner: chatbot-eval
+    tags: [local]
+    GET: /v1/datasets?name=${EVAL_DATASET_NAME}
+    base: ${PHOENIX_BASE}
+    contract: false
+    expect:
+      status: 200
+      body_matches: '"name":\s*"${EVAL_DATASET_NAME}".*"example_count":\s*[1-9]'
+    capture:
+      eval_dataset_id: data.0.id
+
+  - name: the-question-set-covers-all-three-spokes
+    owner: chatbot-eval
+    tags: [local]
+    GET: /v1/datasets/${eval_dataset_id}/examples
+    base: ${PHOENIX_BASE}
+    contract: false
+    # Criterion 13: stratified by route, so routing accuracy is a three-way measurement.
+    expect:
+      status: 200
+      body_matches: '(?s)^(?=.*"expected_route":\s*"calls")(?=.*"expected_route":\s*"documents")(?=.*"expected_route":\s*"general")'
+
+  - name: the-eval-experiment
+    owner: chatbot-eval
+    tags: [local]
+    GET: /v1/datasets/${eval_dataset_id}/experiments
+    base: ${PHOENIX_BASE}
+    contract: false
+    expect:
+      status: 200
+      body_matches: '"example_count":\s*[1-9]'
+    capture:
+      eval_experiment_id: data.0.id
+
+  - name: the-experiment-records-the-call-fixture-it-used
+    owner: chatbot-eval
+    tags: [local]
+    GET: /v1/datasets/${eval_dataset_id}/experiments
+    base: ${PHOENIX_BASE}
+    contract: false
+    # Criterion 15: the call fixture is a comparability factor like the document corpus.
+    expect:
+      status: 200
+      body_matches: '"calls_fixture_hash":\s*"[0-9a-f]{64}"'
+
+  - name: every-eval-example-ran-without-error
+    owner: chatbot-eval
+    tags: [local]
+    GET: /v1/experiments/${eval_experiment_id}/runs
+    base: ${PHOENIX_BASE}
+    contract: false
+    retry: {attempts: 10, delay: 2.0}
+    expect:
+      status: 200
+      body_matches: '"trace_id":\s*"[0-9a-f]{32}"'
+      body_excludes: '"error":\s*"'
+
+  - name: all-four-evaluators-scored-every-eval-example
+    owner: chatbot-eval
+    tags: [local]
+    GET: /v1/experiments/${eval_experiment_id}/incomplete-evaluations?evaluation_name=routing_accuracy&evaluation_name=retrieval_recall&evaluation_name=groundedness&evaluation_name=answer_correctness
+    base: ${PHOENIX_BASE}
+    contract: false
+    retry: {attempts: 10, delay: 2.0}
+    expect:
+      status: 200
+      body_matches: '"data":\s*\[\s*\]'
+
+  - name: register-an-eval-fixture-reader
+    owner: chatbot-eval
+    tags: [local]
+    POST: /api/v1/auth/register
+    body:
+      email: smoke-evalcalls-${SMOKE_RUN_ID}@auth.test
+      password: "${SMOKE_PASSWORD}"
+      signup_code: "${SIGNUP_CODE}"
+      display_name: Smoke Eval Calls
+    expect:
+      status: [201, 409]
+
+  - name: login-an-eval-fixture-reader
+    owner: chatbot-eval
+    tags: [local]
+    POST: /api/v1/auth/login
+    body:
+      email: smoke-evalcalls-${SMOKE_RUN_ID}@auth.test
+      password: "${SMOKE_PASSWORD}"
+    expect:
+      status: 200
+      cookie: session
+
+  - name: the-eval-seeded-its-calls-through-the-queue
+    owner: chatbot-eval
+    tags: [local]
+    GET: /api/v1/calls/CALL-EVAL000001
+    # Criterion 16. The reserved anchor fixture, readable by any account: published as an
+    # event, not written anywhere else, and inside retention because its times are relative.
+    expect:
+      status: 200
+      json:
+        call:
+          call_id: CALL-EVAL000001
+
+  - name: logout-the-eval-fixture-reader
+    owner: chatbot-eval
+    tags: [local]
+    POST: /api/v1/auth/logout
+    expect:
+      status: 204
