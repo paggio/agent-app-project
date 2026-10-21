@@ -33,6 +33,13 @@ These run against your code through a reverse proxy, not against your test doubl
 a failure comes back to this repo with the request, the response and your container log
 attached. The assertions belong to the control repo: fix the cause, never the assertion.
 
+## Documentation
+
+Verify fails this slice if its code changes and none of its docs (`README.md`, `CLAUDE.md`,
+`docs/`) do:
+
+- `<doc path>` — <what it must now say>
+
 ## Notes
 
 - <migration ordering, feature flag, backwards-compatibility constraint>

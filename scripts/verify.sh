@@ -81,6 +81,9 @@ FAILED_STAGE=""
 OWNERS=""
 CURRENT_STAGE="startup"
 FAULT=""
+# Repos whose docs-currency assertion failed. Deferred, not fatal at once: the run goes on
+# so the same repair brief also carries any smoke failure. fail_stage merges them in.
+DOCS_OWNERS=""
 CHANGE_SUITE="$CHANGE_DIR/$CHANGE_SMOKE_FILE"
 
 note()  { echo "verify: $*"; }
@@ -150,12 +153,16 @@ finish() {
            "$FAULT" "$ASSERT_PASSED" "$ASSERT_FAILED" "$ASSERT_FROM_CHANGE" "$CHANGE_SUITE" \
            "$STAGE_LOG" "${CHANGE_DEPLOY_ENVIRONMENT:-}" \
            "$JOBS_RAN" "$JOBS_PASSED" "$JOBS_FAILED" "${CHANGE_JOBS_COUNT:-0}" \
-           "${CHAT_MODEL:-}" "${EVAL_JUDGE:-}" <<'PY'
+           "${CHAT_MODEL:-}" "${EVAL_JUDGE:-}" "$RUN_DIR/docs-currency.json" <<'PY'
 import json, sys
 (out, status, stage, owners, change, base,
  fault, passed, failed, from_change, change_suite, stage_log,
  environment, jobs_ran, jobs_passed, jobs_failed,
- jobs_declared, chat_model, eval_judge) = sys.argv[1:20]
+ jobs_declared, chat_model, eval_judge, docs_json) = sys.argv[1:21]
+try:
+    dc = json.load(open(docs_json))
+except (OSError, ValueError):
+    dc = None
 json.dump({
     "change": change, "status": status, "failed_stage": stage or None,
     "owners_failing": [o for o in owners.split() if o], "base": base,
@@ -182,6 +189,14 @@ json.dump({
     # that the run was reaching for one. Empty means the compose default.
     "configuration": {"chat_model": chat_model or None,
                       "eval_judge": eval_judge or None},
+    # One assertion per slice repo that changed; null = the stage never ran. docs/adr/0019.
+    "docs_currency": dc and {
+        "checked": len(dc["steps"]),
+        "passed": sum(1 for s in dc["steps"] if s["ok"]),
+        "failed": len(dc["failures"]),
+        "unchanged": len(dc["unchanged"]),
+        "refused": len(dc["refused"]),
+    },
 }, open(out, "w"), indent=2)
 PY
   echo
@@ -208,6 +223,10 @@ $1=$2"; }
 
 fail_stage() {
   STATUS="fail"; FAILED_STAGE="$1"; OWNERS="${2:-}"; FAULT="${3:-slice}"
+  if [ "$FAULT" = "slice" ] && [ -n "$DOCS_OWNERS" ]; then
+    OWNERS="$(printf '%s\n' $OWNERS $DOCS_OWNERS | awk '!s[$0]++' | tr '\n' ' ')"
+    case "$FAILED_STAGE" in docs-currency:*) ;; *) FAILED_STAGE="$FAILED_STAGE; docs-currency failed for $DOCS_OWNERS" ;; esac
+  fi
   record_stage "$CURRENT_STAGE" "fail"
   exit 1
 }
@@ -284,6 +303,24 @@ note "preflight ok"
 # four baseline steps and reported PASS — a change verified against nothing it introduced.
 [ -f "$CHANGE_SUITE" ] || fail_stage \
   "preflight: $CHANGE_SUITE does not exist — write the acceptance criteria as steps" "" harness
+
+# -------------------------------------------------------------- docs currency
+# Docs move with the code, per slice, as an owned assertion. docs/adr/0019.
+stage "docs-currency: each slice's docs moved with its code"
+CURRENT_STAGE="docs_currency"
+set +e
+./scripts/docs-currency.py --repos "$CHANGE_SLICES" --json "$RUN_DIR/docs-currency.json"
+DC_RC=$?
+set -e
+count_assertions "$RUN_DIR/docs-currency.json"
+case "$DC_RC" in
+  0) record_stage docs_currency pass ;;
+  1) DOCS_OWNERS="$(python3 -c "import json,sys;print(' '.join(json.load(open(sys.argv[1]))['owners_failing']))" \
+                    "$RUN_DIR/docs-currency.json")"
+     record_stage docs_currency "fail: $DOCS_OWNERS"
+     note "docs-currency failed for $DOCS_OWNERS — deferred, so the brief also carries smoke" ;;
+  *) fail_stage "docs-currency: refused — a slice repo has no origin/main to compare against (see above)" "" harness ;;
+esac
 
 # ---------------------------------------------------------------- local deploy
 if [ "$CHANGE_DEPLOY_LOCAL" = "1" ]; then
@@ -476,6 +513,12 @@ if [ "$E2E" = "1" ]; then
   record_stage e2e pass
 else
   record_stage e2e "skipped: --e2e not given"
+fi
+
+# The deferred docs-currency failure, if nothing above already carried it.
+if [ -n "$DOCS_OWNERS" ]; then
+  CURRENT_STAGE="docs_currency"
+  fail_stage "docs-currency: code changed without docs in: $DOCS_OWNERS" "$DOCS_OWNERS" slice
 fi
 
 # ------------------------------------------------------- the counted-evidence gate

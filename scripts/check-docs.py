@@ -272,6 +272,7 @@ LOOP_CALLS = {
     "vendor-contracts.sh": ("fanout.sh",),
     "slice-result.py": ("fanout.sh",),
     "harvest-contract.py": ("verify.sh",),
+    "docs-currency.py": ("verify.sh",),
     "smoke.py": ("verify.sh", "verify-remote.sh"),
     "service-owner.sh": ("verify.sh",),
     # The remote half, since docs/adr/0018. A caller with a `/` is repo-relative: the loop
