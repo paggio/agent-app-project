@@ -264,13 +264,18 @@ done
 # implements the frozen contract without re-vendoring leaves its CI green against the old
 # promise — observed on 0002, in both slices at once. check-docs.py knows how to spot it but
 # runs as a make/CI gate, so the loop was blind to exactly the drift it exists to catch.
+# vendor-contracts.sh --check is the one definition of what a repo must carry — the two
+# YAML specs and every events schema whose x-consumers names it.
 for _r in $CHANGE_SLICES; do
-  for _f in openapi.yaml infra-outputs.yaml; do
-    [ -f "$_r/contracts/$_f" ] || continue
-    if ! cmp -s "contracts/$_f" "$_r/contracts/$_f"; then
-      fail_stage "preflight: $_r/contracts/$_f differs from contracts/$_f — the dispatch publishes it, so this means the slice edited it or the publish did not run: ./scripts/vendor-contracts.sh" "$_r" slice
-    fi
-  done
+  set +e
+  ./scripts/vendor-contracts.sh --check --repos "$_r" 2>&1 | sed 's/^/verify:   /'
+  _vc="${PIPESTATUS[0]}"
+  set -e
+  case "$_vc" in
+    0) ;;
+    1) fail_stage "preflight: $_r's vendored contracts/ differs from contracts/ — the dispatch publishes it, so this means the slice edited it or the publish did not run: ./scripts/vendor-contracts.sh" "$_r" slice ;;
+    *) fail_stage "preflight: vendor-contracts.sh refused (exit $_vc) — fix contracts/ here" "" harness ;;
+  esac
 done
 
 note "preflight ok"

@@ -177,9 +177,9 @@ gh repo create <owner>/<name> --private --description "<one line>"
 # Same template as step 2: CLAUDE.md, .claude/{settings.json,hooks/}, docs/architecture.md,
 # docs/adr/, contracts/, .github/workflows/ci.yml, README.md, .gitignore.
 #
-# contracts/ MUST carry the vendored specs from the start: vendor-contracts.sh only
-# refreshes a file the repo ALREADY has (`[ -f "$dst" ] || continue`), so a repo that ships
-# without them never receives a frozen contract and its CI verifies against nothing.
+# contracts/ MUST exist from the start: vendor-contracts.sh skips a repo without it, and
+# publishes a YAML spec only where the repo already has it or reads it (events schemas go
+# wherever their x-consumers says).
 cd <somewhere outside this tree> && git init -b main && git push -u origin main
 
 git submodule add https://github.com/<owner>/<name>.git <path>
