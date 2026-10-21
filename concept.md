@@ -50,6 +50,8 @@ verify conformance in their own CI.
 
 - `openapi.yaml` — the HTTP interface
 - `infra-outputs.yaml` — what infra promises the app repos (ARNs, URLs, secret names)
+- `events/*.schema.json` — async event schemas, published only to the repos their
+  `x-consumers` names
 - `README.md` — the normative prose neither file can hold: cookie attributes, the CSRF
   posture, the `/api/` prefix invariant, the rule that decides between two error shapes
 
@@ -335,7 +337,7 @@ The whole life of a change that deploys:
 | `/dev-push` on the control PR | the lane (phase 5b), or you | `verified`: the PR's exact commits ran together in AWS and both suites held through CloudFront |
 | merge, in `STATUS.md` order | a human | nothing yet — see below |
 | `/realign` | the lane | the merged commits, pinned in a PR that asks for its deploy |
-| `/dev-push` on the realign PR | you | the merged commits deployed together from the lock and asserted there — "shipped" |
+| `/dev-push`, then `/dev-eval`, on the realign PR | the lane | the merged commits deployed together from the lock and asserted there — "shipped" |
 | `/dev-eval` on any PR, optional | you | `chatbot-eval` scored what `dev` runs; the experiment is in `dev`'s Phoenix |
 | `make dev-down` | you, when idle | nothing bills but bootstrap — `leftovers` says so |
 
@@ -362,8 +364,8 @@ repo and carries the others at what `dev` already runs; that is `deployed-partia
   `main`, and nothing has yet asserted the merged code deployed together;
 - `dev` is last-writer-wins, so after a PR's `/dev-push` it runs unmerged code. The lock is
   what `dev` should run when no PR is under test, and the realign PR's `/dev-push` is what
-  puts it back. `/realign` asks for that run in a PR comment and never starts it: it bills,
-  and it replaces what `dev` runs.
+  puts it back. `/realign` comments `/dev-push`, then `/dev-eval`, on its own PR and waits
+  for both.
 
 A single-repo change is the same: its PR's `/dev-push` proves the PR, the realign PR's proves `main`.
 
@@ -445,7 +447,7 @@ Two files under `stack/`, split by one question — **can this be committed?**
 | File | Committed | Holds | Read by |
 | --- | --- | --- | --- |
 | `stack/dev.env` | yes | non-secret config, grouped by service; every `${VAR}` a smoke suite interpolates | the scripts, and compose |
-| `stack/secrets.env` | **no, gitignored** | real credentials: AWS keys and the region | compose's `env_file` only |
+| `stack/secrets.env` | **no, gitignored** | real credentials: AWS keys and the region; the two mode selectors | compose's `env_file`; `dev-env.sh` reads only the selectors |
 
 ### Putting your credentials in
 
@@ -509,11 +511,11 @@ Both are gates, because both have cost a run:
 
 ### Why the secrets never enter a script here
 
-`scripts/dev-env.sh` is **forbidden** from reading `stack/secrets.env`, and that is a gate
-rather than a convention. This repo writes `verify.json`, `smoke.json`, container logs and
+`scripts/dev-env.sh` reads `stack/secrets.env` for the two mode selectors only, through an
+allowlist that must stay credential-free, and that is a gate rather than a convention. This repo writes `verify.json`, `smoke.json`, container logs and
 repair prompts; a credential in the environment of the process that writes them is one
-careless dump away from being committed. Compose hands the file to the Docker daemon and no
-process here ever sees it. `docs/adr/0006` and `docs/adr/0016`.
+careless dump away from being committed. Compose hands the credentials to the Docker daemon
+and no process here ever sees them. `docs/adr/0006` and `docs/adr/0016`.
 
 Three hand tools are the exceptions, and each writes no artifact: `make login` writes the
 credential lines, `make push-gh-creds` copies them to GitHub over `gh`'s stdin, and
@@ -573,7 +575,7 @@ not happen belongs in a mechanism, not in prose.
   single highest-leverage file in the layout. Keep it fast; a gate that takes two minutes
   gets disabled.
 - **Here:** `manifest.py --validate` is the ship gate; `smoke.py --lint` owns the step
-  schema; `check-docs.py` holds the prose to the mechanisms, each check tied to a
+  schema; `verify.sh` fails a slice whose code moved without its docs (`docs/adr/0019`); `check-docs.py` holds the prose to the mechanisms, each check tied to a
   documentation defect that actually happened; a `PreToolUse` hook blocks shell writes into
   a submodule, and `test-hooks.py` probes that guard in both directions — a guard that fires
   on ordinary work is one the agent learns to route around. The deploy workflows are held
