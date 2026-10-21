@@ -79,7 +79,9 @@ steps:
     owner: chatbot-backend
     GET: /api/v1/calls
     # Newest ENDED first. The simulator's calls end "now" and the eval's fixtures at least an
-    # hour ago, so before this suite publishes anything the first entry is the simulator's.
+    # hour ago — but on a warm stack this suite's own published calls can be newer, so wait
+    # for the next simulator call (one a minute) to take the top.
+    retry: {attempts: 30, delay: 3.0}
     expect:
       status: 200
       body_matches: '"calls"\s*:\s*\[\s*\{\s*"call_id"\s*:\s*"CALL-[0-9]{14}"'
