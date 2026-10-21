@@ -105,6 +105,9 @@ esac
 
 out() { python3 -c "import json,sys;print(json.load(open(sys.argv[1])).get(sys.argv[2]) or '')" "$RUN_DIR/infra-outputs.json" "$1"; }
 APP="$(out app_base_url)"; PREFIX="$(out api_path_prefix)"; PHX="$(out phoenix_base_url)"
+# Optional here: absent, the eval itself refuses naming EVAL_CALL_QUEUE_URL (change 0008).
+QUEUE="$(out call_queue_url)"
+[ -z "$QUEUE" ] || export EVAL_CALL_QUEUE_URL="$QUEUE"
 PHX_REF="$(out phoenix_api_key_secret_ref)"; SIGNUP_REF="$(out signup_code_secret_ref)"
 missing=""
 for pair in "app_base_url:$APP" "phoenix_base_url:$PHX" "phoenix_api_key_secret_ref:$PHX_REF" "signup_code_secret_ref:$SIGNUP_REF"; do
