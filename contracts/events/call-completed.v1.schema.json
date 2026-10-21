@@ -1,0 +1,117 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://agentapp.local/contracts/events/call-completed.v1.schema.json",
+  "title": "CallCompleted v1",
+  "description": "One finished call-centre call: its metadata and its full transcript. Published by the call centre (in this system: the simulator and the eval) as the body of ONE message on the call queue; consumed by chatbot-backend's call worker. Delivery is at-least-once, so a consumer must treat call_id as the idempotency key. contracts/README.md § 'Call-centre calls' holds the rules no schema can state.",
+  "x-consumers": ["chatbot-backend", "chatbot-eval"],
+  "type": "object",
+  "required": [
+    "schema_version",
+    "event_id",
+    "call_id",
+    "started_at",
+    "ended_at",
+    "direction",
+    "queue",
+    "agent",
+    "customer",
+    "language",
+    "outcome",
+    "transcript"
+  ],
+  "properties": {
+    "schema_version": {
+      "const": "1",
+      "description": "The major version of this schema. A breaking change is a new file and a new value, never an edit to this one."
+    },
+    "event_id": {
+      "type": "string",
+      "format": "uuid",
+      "description": "Unique per publish. Two events for the same call (a correction, a redelivery) share call_id and differ here."
+    },
+    "call_id": {
+      "type": "string",
+      "pattern": "^CALL-[0-9A-Za-z]{6,48}$",
+      "description": "The call centre's own identifier, as a person quotes it — e.g. CALL-20261021000123. The idempotency key: the latest event for a call_id replaces every earlier one.",
+      "examples": ["CALL-20261021000123"]
+    },
+    "started_at": {
+      "type": "string",
+      "format": "date-time",
+      "description": "RFC 3339 with an offset. When the customer was connected."
+    },
+    "ended_at": {
+      "type": "string",
+      "format": "date-time",
+      "description": "RFC 3339 with an offset, not before started_at. Retention is measured from this instant."
+    },
+    "direction": {
+      "enum": ["inbound", "outbound"]
+    },
+    "queue": {
+      "type": "string",
+      "pattern": "^[a-z][a-z0-9_]{1,39}$",
+      "description": "The call-centre queue that handled the call. Known values: billing, technical_support, sales, cancellations, general. A consumer must tolerate an unknown one.",
+      "examples": ["billing"]
+    },
+    "agent": {
+      "type": "object",
+      "required": ["id", "name"],
+      "properties": {
+        "id": {"type": "string", "pattern": "^AGT-[0-9]{3,6}$", "examples": ["AGT-0042"]},
+        "name": {"type": "string", "minLength": 1, "maxLength": 120}
+      }
+    },
+    "customer": {
+      "type": "object",
+      "required": ["id"],
+      "properties": {
+        "id": {"type": "string", "pattern": "^CUST-[0-9]{4,10}$", "examples": ["CUST-004811"]},
+        "name": {"type": "string", "minLength": 1, "maxLength": 120},
+        "phone_masked": {
+          "type": "string",
+          "pattern": "^[+0-9 ]*[*]{2,}[0-9]{2,4}$",
+          "description": "Already masked by the producer. A consumer must never receive, and must refuse to store, an unmasked number.",
+          "examples": ["+44 *******1234"]
+        }
+      }
+    },
+    "language": {
+      "type": "string",
+      "pattern": "^[a-z]{2}(-[A-Z]{2})?$",
+      "examples": ["en-GB"]
+    },
+    "outcome": {
+      "type": "string",
+      "pattern": "^[a-z][a-z_]{1,39}$",
+      "description": "Known values: resolved, escalated, callback_scheduled, transferred, abandoned. A consumer must tolerate an unknown one.",
+      "examples": ["resolved"]
+    },
+    "csat": {
+      "type": ["integer", "null"],
+      "minimum": 1,
+      "maximum": 5,
+      "description": "Post-call satisfaction score, or null when the customer gave none."
+    },
+    "tags": {
+      "type": "array",
+      "maxItems": 20,
+      "items": {"type": "string", "pattern": "^[a-z0-9][a-z0-9_-]{0,39}$"}
+    },
+    "transcript": {
+      "type": "array",
+      "minItems": 1,
+      "maxItems": 400,
+      "description": "The whole call, in spoken order.",
+      "items": {
+        "type": "object",
+        "required": ["speaker", "text"],
+        "properties": {
+          "speaker": {"enum": ["agent", "customer"]},
+          "text": {"type": "string", "minLength": 1, "maxLength": 2000},
+          "offset_s": {"type": "number", "minimum": 0, "description": "Seconds from started_at."}
+        }
+      }
+    }
+  }
+}

@@ -7,7 +7,7 @@
 openapi: 3.1.0
 info:
   title: agent-app API
-  version: 1.6.0
+  version: 1.7.0
   description: Frozen HTTP contract between the backend and its consumers. Changes are made here only,
     in a dedicated commit, before any implementation.
 servers:
@@ -766,6 +766,67 @@ paths:
             application/json:
               schema:
                 $ref: '#/components/schemas/ErrorResponse'
+  /v1/calls:
+    get:
+      tags:
+      - calls
+      summary: The most recent call-centre calls
+      description: Calls the call worker has indexed and that are inside the retention window, most recently
+        ENDED first, capped at 50. Metadata only — the transcript is on the detail path. Calls are
+        organisation data, not an account's own, so every signed-in account sees the same list;
+        contracts/README.md § "Call-centre calls" says why and what that costs. An empty array is a normal
+        state, not a 404.
+      operationId: listCalls
+      security:
+      - cookieAuth: []
+      responses:
+        '200':
+          description: Up to 50 calls, newest first.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/CallListResponse'
+        '401':
+          description: There is no valid session (`AUTH_REQUIRED`).
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+  /v1/calls/{call_id}:
+    get:
+      tags:
+      - calls
+      summary: One call, with its whole transcript
+      description: The latest event received for this call_id, as indexed. A call_id never received, one past
+        retention, one that was refused at ingest and a malformed id all answer 404 identically.
+      operationId: getCall
+      security:
+      - cookieAuth: []
+      parameters:
+      - name: call_id
+        in: path
+        required: true
+        schema:
+          type: string
+      responses:
+        '200':
+          description: The call.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/CallResponse'
+        '401':
+          description: There is no valid session (`AUTH_REQUIRED`).
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+        '404':
+          description: No such call inside the retention window (`CALL_NOT_FOUND`).
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
 components:
   securitySchemes:
     cookieAuth:
@@ -781,8 +842,8 @@ components:
           type: string
           description: 'A stable machine-readable reason. Known values: AUTH_REQUIRED, AUTH_BAD_CREDENTIALS,
             AUTH_EMAIL_TAKEN, AUTH_SIGNUP_CLOSED, AUTH_CROSS_ORIGIN, AUTH_RATE_LIMITED, THREAD_NOT_FOUND,
-            DOCUMENT_NOT_FOUND, DOCUMENT_QUOTA_EXCEEDED.
-            The last three are not about auth at all; this schema keeps its name for the ordinary reason
+            DOCUMENT_NOT_FOUND, DOCUMENT_QUOTA_EXCEEDED, CALL_NOT_FOUND.
+            The last four are not about auth at all; this schema keeps its name for the ordinary reason
             that renaming it would change a generated type name in every consumer for no wire benefit.
             Consumers MUST
             tolerate an unknown code by falling back to `message` — codes are added additively and a
@@ -797,6 +858,164 @@ components:
       - message
       title: AuthError
       description: 'One semantic failure: why, in a form both code and people can read.'
+    Call:
+      allOf:
+      - $ref: '#/components/schemas/CallSummary'
+      - type: object
+        properties:
+          tags:
+            type: array
+            items:
+              type: string
+          transcript:
+            type: array
+            items:
+              $ref: '#/components/schemas/CallTurn'
+            description: The whole call, in spoken order, exactly as the latest event carried it.
+        required:
+        - tags
+        - transcript
+      title: Call
+      description: One call and its transcript. Fields mirror contracts/events/call-completed.v1.schema.json;
+        the event is the source, this is the indexed copy.
+    CallCitation:
+      properties:
+        marker:
+          type: integer
+          minimum: 1
+          description: 1-based within THIS message's call_citations, contiguous, and what the reply's text
+            refers to as `[1]`. Same rules as Citation.marker.
+        call_id:
+          type: string
+          description: The call this came from. May since have passed retention, in which case the detail
+            path answers 404 — a consumer must handle that.
+        started_at:
+          type: string
+          format: date-time
+        queue:
+          type: string
+        agent_name:
+          type: string
+          description: A snapshot taken when the answer was written, like Citation.filename.
+        snippet:
+          type: string
+          description: Transcript text that was put in front of the model, truncated for display.
+      type: object
+      required:
+      - marker
+      - call_id
+      - started_at
+      - queue
+      - agent_name
+      - snippet
+      title: CallCitation
+      description: One call supplied to the model for one answer, and AT MOST ONE PER CALL per message.
+        Says the model was GIVEN this text, never that it used it — the same promise Citation makes.
+    CallListResponse:
+      properties:
+        calls:
+          type: array
+          items:
+            $ref: '#/components/schemas/CallSummary'
+      type: object
+      required:
+      - calls
+      title: CallListResponse
+    CallResponse:
+      properties:
+        call:
+          $ref: '#/components/schemas/Call'
+      type: object
+      required:
+      - call
+      title: CallResponse
+    CallSummary:
+      properties:
+        call_id:
+          type: string
+        started_at:
+          type: string
+          format: date-time
+        ended_at:
+          type: string
+          format: date-time
+        direction:
+          type: string
+          enum:
+          - inbound
+          - outbound
+        queue:
+          type: string
+          description: Known values are listed in the event schema; a consumer must tolerate an unknown one.
+        agent:
+          $ref: '#/components/schemas/CallParty'
+        customer:
+          $ref: '#/components/schemas/CallParty'
+        language:
+          type: string
+        outcome:
+          type: string
+          description: Known values are listed in the event schema; a consumer must tolerate an unknown one.
+        csat:
+          anyOf:
+          - type: integer
+          - type: 'null'
+        turn_count:
+          type: integer
+          minimum: 1
+        indexed_at:
+          type: string
+          format: date-time
+          description: When the latest event for this call became searchable.
+      type: object
+      required:
+      - call_id
+      - started_at
+      - ended_at
+      - direction
+      - queue
+      - agent
+      - customer
+      - language
+      - outcome
+      - csat
+      - turn_count
+      - indexed_at
+      title: CallSummary
+      description: A call's metadata, without its transcript.
+    CallParty:
+      properties:
+        id:
+          type: string
+        name:
+          anyOf:
+          - type: string
+          - type: 'null'
+          description: Null when the event carried none. Never a phone number.
+      type: object
+      required:
+      - id
+      - name
+      title: CallParty
+    CallTurn:
+      properties:
+        speaker:
+          type: string
+          enum:
+          - agent
+          - customer
+        text:
+          type: string
+        offset_s:
+          anyOf:
+          - type: number
+          - type: 'null'
+      type: object
+      required:
+      - speaker
+      - text
+      - offset_s
+      title: CallTurn
     ChatRequest:
       properties:
         message:
@@ -1113,6 +1332,24 @@ components:
           description: The sources supplied to the model for this turn, in marker order. Present only on
             assistant turns that had any. Each entry names its document as it was AT THE TIME, so this list
             keeps meaning after a document is deleted.
+        route:
+          type: string
+          enum:
+          - documents
+          - calls
+          - general
+          description: 'Which spoke the coordinator sent THIS turn to: the caller''s own documents, the
+            call-centre calls, or a plain conversation. Assistant turns only. ABSENT on every turn stored
+            before the coordinator existed, which a consumer must treat as "not applicable". A consumer
+            must tolerate a value it does not know: spokes are added additively. Exactly one spoke
+            answers a turn.'
+        call_citations:
+          items:
+            $ref: '#/components/schemas/CallCitation'
+          type: array
+          description: The calls supplied to the model for this turn, in marker order. Present only on
+            assistant turns routed to `calls`; on those, `citations` is empty and `retrieval_consulted` is
+            false, because the knowledge base was not consulted.
       type: object
       required:
       - id
@@ -1120,8 +1357,8 @@ components:
       - content
       - created_at
       title: Message
-      description: One turn in a chat. `retrieval_consulted` and `citations` are additive and optional —
-        an assistant turn from before knowledge bases existed carries neither.
+      description: One turn in a chat. `retrieval_consulted`, `citations`, `route` and `call_citations` are
+        additive and optional — an assistant turn from before they existed carries none of them.
     RegisterRequest:
       properties:
         email:
@@ -1379,8 +1616,8 @@ components:
           enum:
           - heuristic
           - llm
-          description: How the graph decides whether to consult the knowledge base — by lexical overlap
-            with the corpus manifest, or by asking the model. Promised because it is a behavioural MODE
+          description: How the coordinator chooses a turn's spoke (and so whether the knowledge base is
+            consulted) — by lexical rules over the message and the corpus manifest, or by asking the model. Promised because it is a behavioural MODE
             rather than a tuning value. A routing figure produced under one and a routing figure
             produced under the other are not the same measurement.
       type: object
