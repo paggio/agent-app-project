@@ -23,6 +23,7 @@ from __future__ import annotations
 
 import argparse
 import glob
+import json
 import os
 import re
 import subprocess
@@ -271,6 +272,7 @@ LOOP_CALLS = {
     "vendor-contracts.sh": ("fanout.sh",),
     "slice-result.py": ("fanout.sh",),
     "harvest-contract.py": ("verify.sh",),
+    "docs-currency.py": ("verify.sh",),
     "smoke.py": ("verify.sh", "verify-remote.sh"),
     "service-owner.sh": ("verify.sh",),
     # The remote half, since docs/adr/0018. A caller with a `/` is repo-relative: the loop
@@ -672,6 +674,21 @@ def _head_sha(sub: str) -> str | None:
     return p.stdout.strip() if p.returncode == 0 else None
 
 
+def _events_for(sub: str) -> list[str]:
+    """The events schemas whose x-consumers names `sub` — what vendor-contracts.sh sends it."""
+    names = []
+    for path in sorted(glob.glob(os.path.join(ROOT, "contracts", "events", "*.schema.json"))):
+        try:
+            cons = json.load(open(path)).get("x-consumers") or []
+        except (OSError, ValueError, AttributeError):
+            fail("vendored-contracts", f"{rel(path)} is not a JSON object vendor-contracts.sh "
+                                       f"can publish")
+            continue
+        if sub in cons:
+            names.append("events/" + os.path.basename(path))
+    return names
+
+
 def check_vendored_contracts() -> None:
     for sub in SUBMODULES:
         sub_dir = os.path.join(ROOT, sub, "contracts")
@@ -692,7 +709,7 @@ def check_vendored_contracts() -> None:
         if head and locked and head != locked:
             mid_change.append(f"{sub} ({head[:7]}, lock pins {locked[:7]})")
             continue
-        for name in ("openapi.yaml", "infra-outputs.yaml"):
+        for name in ("openapi.yaml", "infra-outputs.yaml", *_events_for(sub)):
             ours = os.path.join(ROOT, "contracts", name)
             theirs = os.path.join(sub_dir, name)
             if not os.path.exists(theirs):

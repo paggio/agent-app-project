@@ -20,8 +20,7 @@ Never run two lanes in one session.
 
 - NEVER edit inside a submodule from here (`chatbot-backend/`, `chatbot-eval/`, `frontend/`,
   `infra/`). Implementation happens in a session inside that repo, or via `/ship`'s dispatch.
-- `contracts/` is owned here and only here. Product repos vendor it and verify against it;
-  they never edit it.
+- `contracts/` is owned here and only here. Product repos vendor it, verify against it, never edit it.
 - Smoke assertions are owned here too. A failing assertion means fix the cause, or change
   the criterion here on purpose — never in a product repo.
 - Harness fixes go in the ONE open `harness/` PR (the retro's, or opened from `origin/main` if none). Never slip one into a change.
@@ -32,10 +31,11 @@ Never run two lanes in one session.
 - The freeze point is the commit landing `contracts/` alone; its SHA goes in `change.yaml` as `freeze_sha`, nowhere else.
 - "Three PRs exist" is not shipped: shipped means deployed together with the smoke suite
   passing — `/dev-push` on the PR, then on the `/realign` PR — the lane runs both, and asks for review only once they are green. `docs/adr/0002`, `0018`.
+- Docs move with the code, here and in each repo: a slice whose code changed and docs did not fails verify. `docs/adr/0019`.
 - Every variable a smoke suite interpolates is declared in `stack/dev.env`. Never export one by hand.
 - Exit 1 = the thing under test failed. Exit 2 = the harness refused. See `docs/adr/0003`.
 - NEVER run `docker compose config` on `stack/compose.yml` or paste its output — it inlines
-  `env_file` and prints the real AWS credentials in `chatbot-backend/.env`. Use `make config`.
+  `env_file` and prints the real AWS credentials in `stack/secrets.env`. Use `make config`.
 - Ignore `TODO.md` — it is a personal ideas dump, not something you must maintain/populate/read into.
 - Concise EVERYWHERE, and REPLIES TO ME MOST OF ALL: lead with the result, no preamble, no
   narration, no recap. Same for comments, docs, briefs, commit messages. Verbosity is the

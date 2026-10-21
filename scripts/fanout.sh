@@ -157,6 +157,9 @@ stack and runs $CONTROL/$CHANGE_DIR/$CHANGE_SMOKE_FILE against a single origin
 whose owner is '$r' are what your slice will actually be judged on, and they run against
 your code through a reverse proxy, not against your test doubles.
 
+Your repo's docs (docs/architecture.md, README.md, CLAUDE.md) move in this branch with the
+code they describe: verify fails a slice whose code changed and whose docs did not.
+
 Finish with your repo's gates passing, then open a pull request.
 
 When you are done, print this block as the LAST thing you output. Markdown around it is

@@ -136,13 +136,15 @@ def main() -> int:
     # The assertions this repo owns that failed. smoke-remote.json is the deployed-origin
     # pass.
     failures = []
-    for name in ("smoke.json", "smoke-remote.json"):
+    # docs-currency.json is verify.sh's docs-moved-with-code assertion, in the same shape.
+    for name, label in (("smoke.json", "local"), ("smoke-remote.json", "remote"),
+                        ("docs-currency.json", "docs-currency")):
         data = read_json(os.path.join(rd, name))
         if data:
             for f in data.get("failures", []):
                 if f.get("owner") == repo:
                     f = dict(f)
-                    f["_pass"] = "remote" if "remote" in name else "local"
+                    f["_pass"] = label
                     failures.append(f)
 
     if failures:

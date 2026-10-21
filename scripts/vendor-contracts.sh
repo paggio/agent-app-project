@@ -17,6 +17,11 @@
 # contradiction in opposite directions. Publishing from the owner dissolves it: nobody
 # edits the vendored copy, and it is always current. See docs/adr/0008.
 #
+# Async event schemas, contracts/events/*.schema.json, go to exactly the submodules their
+# top-level "x-consumers" names — a first-time file has no reader yet for the rule below to
+# find, so the schema says who it binds. Missing or empty x-consumers, unparseable JSON, or a
+# consumer that is not a submodule is a refusal naming the file.
+#
 # Only the machine-checked specs are published. contracts/README.md is deliberately NOT
 # touched: each repo carries a short vendored notice pointing here, and replacing it with
 # the normative copy is a separate decision with its own cost.
@@ -38,7 +43,7 @@ while [ $# -gt 0 ]; do
     --repos) REPOS="$(echo "$2" | tr ',' ' ')"; shift ;;
     --check) CHECK=1 ;;
     --quiet) QUIET=1 ;;
-    -h|--help) sed -n '2,22p' "${BASH_SOURCE[0]}"; exit 0 ;;
+    -h|--help) sed -n '2,27p' "${BASH_SOURCE[0]}"; exit 0 ;;
     *) echo "vendor-contracts: unknown option $1" >&2; exit 2 ;;
   esac
   shift
@@ -47,6 +52,32 @@ done
 [ -d "$FROM" ] || { echo "vendor-contracts: no such contracts tree: $FROM" >&2; exit 2; }
 
 say() { [ "$QUIET" = "1" ] || echo "$@"; }
+
+# "<repo> events/<file>" per consumer, for every events schema in $FROM. Exit 2 on any
+# schema that does not say, validly, who consumes it.
+EVENTS="$(python3 - "$FROM" "$(git config -f .gitmodules --get-regexp '\.path$' | awk '{print $2}' | tr '\n' ' ')" <<'PY'
+import glob, json, os, sys
+src, subs = sys.argv[1], set(sys.argv[2].split())
+bad = []
+for path in sorted(glob.glob(os.path.join(src, "events", "*.schema.json"))):
+    name = "events/" + os.path.basename(path)
+    try:
+        doc = json.load(open(path))
+    except (OSError, ValueError) as exc:
+        bad.append(f"contracts/{name} is not valid JSON: {exc}"); continue
+    cons = doc.get("x-consumers") if isinstance(doc, dict) else None
+    if not isinstance(cons, list) or not cons or not all(isinstance(c, str) for c in cons):
+        bad.append(f"contracts/{name} has no x-consumers list naming the submodules it binds"); continue
+    unknown = [c for c in cons if c not in subs]
+    if unknown:
+        bad.append(f"contracts/{name} x-consumers names {', '.join(unknown)}, not a submodule"); continue
+    for c in dict.fromkeys(cons):
+        print(c, name)
+for b in bad:
+    print(f"vendor-contracts: {b}", file=sys.stderr)
+sys.exit(2 if bad else 0)
+PY
+)" || exit 2
 
 DRIFT=0
 for r in $REPOS; do
@@ -74,6 +105,25 @@ for r in $REPOS; do
     fi
   done
 done
+
+# Events: the consumer list is the reader, so a missing copy is drift, and the directory is
+# created. A consumer outside --repos, or not checked out, is skipped like the YAML above.
+while read -r r f; do
+  [ -n "$r" ] || continue
+  case " $REPOS " in *" $r "*) ;; *) continue ;; esac
+  [ -e "$r/.git" ] || continue
+  src="$FROM/$f"; dst="$r/contracts/$f"
+  if cmp -s "$src" "$dst" 2>/dev/null; then continue; fi
+  DRIFT=1
+  if [ "$CHECK" = "1" ]; then
+    if [ -f "$dst" ]; then say "vendor-contracts: $dst is stale"
+    else say "vendor-contracts: $dst is missing, and x-consumers names $r"; fi
+  else
+    mkdir -p "$(dirname "$dst")"
+    cp "$src" "$dst"
+    say "vendor-contracts: published -> $dst"
+  fi
+done <<< "$EVENTS"
 
 if [ "$CHECK" = "1" ]; then
   [ "$DRIFT" = "0" ] && { say "vendor-contracts: every vendored copy matches $FROM"; exit 0; }

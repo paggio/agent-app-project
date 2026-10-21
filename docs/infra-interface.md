@@ -26,7 +26,7 @@ recipe, so through `make -C infra` a destroying plan and "no state" both arrive 
 (infra's `docs/adr/0003`). The Make targets are for humans; every machine caller here uses
 `bin/infra`, and `check-docs.py [infra-invocation]` holds it.
 
-Four requirements, each because something breaks otherwise:
+The requirements, each because something breaks otherwise:
 
 - **`outputs` prints JSON on stdout and nothing else.** A single `@echo "fetching..."` in
   the recipe corrupts it into the parse-failure path. Logging goes to stderr.
@@ -85,7 +85,8 @@ can show is `/dev-push`'s, once `make dev-bootstrap` has run.
   is deployed and registration is open with a committed code.
 - `/dev-eval` (`scripts/eval-remote.sh`) reads `phoenix_base_url`, and the bearer key from
   `phoenix_api_key_secret_ref` — a plain string, or a JSON secret with one string value —
-  with the deployer role. It registers `eval-<run>@auth.test` per run.
+  with the deployer role, and `call_queue_url`, when present, as `EVAL_CALL_QUEUE_URL`. It
+  registers `eval-<run>@auth.test` per run.
 - One run per environment: `concurrency: env-dev` within a repo, the state lock across
   repos, and a re-read of what `dev` runs after the suite. Terraform's lock alone stops
   state corruption, not two runs interleaving against one origin.
