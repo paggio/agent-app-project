@@ -129,3 +129,6 @@ Two defects found after `verified`, both this repo's:
    denied ... repository does not exist"). Pin a pullable MinIO image (e.g.
    `quay.io/minio/minio` at a fixed tag) in `docker-compose.yml` and anywhere CI names it,
    keeping the service name `minio`. CI must be green on the PR.
+   **Decided 2026-10-23 (user): `cgr.dev/chainguard/minio@sha256:d88920d6a50bd0b088223b688be3b76c63e6205dbe494437f67ba1240ea12880`** — both upstream
+   MinIO registries are gone. Same server; check its entrypoint/healthcheck differences
+   (no shell, no `curl`), record the choice and the manual-update cost in an ADR.
