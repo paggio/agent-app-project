@@ -18,7 +18,8 @@ each, small requests:
   `CALL_DEAD_LETTER_QUEUE_URL`, `CALL_RETENTION_DAYS=7`, and the same datastore, embedding and
   OTLP configuration the backend has. Pod identity: `sqs:ReceiveMessage`, `DeleteMessage`,
   `ChangeMessageVisibility`, `GetQueueAttributes`, `GetQueueUrl` on the main queue;
-  `SendMessage` + `GetQueueUrl` on the DLQ. Same Bedrock rights as the backend (embeddings may
+  `SendMessage`, `GetQueueUrl` and `GetQueueAttributes` on the DLQ (the worker checks both
+  queues before it reports ready; without it the pod never passes its startup probe on dev). Same Bedrock rights as the backend (embeddings may
   be `bedrock`).
 - `call-simulator` — `python -m app.calls.simulator`, `CALL_SIMULATOR_INTERVAL_S=60`. Pod
   identity: `sqs:SendMessage`, `GetQueueUrl` on the main queue only. No datastore access.
