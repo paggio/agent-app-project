@@ -20,8 +20,11 @@
     the **same injected embedder**, metadata on every chunk for filtering. Your choice; state
     it in an ADR. Volume to design for: ~10k live calls, ~80k chunks — use the `knn_vector`
     field / ANN with metadata pre-filtering rather than brute-force cosine.
-  - Creates its queues if absent (locally ElasticMQ; on dev they exist and `GetQueueUrl`
-    succeeds). Queue credentials and endpoint come from `Settings`, the way the S3 client's
+  - Creates its queues if absent — **`GetQueueUrl` first, `CreateQueue` only on
+    `QueueDoesNotExist`** (locally ElasticMQ; on dev they exist and `GetQueueUrl` succeeds).
+    The worker only. **The simulator never creates a queue** and calls nothing but
+    `GetQueueUrl` and `SendMessage`: on dev its role allows exactly those, and an
+    `AccessDenied` on `CreateQueue` left it retrying forever, publishing nothing. Queue credentials and endpoint come from `Settings`, the way the S3 client's
     do — locally ElasticMQ takes any key; on dev, pod identity (default chain).
   - A healthcheck the stack can wait on (`call-worker` is `service_healthy` for the eval).
   - Traces to Phoenix under your project, one span per message processed.
