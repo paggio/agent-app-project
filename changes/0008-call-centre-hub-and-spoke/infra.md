@@ -26,8 +26,11 @@ each, small requests:
 - NetworkPolicies: worker → opensearch, postgres, phoenix; simulator → nothing in-cluster.
   Both need egress to SQS (through the NAT, or add an SQS interface endpoint if cheaper —
   say which and why).
-- `deploy`'s rollout check includes both Deployments. The `/healthz` the worker exposes is
-  its readiness probe.
+- `deploy`'s rollout check includes both Deployments. **The worker serves no HTTP.** It
+  touches `/tmp/call-worker.heartbeat` on every long poll (≤ ~20 s apart); its startup,
+  readiness and liveness probes are an `exec` of the same check the joined stack uses:
+  `python -c "import os,sys,time; sys.exit(0 if time.time()-os.path.getmtime('/tmp/call-worker.heartbeat')<90 else 1)"`.
+  No `containerPort`, no HTTP probe.
 
 ### 3. The deployer role
 
