@@ -22,10 +22,9 @@ frontend (tolerates absent `route`) → chatbot-eval (needs the backend's `route
 ## Deploy verification
 
 <!-- iterate:begin -->
-- **failed** — 20261021T134210Z, 2 attempt(s)
-- failed at: `smoke: assertions failed`
-- answerable: chatbot-backend
-- report: `changes/0008-call-centre-hub-and-spoke/runs/20261021T134210Z/report.md`
+- **verified-local** — 20261023T102906Z, 1 attempt(s)
+- first dispatch: infra (`--only`)
+- report: `changes/0008-call-centre-hub-and-spoke/runs/20261023T102906Z/report.md`
 <!-- iterate:end -->
 
 ## Blockers
