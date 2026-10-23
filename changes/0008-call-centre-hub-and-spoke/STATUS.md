@@ -22,9 +22,9 @@ frontend (tolerates absent `route`) → chatbot-eval (needs the backend's `route
 ## Deploy verification
 
 <!-- iterate:begin -->
-- **verified-local** — 20261023T104948Z, 1 attempt(s)
-- first dispatch: infra (`--only`)
-- report: `changes/0008-call-centre-hub-and-spoke/runs/20261023T104948Z/report.md`
+- **verified-local** — 20261023T110730Z, 1 attempt(s)
+- first dispatch: chatbot-backend (`--only`)
+- report: `changes/0008-call-centre-hub-and-spoke/runs/20261023T110730Z/report.md`
 <!-- iterate:end -->
 
 ## Blockers
