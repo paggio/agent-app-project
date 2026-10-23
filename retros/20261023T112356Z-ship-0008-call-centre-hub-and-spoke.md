@@ -5,7 +5,7 @@ run: changes/0008-call-centre-hub-and-spoke/runs/20261023T110730Z
 date: 2026-10-23
 verdict: coherent-with-warnings
 findings: 2 proposed, 9 recorded, 4 rejected
-pr: pending
+pr: https://github.com/paggio/agent-app-project/pull/37
 ---
 
 ## State audit
