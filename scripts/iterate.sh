@@ -436,6 +436,16 @@ for r in (d.get('contract_gaps') or []):
     else
       record "**Attempt $ATTEMPT — dispatch:** all slices reported OK"
     fi
+    # Each slice's own summary. It is where an agent reports what it could not fix — 0008's
+    # "gate.sh is broken", "bootstrap re-apply needed", "creds expired" — and only fanout.log
+    # ever held it, which nothing reads.
+    REASON_LINES="$(python3 -c "
+import json
+d = json.load(open('$ATT_DIR/fanout.json'))
+for r, s in sorted((d.get('repos') or {}).items()):
+    print('- \`' + r + '\` ' + str(s.get('status')) + ': ' + (s.get('reason') or '(no summary)'))
+" 2>/dev/null || true)"
+    while IFS= read -r l; do if [ -n "$l" ]; then record "$l"; fi; done <<< "$REASON_LINES"
   fi
 
   # ── deploy + assert ─────────────────────────────────────────────────────────
@@ -549,6 +559,9 @@ except Exception:
     if [ "$FAULT" = "harness" ]; then
       record "This failed in the harness rather than in a slice — the stage name above says"
       record "where. Fix it in this repo; there is nothing for a product-repo agent to do."
+    elif [ "$FAULT" = "environment" ]; then
+      record "The provider rejected the stack's credentials, so no repair was dispatched."
+      record "Refresh \`stack/secrets.env\` (\`make login\`) or re-run with \`CHAT_MODEL=echo\`."
     else
       record "No repo could be held answerable for this failure — it happened before any"
       record "owned assertion ran. This is a harness or environment problem, not a slice"

@@ -78,6 +78,8 @@ printed.
   recording the configuration is what turns "why did that fail" into a one-line answer. If
   it bites again *with* the reporting in place, the answer is a `fault: environment` class
   in `docs/adr/0003`, which two retrospectives have now asked for.
+  It bit again in 0008, routed to `chatbot-eval`; `verify.sh` now sets `fault: environment`
+  when a container log shows the provider rejecting the credentials, and no repair is dispatched.
 - **A fourth layer in `dev-env.sh`.** Three was already the number 0006 said to justify
   before generalising. The justification is that this layer reads a file that did not exist
   then and is the one place a person is now told to put local configuration.
