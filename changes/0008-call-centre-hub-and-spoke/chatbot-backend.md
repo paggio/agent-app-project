@@ -116,3 +116,16 @@ belong to the control repo: fix the cause, never the assertion.
 
 - `BACKEND_IMAGE_TAG` is bumped to `local-0.1.0` in the control repo; nothing to do here.
 - Every new `Settings` field has a default that works in your own `make up`.
+
+## Corrected, 2026-10-23 — after the remote pass
+
+Two defects found after `verified`, both this repo's:
+
+1. **`.claude/hooks/gate.sh` is broken on this branch.** Commit `3e6f6d3` pasted the docs-check
+   block over each `exit 0`; the hook now `exit 0`s at line 16 before ruff, mypy or pytest run.
+   Restore the hook from `origin/main` and add the docs check ONCE, after the existing gates.
+   Then run the restored hook by hand and fix whatever it reports.
+2. **CI `integration` is red: `minio/minio` no longer exists on Docker Hub** ("pull access
+   denied ... repository does not exist"). Pin a pullable MinIO image (e.g.
+   `quay.io/minio/minio` at a fixed tag) in `docker-compose.yml` and anywhere CI names it,
+   keeping the service name `minio`. CI must be green on the PR.
