@@ -22,9 +22,8 @@ frontend (tolerates absent `route`) → chatbot-eval (needs the backend's `route
 ## Deploy verification
 
 <!-- iterate:begin -->
-- **verified-local** — 20261023T121520Z, 1 attempt(s)
-- first dispatch: chatbot-backend (`--only`)
-- report: `changes/0008-call-centre-hub-and-spoke/runs/20261023T121520Z/report.md`
+- **verified-local** — 20261102T095412Z, 1 attempt(s)
+- report: `changes/0008-call-centre-hub-and-spoke/runs/20261102T095412Z/report.md`
 <!-- iterate:end -->
 
 ## Remote — `verified`
@@ -41,7 +40,7 @@ frontend (tolerates absent `route`) → chatbot-eval (needs the backend's `route
   registries are gone). All four PRs CI-green.
 - Local runs used `CHAT_MODEL=echo`: the session in `stack/secrets.env` had expired, which
   500'd every turn under `bedrock` in the first run.
-- `dev` is up and billing — `make dev-down` when done.
+- `dev` torn down 2026-10-24 (`make dev-down`); the verdict above stands at these heads.
 
 ## Blockers
 
