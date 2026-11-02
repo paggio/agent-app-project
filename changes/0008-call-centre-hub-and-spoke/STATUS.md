@@ -28,7 +28,7 @@ frontend (tolerates absent `route`) → chatbot-eval (needs the backend's `route
 
 ## Remote — `verified`
 
-- [dev-push 41462864294](https://github.com/Paggio/agent-app-project/actions/runs/41462864294) (2026-11-02), at the final PR heads:
+- [dev-push 41477228117](https://github.com/Paggio/agent-app-project/actions/runs/41477228117) (2026-11-02, after the amendment; backend `2182d09`), at the final PR heads:
   **77 passed, 0 failed, 17 from `smoke.yaml`**, through `https://d2ts770wgdk23w.cloudfront.net`.
 - Criterion 19: deploy signed in as `operator@agentapp.test` (app) and `admin` (Phoenix)
   with `agentapp/dev/operator-password`. `make -C infra credentials ENV=dev` prints both.
