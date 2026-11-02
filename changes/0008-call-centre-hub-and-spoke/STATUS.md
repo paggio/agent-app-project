@@ -22,8 +22,11 @@ frontend (tolerates absent `route`) → chatbot-eval (needs the backend's `route
 ## Deploy verification
 
 <!-- iterate:begin -->
-- **verified-local** — 20261102T095412Z, 1 attempt(s)
-- report: `changes/0008-call-centre-hub-and-spoke/runs/20261102T095412Z/report.md`
+- **failed** — 20261102T153724Z, 2 attempt(s)
+- first dispatch: chatbot-backend (`--only`)
+- failed at: `smoke: assertions failed`
+- answerable: chatbot-backend
+- report: `changes/0008-call-centre-hub-and-spoke/runs/20261102T153724Z/report.md`
 <!-- iterate:end -->
 
 ## Remote — `verified`
@@ -49,6 +52,8 @@ User, after inspecting dev's Phoenix: every root span is kind `unknown` and the 
 illustration. Added criteria 21–24 (worker traces in `chatbot-backend-calls`; chat turns
 tagged `conversation`/`route:<route>` as `CHAIN`; other API spans `api`; a Mermaid diagram
 generated from the graph, test-guarded). Backend slice only; no contract change.
+Criterion 22 contradicted baseline `the-graph-run-is-nested-under-it` (no CHAIN at the
+root); the backend agent named it and stopped. That step now selects `name=LangGraph`.
 
 ## Blockers
 

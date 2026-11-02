@@ -881,12 +881,13 @@ steps:
 
   - name: the-graph-run-is-nested-under-it
     owner: chatbot-backend
-    GET: /v1/projects/${PHOENIX_PROJECT_NAME}/spans?trace_id=${chat_trace}&span_kind=CHAIN
+    GET: /v1/projects/${PHOENIX_PROJECT_NAME}/spans?trace_id=${chat_trace}&span_kind=CHAIN&name=LangGraph
     base: ${PHOENIX_BASE}
     contract: false
     tags: [local]
     retry: {attempts: 15, delay: 2.0}
-    # Both clauses, and they need each other. A LangGraph run given its own tracer provider
+    # By name: since 0008 the HTTP root of a chat turn is itself a CHAIN (tagged
+    # `conversation`), so "no CHAIN at the root" would forbid it. Both clauses, and they need each other. A LangGraph run given its own tracer provider
     # returns nothing here; one instrumented without the FastAPI root returns a null parent.
     # Without `body_matches` the exclusion passes vacuously on an empty list.
     expect:
