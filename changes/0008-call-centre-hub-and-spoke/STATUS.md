@@ -42,6 +42,14 @@ frontend (tolerates absent `route`) → chatbot-eval (needs the backend's `route
   500'd every turn under `bedrock` in the first run.
 - `dev` is UP for review and billing — `make dev-down` when done.
 
+## Amended, 2026-11-02 — /ship-iterate
+
+User, after inspecting dev's Phoenix: every root span is kind `unknown` and the worker's
+`call.ingest` traces bury the conversations; asked for clearer tags by origin and a graph
+illustration. Added criteria 21–24 (worker traces in `chatbot-backend-calls`; chat turns
+tagged `conversation`/`route:<route>` as `CHAIN`; other API spans `api`; a Mermaid diagram
+generated from the graph, test-guarded). Backend slice only; no contract change.
+
 ## Blockers
 
 - None. Bootstrap re-applied 2026-10-23 (2 added, 1 changed, 0 destroyed).

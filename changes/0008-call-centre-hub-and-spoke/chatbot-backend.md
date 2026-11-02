@@ -1,5 +1,9 @@
 # 0008 — chatbot-backend slice
 
+> **Amended 2026-11-02 (`/ship-iterate`)** — your branch already implements §1–4 and the
+> correction at the end. Do the new § "Amended, 2026-11-02" at the bottom. Nothing is
+> removed.
+
 ## What to build
 
 ### 1. The call pipeline — a second and third entrypoint of this image
@@ -132,3 +136,37 @@ Two defects found after `verified`, both this repo's:
    **Decided 2026-10-23 (user): `cgr.dev/chainguard/minio@sha256:d88920d6a50bd0b088223b688be3b76c63e6205dbe494437f67ba1240ea12880`** — both upstream
    MinIO registries are gone. Same server; check its entrypoint/healthcheck differences
    (no shell, no `curl`), record the choice and the manual-update cost in an ADR.
+
+## Amended, 2026-11-02 — Phoenix tags and a generated graph diagram
+
+Criteria 21–24. Today every root span shows kind `unknown` in Phoenix, and one `call.ingest`
+trace a minute buries the conversations. Make them filterable. Nothing is removed.
+
+1. **The worker's own project.** New setting `PHOENIX_CALLS_PROJECT_NAME`, default
+   `chatbot-backend-calls`; `app.calls.worker` registers its tracer under it, not
+   `PHOENIX_PROJECT_NAME`. Add it to the `call-worker` environment in `docker-compose.yml`
+   as `${PHOENIX_CALLS_PROJECT_NAME:-chatbot-backend-calls}`. The API keeps
+   `chatbot-backend`. Every `call.ingest` span: `openinference.span.kind` = `CHAIN`, tag
+   `call-ingest` (OpenInference `tag.tags`).
+2. **Root spans of the API.** Every root HTTP span gets `tag.tags` containing `api`. The root
+   span of `POST /v1/threads/{thread_id}/messages` additionally gets
+   `openinference.span.kind` = `CHAIN`, tags `conversation` and `route:<route>`, and
+   OpenInference `metadata` `{"route": "<route>"}` — the route the turn was answered by,
+   known only after the graph ran, so set it on the root span before the response ends
+   (`core/telemetry.py` already explains why a span ended before `http.response.start`
+   discards attributes). `POST /v1/chat`: `api` only. Phoenix returns these flattened —
+   `tag.tags`, `metadata.route` — and the smoke reads exactly those keys.
+3. **The graph diagram from the code.** A script (and `make graph`) writes the Mermaid
+   output of the compiled turn graph (`get_graph().draw_mermaid()`, built with stub
+   dependencies, no network) between markers in `docs/graph.md`, as a ```mermaid block
+   GitHub renders. Keep the ASCII sketch or replace it — one picture, not two disagreeing.
+   A unit test regenerates it and fails when the committed block differs.
+4. **Docs**: `docs/architecture.md` (the two Phoenix projects, the tags and how to filter on
+   them), `README.md`, `CLAUDE.md` (`make graph`), and the add-a-graph-spoke skill (re-run
+   `make graph`).
+
+Verification: unit tests for the tags on each kind of root span and the worker's project,
+the diagram test, `make contract`, the repo's gate. Smoke: the four new Phoenix steps in
+`smoke.yaml` (`a-chat-turn-is-a-tagged-conversation`, `a-non-chat-request-is-tagged-api-only`,
+`call-ingestion-traces-go-to-their-own-project`, `no-call-ingestion-trace-in-the-chat-project`).
+Infra sets nothing for this: on dev the default names the calls project.

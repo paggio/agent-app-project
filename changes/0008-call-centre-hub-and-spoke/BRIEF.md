@@ -83,7 +83,21 @@ Documentation:
     own gate fails when code moves without docs. Oracle: each repo's gate, the control
     repo's `docs-currency` check, and review.
 
+Tracing and the graph diagram (amended 2026-11-02):
+
+21. Call ingestion traces go to Phoenix project `chatbot-backend-calls`
+    (`PHOENIX_CALLS_PROJECT_NAME`), never to `chatbot-backend`; each `call.ingest` span has
+    span kind `CHAIN` and tag `call-ingest`.
+22. The root span of a chat turn (`POST /v1/threads/{thread_id}/messages`) has span kind
+    `CHAIN`, tags `api`, `conversation` and `route:<route>`, and `metadata.route`.
+23. Every other root span the API produces has tag `api` and not `conversation`.
+24. `chatbot-backend/docs/graph.md` embeds a Mermaid diagram generated from the compiled
+    graph; a backend test fails when the committed diagram differs from the code.
+
 ## A gap in the oracle
+
+- **24 has no smoke step**: a doc is not served. The backend's test suite (gate and PR CI)
+  is its oracle.
 
 - **19 has no smoke step.** The password is a `secret_ref` and is never exported to a suite;
   infra's deploy check is the oracle and a failure there fails the remote pass at deploy.
@@ -106,6 +120,12 @@ Documentation:
   makes their answers move every minute.
 - **The eval and the simulator as Kubernetes jobs of the eval image** — no eval image is
   deployed; the simulator ships in the backend image instead.
+
+- **Tags on the eval's spans, a Phoenix dashboard, renaming existing spans** — not asked
+  for; the three tags above are what makes the Traces list filterable.
+- **Tags on `POST /v1/chat`** — stateless, routes nothing (criterion 7); it gets `api` only.
+- **An infra change for the calls project** — the backend's default names it; dev sets
+  nothing new.
 
 ## Contract changes
 

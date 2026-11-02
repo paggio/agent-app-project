@@ -88,6 +88,7 @@ steps:
     capture:
       latest_call_id: calls.0.call_id
       latest_queue: calls.0.queue
+      calls_list_trace: header:X-Trace-Id
 
   - name: a-simulated-call-carries-its-transcript
     owner: chatbot-backend
@@ -142,6 +143,8 @@ steps:
               - marker: 1
                 call_id: ${latest_call_id}
     retry: {attempts: 3, delay: 3.0}
+    capture:
+      calls_turn_trace: header:X-Trace-Id
 
   - name: a-queue-question-cites-only-that-queue
     owner: chatbot-backend
@@ -176,6 +179,34 @@ steps:
             route: general
             retrieval_consulted: false
       body_excludes: '"call_citations"\s*:\s*\[\s*\{|"citations"\s*:\s*\[\s*\{'
+
+  # ─────────────────────────── Phoenix tags (21–23; amended 2026-11-02). Attributes come back
+  # flattened: `tag.tags`, `metadata.route`. Retries are the batch export's schedule.
+
+  - name: a-chat-turn-is-a-tagged-conversation
+    owner: chatbot-backend
+    tags: [local]
+    GET: /v1/projects/${PHOENIX_PROJECT_NAME}/spans?trace_id=${calls_turn_trace}&name=POST%20%2Fv1%2Fthreads%2F%7Bthread_id%7D%2Fmessages
+    base: ${PHOENIX_BASE}
+    contract: false
+    retry: {attempts: 15, delay: 2.0}
+    # Criterion 22.
+    expect:
+      status: 200
+      body_matches: '(?s)^(?=.*"span_kind":\s*"CHAIN")(?=.*"tag\.tags":\s*\[[^\]]*"conversation")(?=.*"tag\.tags":\s*\[[^\]]*"route:calls")(?=.*"tag\.tags":\s*\[[^\]]*"api")(?=.*"metadata\.route":\s*"calls")'
+
+  - name: a-non-chat-request-is-tagged-api-only
+    owner: chatbot-backend
+    tags: [local]
+    GET: /v1/projects/${PHOENIX_PROJECT_NAME}/spans?trace_id=${calls_list_trace}&name=GET%20%2Fv1%2Fcalls
+    base: ${PHOENIX_BASE}
+    contract: false
+    retry: {attempts: 15, delay: 2.0}
+    # Criterion 23.
+    expect:
+      status: 200
+      body_matches: '"tag\.tags":\s*\[[^\]]*"api"'
+      body_excludes: '"conversation"'
 
   - name: a-document-for-the-coordinator
     owner: chatbot-backend
@@ -314,6 +345,29 @@ steps:
             - speaker: customer
               text: I was charged twice for the Larkspur plan in October.
             - speaker: agent
+
+  - name: call-ingestion-traces-go-to-their-own-project
+    owner: chatbot-backend
+    tags: [local]
+    GET: /v1/projects/${PHOENIX_CALLS_PROJECT_NAME}/spans?name=call.ingest&limit=1000
+    base: ${PHOENIX_BASE}
+    contract: false
+    retry: {attempts: 15, delay: 2.0}
+    # Criterion 21: the call this suite published, ingested, in the calls project.
+    expect:
+      status: 200
+      body_matches: '(?s)^(?=.*"CALL-SMOKE${SMOKE_RUN_ID}")(?=.*"span_kind":\s*"CHAIN")(?=.*"tag\.tags":\s*\[[^\]]*"call-ingest")'
+
+  - name: no-call-ingestion-trace-in-the-chat-project
+    owner: chatbot-backend
+    tags: [local]
+    GET: /v1/projects/${PHOENIX_PROJECT_NAME}/spans?name=call.ingest&limit=1000
+    base: ${PHOENIX_BASE}
+    contract: false
+    # Criterion 21. After the step above, so the worker has exported.
+    expect:
+      status: 200
+      body_excludes: '"CALL-SMOKE${SMOKE_RUN_ID}"'
 
   - name: the-sentinel-is-readable
     owner: chatbot-backend
