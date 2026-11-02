@@ -339,7 +339,7 @@ jobs:
             jq -r --arg pw "${pw:-unreadable — make -C infra credentials ENV=dev SHOW=1}" '"\n**Sign in** (dev only)\n\n" +
               "| | URL | user | password |\n|---|---|---|---|\n" +
               "| app | \(.app_base_url) | `\(.operator_login_email)` | `\($pw)` |\n" +
-              "| Phoenix | \(.phoenix_base_url) | `admin` | `\($pw)` |"' "$io" >> "$body"
+              "| Phoenix | \(.phoenix_base_url) | `admin@localhost` | `\($pw)` |"' "$io" >> "$body"
           fi
           if [ -n "$PR" ]; then gh pr comment "$PR" -R "$REPO" --body-file "$body" || true; fi
 
