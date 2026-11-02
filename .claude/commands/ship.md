@@ -139,8 +139,8 @@ Route on the outcome:
 | `deployed-partial` | A `/dev-push-<repo>` run: one repo rebuilt, the others carried at what `dev` ran. Evidence about that repo, never `verified`. |
 | `contract-gap` | A slice reported it cannot be built against the frozen contract, and named the gap. Do NOT patch around it: go back to phase 2, re-freeze, update `freeze_sha`, re-run. |
 | `failed` | Read `runs/<ts>/attempt-*/failure-*.md` — that is exactly what the agents were given. Then `/ship-correct <change>: <what is wrong>`, which turns the objection into a failing assertion and routes it to the repo answerable. An assertion is fixed here, never in a product repo. |
-| `blocked` | A precondition was unmet, so nothing was dispatched and nothing deployed. There is no deploy evidence to read. Fix what the dispatcher named. |
-| `unattributable` | The failure could not be pinned on a slice. Check `verify.json`'s `fault`: `harness` means it is this repo's bug; `environment` means the provider rejected `stack/secrets.env` — `make login`, or `CHAT_MODEL=echo`. |
+| `blocked` | A precondition was unmet — the dispatcher refused, or `verify.json` says `fault: environment` (Docker down, `stack/secrets.env` rejected: `make login`, or `CHAT_MODEL=echo`). Nothing about the change was asserted and `STATUS.md` is left alone. Fix what is named and re-run. |
+| `unattributable` | The failure could not be pinned on a slice; `fault: harness` means it is this repo's bug. |
 
 ### 5b — The remote pass, when the change deploys
 

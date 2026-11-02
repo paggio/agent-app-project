@@ -246,7 +246,9 @@ fail_stage() {
 # ------------------------------------------------------------------- preflight
 stage "preflight"
 
-docker info >/dev/null 2>&1 || fail_stage "preflight: docker daemon unreachable" "" harness
+# A stopped daemon is the machine, not this repo: `harness` sent 0008's amendment to "fix it
+# in this repo" and overwrote STATUS.md's verified record with `unattributable`.
+docker info >/dev/null 2>&1 || fail_stage "preflight: docker daemon unreachable — start Docker and re-run" "" environment
 
 # Every slice, infra included — fanout.sh switches it to feat/<change> like any other, so
 # the old exemption meant an infra slice was verified against whatever was checked out.
