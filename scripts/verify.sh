@@ -143,6 +143,17 @@ finish() {
   if [ "$STATUS" != "pass" ]; then
     note "capturing container logs into $RUN_DIR"
     ./scripts/stack.sh dump "$RUN_DIR" || true
+    # A provider refusing the stack's credentials is no slice's fault, and routing it as one
+    # burned a repair dispatch in 0002, 0003, 0005, 0006 and 0008. docs/adr/0017 named this
+    # class as the answer if it recurred with the reporting in place; it did.
+    if [ "$FAULT" = "slice" ]; then
+      rejected="$(grep -lE 'UnrecognizedClientException|ExpiredTokenException' \
+                    "$RUN_DIR"/*.container.log 2>/dev/null | xargs -n1 basename 2>/dev/null | tr '\n' ' ' || true)"
+      if [ -n "$rejected" ]; then
+        FAULT="environment"; OWNERS=""
+        FAILED_STAGE="$FAILED_STAGE; the provider rejected the stack's credentials (${rejected% }) — refresh stack/secrets.env (make login) or run CHAT_MODEL=echo"
+      fi
+    fi
   fi
   if [ "$KEEP_UP" = "1" ]; then
     note "stack left running (--keep-up) at $BASE — tear down with ./scripts/stack.sh down"
@@ -208,6 +219,7 @@ PY
     note "FAIL — $CHANGE failed at: $FAILED_STAGE"
     [ -n "$OWNERS" ] && note "answerable repo(s): $OWNERS"
     [ "$FAULT" = "harness" ] && note "fault: harness — fix this in the control repo, not in a product repo"
+    [ "$FAULT" = "environment" ] && note "fault: environment — nothing for a product repo to repair"
     note "evidence: $RUN_DIR"
   fi
   exit $code
@@ -234,7 +246,9 @@ fail_stage() {
 # ------------------------------------------------------------------- preflight
 stage "preflight"
 
-docker info >/dev/null 2>&1 || fail_stage "preflight: docker daemon unreachable" "" harness
+# A stopped daemon is the machine, not this repo: `harness` sent 0008's amendment to "fix it
+# in this repo" and overwrote STATUS.md's verified record with `unattributable`.
+docker info >/dev/null 2>&1 || fail_stage "preflight: docker daemon unreachable — start Docker and re-run" "" environment
 
 # Every slice, infra included — fanout.sh switches it to feat/<change> like any other, so
 # the old exemption meant an infra slice was verified against whatever was checked out.

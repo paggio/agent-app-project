@@ -30,3 +30,6 @@ stack/secrets.env
 # A stray import leaves one of these behind; a committed .pyc is one careless add away.
 __pycache__/
 *.pyc
+
+# kubeconfigs written by `infra.sh kubeconfig` (make k9s, make dev-index).
+.kube/
