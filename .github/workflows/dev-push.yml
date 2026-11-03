@@ -330,7 +330,18 @@ jobs:
             echo "[run]($RUN_URL) · evidence artifact \`dev-push-evidence\`"
           } > evidence/comment.md
           cat evidence/comment.md >> "$GITHUB_STEP_SUMMARY"
-          if [ -n "$PR" ]; then gh pr comment "$PR" -R "$REPO" --body-file evidence/comment.md || true; fi
+          # Sign-in details go on the PR only: never the step summary or the artifact.
+          body="$RUNNER_TEMP/comment.md"; cp evidence/comment.md "$body"
+          io=evidence/run/infra-outputs.json
+          if [ -f "$io" ] && ref="$(jq -er '.operator_password_secret_ref' "$io")"; then
+            pw="$(aws secretsmanager get-secret-value --secret-id "$ref" --query SecretString --output text 2>/dev/null)" || pw=""
+            [ -n "$pw" ] && echo "::add-mask::$pw"
+            jq -r --arg pw "${pw:-unreadable — make -C infra credentials ENV=dev SHOW=1}" '"\n**Sign in** (dev only)\n\n" +
+              "| | URL | user | password |\n|---|---|---|---|\n" +
+              "| app | \(.app_base_url) | `\(.operator_login_email)` | `\($pw)` |\n" +
+              "| Phoenix | \(.phoenix_base_url) | `admin@localhost` | `\($pw)` |"' "$io" >> "$body"
+          fi
+          if [ -n "$PR" ]; then gh pr comment "$PR" -R "$REPO" --body-file "$body" || true; fi
 
       - name: Verdict
         if: always()

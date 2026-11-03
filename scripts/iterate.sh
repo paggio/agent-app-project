@@ -234,10 +234,9 @@ ASSERTPY
       echo "Do not patch around it. Go back to \`/ship\` phase 2 — re-freeze \`contracts/\`"
       echo "in a commit of its own, update \`freeze_sha\` in \`change.yaml\`, and re-run."
     elif [ "$OUTCOME" = "blocked" ]; then
-      echo "A precondition was unmet, so nothing was dispatched and nothing was deployed."
-      echo "There is no deploy evidence to read — fix what the dispatcher named above, in"
-      echo "this repo, and re-run. \`./scripts/manifest.py changes/$CHANGE --validate\`"
-      echo "names most of these before a run starts."
+      echo "A precondition was unmet — named above — so no repair was dispatched and nothing"
+      echo "here is a result about the change. Fix it and re-run. A dispatcher refusal is"
+      echo "usually named before a run by \`./scripts/manifest.py changes/$CHANGE --validate\`."
     else
       echo "Attempts exhausted with the assertions still failing. Read the failing steps"
       echo "above and the briefs at \`$RUN_ROOT/attempt-*/failure-*.md\` — those are exactly"
@@ -253,6 +252,8 @@ ASSERTPY
 update_status() {
   STATUS_FILE="$CHANGE_DIR/STATUS.md"
   [ -f "$STATUS_FILE" ] || return 0
+  # Nothing was asserted, so the last outcome still describes the branches.
+  if [ "$OUTCOME" = "blocked" ]; then say "STATUS.md left as it was (blocked)"; return 0; fi
   python3 - "$STATUS_FILE" "$OUTCOME" "$RUN_ROOT" "$TS" "$REPORT" "$ATTEMPT" "$ONLY" <<'STATUSPY'
 import json, os, re, sys
 
@@ -436,6 +437,16 @@ for r in (d.get('contract_gaps') or []):
     else
       record "**Attempt $ATTEMPT — dispatch:** all slices reported OK"
     fi
+    # Each slice's own summary. It is where an agent reports what it could not fix — 0008's
+    # "gate.sh is broken", "bootstrap re-apply needed", "creds expired" — and only fanout.log
+    # ever held it, which nothing reads.
+    REASON_LINES="$(python3 -c "
+import json
+d = json.load(open('$ATT_DIR/fanout.json'))
+for r, s in sorted((d.get('repos') or {}).items()):
+    print('- \`' + r + '\` ' + str(s.get('status')) + ': ' + (s.get('reason') or '(no summary)'))
+" 2>/dev/null || true)"
+    while IFS= read -r l; do if [ -n "$l" ]; then record "$l"; fi; done <<< "$REASON_LINES"
   fi
 
   # ── deploy + assert ─────────────────────────────────────────────────────────
@@ -545,10 +556,14 @@ except Exception:
 " 2>/dev/null || true)"
   if [ -z "${OWNERS// /}" ]; then
     OUTCOME="unattributable"
+    [ "$FAULT" = "environment" ] && OUTCOME="blocked"
     record ""
     if [ "$FAULT" = "harness" ]; then
       record "This failed in the harness rather than in a slice — the stage name above says"
       record "where. Fix it in this repo; there is nothing for a product-repo agent to do."
+    elif [ "$FAULT" = "environment" ]; then
+      record "The environment, not a slice — the stage above names what to fix (Docker, or"
+      record "\`make login\` for rejected credentials). No repair was dispatched."
     else
       record "No repo could be held answerable for this failure — it happened before any"
       record "owned assertion ran. This is a harness or environment problem, not a slice"

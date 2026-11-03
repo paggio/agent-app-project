@@ -26,7 +26,7 @@ REPOS := chatbot-backend chatbot-eval frontend infra
 .DEFAULT_GOAL := help
 .PHONY: help up down restart ps logs rebuild config urls open health chat smoke verify iterate \
         e2e eval creds phoenix-durability repos lock prs check check-docs init clean \
-        login push-gh-creds gh-setup dev-bootstrap dev-push dev-eval dev-up dev-down dev-status
+        login push-gh-creds gh-setup dev-bootstrap dev-push dev-eval dev-up dev-down dev-status k9s dev-index
 
 help: ## Show this list
 	@echo "The full local stack — backend, datastores, frontend, proxy — on one origin."
@@ -191,6 +191,12 @@ dev-status: ## The last deploys and teardowns, and what dev runs now
 	@gh run list -R Paggio/agent-app-project --workflow dev-down.yml --limit 3
 	@./scripts/with-aws.sh ./scripts/infra.sh outputs ENV=dev 2>/dev/null \
 		|| echo "  (no outputs: dev is down, infra is not checked out, or the session expired)"
+
+k9s: ## k9s on the dev cluster, namespace agentapp (dev must be up)
+	@./scripts/with-aws.sh sh -c 'export KUBECONFIG=$$PWD/.kube/dev; ./scripts/infra.sh kubeconfig ENV=dev >/dev/null && k9s -n agentapp'
+
+dev-index: ## What dev's OpenSearch holds: counts, and the N newest call chunks: make dev-index N=3
+	@./scripts/with-aws.sh ./scripts/dev-index.sh $(or $(N),3)
 
 # ── across the repos ─────────────────────────────────────────────────────────────────
 # Read-only, and they stay that way: implementation happens in a session started inside

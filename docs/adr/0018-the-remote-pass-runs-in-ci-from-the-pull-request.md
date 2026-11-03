@@ -131,6 +131,9 @@ Accepted costs:
 - **The workflow runs PR code with deploy credentials, and no Environment gates it.**
   Gated to comments by `OWNER`/`MEMBER`/`COLLABORATOR`; tolerable because every repo is
   private and single-owner.
+- **The comment carries the dev sign-in**: app and Phoenix URLs, users, and the operator
+  password, read from Secrets Manager. PR only — masked in the log, absent from the step
+  summary and the artifact. Tolerable: private repos, a dev-only account.
 - **Workflow changes take effect only once merged**: `issue_comment` runs `main`'s file.
 - **`dev` is shared and last-writer-wins.** A `/dev-push` replaces what another PR
   deployed; the comment names what it replaced.

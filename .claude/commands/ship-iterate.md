@@ -77,11 +77,12 @@ a dropped requirement produces when it carried a repo's only one.
 ## 4 — Iterate
 
 ```
-./scripts/iterate.sh <change>
+./scripts/iterate.sh <change> --only <every slice whose brief changed>
 ```
 
-Full dispatch, not `--verify-only`: the slice briefs changed and each agent has to read the
-new one. The branches already exist, so each session continues its own work rather than
+Dispatch, not `--verify-only`: each agent whose brief changed has to read the new one. A
+slice whose brief did not change has nothing to read, so it is not dispatched; repair
+passes still follow `owners_failing`, and every verify asserts the whole suite. The branches already exist, so each session continues its own work rather than
 starting over, and the open pull requests update as the branches move. `prs.sh --create` is
 idempotent and keeps the existing URLs.
 
