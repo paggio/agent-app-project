@@ -1469,6 +1469,124 @@ def check_infra_invocation() -> None:
                      f"docs/infra-interface.md.")
 
 
+# --- deployment-doc: docs/deployment.md states what infra/ declares ------------------
+# The page is a map of infra/'s sizes, versions and addresses, copied by hand, and nothing
+# tied the copy to its source: a bump in infra/ left it describing the previous system.
+# Each fact is read from infra/ and must appear in the page verbatim. Self-skips with no
+# submodules (CI) or no page; `make check` and /realign run it with infra/ checked out.
+def _grab(src: str, text: str, pattern: str) -> str | None:
+    m = re.search(pattern, text, re.S)
+    if not m:
+        fail("deployment-doc", f"infra/{src} no longer matches /{pattern}/ — update "
+                               f"check_deployment_doc to where that value lives now")
+        return None
+    return m.group(1)
+
+
+def check_deployment_doc() -> None:
+    import ipaddress
+    doc_path = os.path.join(ROOT, "docs", "deployment.md")
+    infra = os.path.join(ROOT, "infra")
+    values_path = os.path.join(infra, "charts", "agentapp", "values.yaml")
+    if not (os.path.isfile(doc_path) and os.path.isfile(values_path)):
+        return
+    doc = open(doc_path).read()
+    src = {f: open(os.path.join(infra, f)).read() for f in (
+        "envs/dev/main.tf", "modules/network/main.tf", "modules/cluster/main.tf",
+        "modules/data/main.tf", "modules/data/queue.tf")}
+    values = yaml.safe_load(open(values_path))
+    dev = yaml.safe_load(open(os.path.join(infra, "charts", "agentapp", "values-dev.yaml")))
+    want: list[tuple[str, str]] = []  # (where infra/ says it, the literal the page must carry)
+
+    def tf(f: str, pattern: str) -> str | None:
+        return _grab(f, src[f], pattern)
+
+    cidr = tf("envs/dev/main.tf", r'\bcidr\s*=\s*"([\d./]+)"')
+    priv = tf("modules/network/main.tf", r"private_subnets\s*=.*?cidrsubnet\(var\.cidr,\s*(\d+),\s*i\)")
+    pub = tf("modules/network/main.tf", r"public_subnets\s*=.*?cidrsubnet\(var\.cidr,\s*(\d+),\s*\d+\s*\+\s*i\)")
+    pub_at = tf("modules/network/main.tf", r"public_subnets\s*=.*?cidrsubnet\(var\.cidr,\s*\d+,\s*(\d+)\s*\+\s*i\)")
+    if cidr:
+        want.append(("envs/dev/main.tf cidr", f"VPC {cidr}"))
+        net = ipaddress.ip_network(cidr)
+        for i in range(2):
+            if priv:
+                want.append(("modules/network private_subnets",
+                             str(list(net.subnets(prefixlen_diff=int(priv)))[i])))
+            if pub and pub_at:
+                want.append(("modules/network public_subnets",
+                             str(list(net.subnets(prefixlen_diff=int(pub)))[int(pub_at) + i])))
+    k8s = tf("envs/dev/main.tf", r'kubernetes_version\s*=\s*"([^"]+)"')
+    if k8s:
+        want.append(("envs/dev/main.tf kubernetes_version", f"Kubernetes {k8s}"))
+    cap = tf("modules/cluster/main.tf", r'capacity_type\s*=\s*"(\w+)"')
+    itype = tf("modules/cluster/main.tf", r'instance_types\s*=\s*\["([^"]+)"')
+    nodes = tf("modules/cluster/main.tf", r"desired_size\s*=\s*(\d+)")
+    if cap and itype and nodes:
+        want.append(("modules/cluster node group", f"{nodes} {cap.capitalize()} nodes {itype}"))
+    logs = tf("modules/cluster/main.tf", r'"application"\s*\{(?:(?!\nresource).)*?retention_in_days\s*=\s*(\d+)')
+    if logs:
+        want.append(("modules/cluster application log group", f"/application<br/>{logs} days"))
+    pg = tf("modules/data/main.tf", r'engine_version\s*=\s*"([^"]+)"')
+    if pg:
+        want.append(("modules/data engine_version", f"PostgreSQL {pg}"))
+    cls = tf("modules/data/main.tf", r'instance_class\s*=\s*"([^"]+)"')
+    if cls:
+        want.append(("modules/data instance_class", cls))
+    keep = tf("modules/data/queue.tf", r'"calls"\s*\{(?:(?!\nresource).)*?message_retention_seconds\s*=\s*(\d+)\s*\*\s*24')
+    keep_dlq = tf("modules/data/queue.tf", r'"calls_dlq"\s*\{(?:(?!\nresource).)*?message_retention_seconds\s*=\s*(\d+)\s*\*\s*24')
+    if keep and keep_dlq:
+        want.append(("modules/data/queue.tf retention", f"main {keep} days, DLQ {keep_dlq}"))
+    receives = tf("modules/data/queue.tf", r"maxReceiveCount\s*=\s*(\d+)")
+    if receives:
+        want.append(("modules/data/queue.tf maxReceiveCount", f"DLQ after {receives} receives"))
+
+    chart = "charts/agentapp/values.yaml"
+    for img in ("opensearch", "phoenix"):
+        want.append((f"{chart} images.{img}", values["images"][img]))
+    be = values["backend"]["autoscaling"]
+    want += [
+        (f"{chart} proxy.replicas", f"proxy ×{values['proxy']['replicas']}"),
+        (f"{chart} frontend.replicas", f"frontend ×{values['frontend']['replicas']}"),
+        (f"{chart} backend autoscaling", f"backend ×{be['minReplicas']}–{be['maxReplicas']}"),
+        (f"{chart} backend autoscaling",
+         f"HPA {be['minReplicas']}–{be['maxReplicas']}, CPU {be['targetCPUUtilizationPercentage']}%"),
+        (f"{chart} opensearch.storage", f"PVC {values['opensearch']['storage']}"),
+    ]
+    calls = values.get("calls")
+    if calls:
+        want += [(f"{chart} calls.retentionDays", f"readable for {calls['retentionDays']} days"),
+                 (f"{chart} calls.simulatorIntervalSeconds",
+                  f"every {calls['simulatorIntervalSeconds']} s")]
+    model = re.search(r"claude-([a-z]+)-(\d+)-(\d+)", dev["backend"]["env"]["BEDROCK_MODEL_ID"])
+    if model:
+        want.append(("values-dev.yaml BEDROCK_MODEL_ID",
+                     f"Claude {model.group(1).capitalize()} {model.group(2)}.{model.group(3)}"))
+    want.append(("values-dev.yaml PHOENIX_PROJECT_NAME",
+                 f"project {dev['backend']['env']['PHOENIX_PROJECT_NAME']}<br/>"))
+    for where, literal in want:
+        if literal not in doc:
+            fail("deployment-doc", f"docs/deployment.md does not say `{literal}`, which is what "
+                                   f"infra/{where} declares — update the page")
+
+    # The workload table: one row per workload, its requests → limits as the chart sets them.
+    rows = {"backend": values["backend"], "frontend": values["frontend"],
+            "proxy": values["proxy"], "opensearch": values["opensearch"],
+            "phoenix": values["phoenix"]}
+    if calls:
+        rows |= {"call-worker": calls["worker"], "call-simulator": calls["simulator"]}
+    for name, v in rows.items():
+        r = v["resources"]
+        cell = (f"{r['requests']['cpu']}/{r['requests']['memory']} → "
+                f"{r['limits']['cpu']}/{r['limits']['memory']}")
+        row = next((ln for ln in doc.splitlines() if ln.startswith(f"| {name} |")), None)
+        if row is None:
+            fail("deployment-doc", f"docs/deployment.md has no workload row `| {name} |`, and "
+                                   f"infra/{chart} deploys it — add the row")
+        elif cell not in row:
+            fail("deployment-doc", f"docs/deployment.md row `{name}` does not say `{cell}`, "
+                                   f"which is what infra/{chart} sets — update the row")
+
+
 def main() -> int:
     ap = argparse.ArgumentParser()
     ap.add_argument("--warnings-are-errors", action="store_true")
@@ -1485,6 +1603,7 @@ def main() -> int:
               check_provider_credentials, check_dev_env_inline_comments,
               check_pr_commands, check_environments, check_workflow_secrets,
               check_release_main_only, check_infra_invocation,
+              check_deployment_doc,
               report_readme_divergence)
     for fn in checks:
         try:
