@@ -3,6 +3,7 @@
 What `dev` runs, as deployed: account `740172916922`, `eu-west-1`. A `prod` would be another
 `infra/envs/<env>/` root with the same modules and chart — none exists yet. Owned by `infra/`;
 its `docs/architecture.md` is the prose and the reasons, this page is the map.
+`check-docs.py [deployment-doc]` fails when a value here disagrees with `infra/`.
 
 ## 1. The whole system
 
@@ -18,13 +19,13 @@ flowchart LR
 
   subgraph vpc["VPC 10.42.0.0/16"]
     alb["Internal ALB :80<br/>Host rule → app | Phoenix"]
-    subgraph eks["EKS cluster agentapp-dev"]
+    subgraph eks["EKS cluster agentapp-dev<br/>Kubernetes 1.36"]
       proxy["proxy ×2<br/>Caddy"]
       fe["frontend ×2"]
       be["backend ×2–4<br/>FastAPI + LangGraph"]
       worker["call-worker ×1"]
       sim["call-simulator ×1"]
-      os[("OpenSearch ×1<br/>10 Gi gp3")]
+      os[("OpenSearch ×1<br/>10Gi gp3")]
       phx["Phoenix ×1"]
     end
     rds[("RDS PostgreSQL 17<br/>db.t4g.micro<br/>chatbot + phoenix DBs")]
@@ -105,7 +106,7 @@ flowchart LR
     be["Deployment backend<br/>HPA 2–4, CPU 70%<br/>:8000"]
     worker["Deployment call-worker ×1<br/>no HTTP — heartbeat probe"]
     sim["Deployment call-simulator ×1<br/>no ingress at all"]
-    os[("StatefulSet opensearch ×1<br/>:9200 · PVC 10 Gi")]
+    os[("StatefulSet opensearch ×1<br/>:9200 · PVC 10Gi")]
     phx["Deployment phoenix ×1<br/>:6006 HTTP · :4317 gRPC"]
     jobs["Hook Jobs<br/>phoenix-db · phoenix-admin"]
     sec["Secrets<br/>backend · db-admin · phoenix"]
@@ -133,12 +134,12 @@ OpenSearch has no auth plugin, so its policy is its only access control.
 
 | Workload | Image | Requests → limits | Identity (pod identity → IAM) |
 | --- | --- | --- | --- |
-| backend | ECR `agentapp/chatbot-backend` | 250m/768Mi → 1/1.5Gi | S3 documents, Bedrock |
-| call-worker | same image, `python -m app.calls.worker` | 100m/512Mi → 1/1.5Gi | SQS receive/delete, DLQ send, Bedrock |
+| backend | ECR `agentapp/chatbot-backend` | 250m/768Mi → 1/1536Mi | S3 documents, Bedrock |
+| call-worker | same image, `python -m app.calls.worker` | 100m/512Mi → 1/1536Mi | SQS receive/delete, DLQ send, Bedrock |
 | call-simulator | same image, `python -m app.calls.simulator` | 25m/128Mi → 250m/512Mi | SQS send to the main queue only |
 | frontend | ECR `agentapp/frontend` | 25m/32Mi → 200m/128Mi | — |
 | proxy | ECR `agentapp/frontend-proxy` | 50m/64Mi → 500m/256Mi | — |
-| opensearch | `opensearchproject/opensearch:2.19.1` | 250m/1Gi → 1/1.5Gi | — |
+| opensearch | `opensearchproject/opensearch:2.19.1` | 250m/1Gi → 1/1536Mi | — |
 | phoenix | `arizephoenix/phoenix:version-20.4.0` | 100m/512Mi → 1/1Gi | — |
 
 ## 4. A chat turn
