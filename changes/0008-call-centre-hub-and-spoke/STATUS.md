@@ -28,7 +28,7 @@ frontend (tolerates absent `route`) → chatbot-eval (needs the backend's `route
 
 ## Remote — `verified`
 
-- [dev-push 41477228117](https://github.com/Paggio/agent-app-project/actions/runs/41477228117) (2026-11-02, after the amendment; backend `2182d09`), at the final PR heads:
+- [dev-push 41817426510](https://github.com/Paggio/agent-app-project/actions/runs/41817426510) (2026-11-04) (2026-11-02, after the amendment; backend `2182d09`), at the final PR heads:
   **77 passed, 0 failed, 17 from `smoke.yaml`**, through `https://d2ts770wgdk23w.cloudfront.net`.
 - Criterion 19: deploy signed in as `operator@agentapp.test` (app) and `admin` (Phoenix)
   with `agentapp/dev/operator-password`. `make -C infra credentials ENV=dev` prints both.
@@ -40,7 +40,7 @@ frontend (tolerates absent `route`) → chatbot-eval (needs the backend's `route
   registries are gone). All four PRs CI-green.
 - Local runs used `CHAT_MODEL=echo`: the session in `stack/secrets.env` had expired, which
   500'd every turn under `bedrock` in the first run.
-- `dev` torn down 2026-11-04 (`make dev-down`, nothing left); the verdict above stands at these heads.
+- `dev` is UP for review and billing — `make dev-down` when done.
 
 ## Amended, 2026-11-02 — /ship-iterate
 
