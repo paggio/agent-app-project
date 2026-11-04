@@ -76,5 +76,6 @@ agent rules. That review may open one PR fixing the tooling.
 - `CLAUDE.md` — the rules an agent follows here.
 - `docs/adr/` — decisions and their costs. Read these before proposing a redesign.
 - `docs/infra-interface.md` — what this repo requires of `infra/`.
+- `docs/deployment.md` — the deployed system as diagrams: network, cluster, data flows, deploys.
 - `docs/dev-push-caller.md` — how a product repo gets `/dev-push`.
 - `make help` — the tools for running and inspecting the joined stack.
