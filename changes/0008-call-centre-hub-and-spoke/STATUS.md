@@ -40,7 +40,7 @@ frontend (tolerates absent `route`) → chatbot-eval (needs the backend's `route
   registries are gone). All four PRs CI-green.
 - Local runs used `CHAT_MODEL=echo`: the session in `stack/secrets.env` had expired, which
   500'd every turn under `bedrock` in the first run.
-- `dev` is UP for review and billing — `make dev-down` when done.
+- `dev` torn down 2026-11-04 (`make dev-down`, nothing left); the verdict above stands at these heads.
 
 ## Amended, 2026-11-02 — /ship-iterate
 
