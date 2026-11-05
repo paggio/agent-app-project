@@ -115,8 +115,10 @@ chat: ## POST a message through the proxy: make chat MSG="hello"
 # timestamp. This passed the constant `make`, so a second `make smoke` against a stack that
 # was not torn down re-registered an account that already existed: 409, and a red baseline
 # that says nothing about the seam. `$$$$` is the shell's pid, one per invocation.
+# Alphanumeric, like verify.sh's: a suite builds contract ids from it (`CALL-SMOKE<id>`,
+# `^CALL-[0-9A-Za-z]{6,48}$`), and `make-<pid>` had the worker refuse every one.
 smoke: ## Run the baseline suite against the running stack
-	@. ./scripts/dev-env.sh && SMOKE_ORIGIN=$(BASE) SMOKE_RUN_ID=make-$$$$ \
+	@. ./scripts/dev-env.sh && SMOKE_ORIGIN=$(BASE) SMOKE_RUN_ID=make$$$$ \
 		./scripts/smoke.py smoke/baseline.yaml \
 		--base $(BASE) --contract contracts/openapi.yaml --exclude-tag remote
 
