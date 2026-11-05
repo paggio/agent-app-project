@@ -281,7 +281,9 @@ fi
 # script never touches the network. A run nobody downloaded is not in evidence.
 say ""
 say "remote passes (/dev-push evidence downloaded by scripts/dev-push.sh):"
-dp_root="runs"; [ -n "$CHANGE" ] && dp_root="changes/$CHANGE/runs"
+# /realign deploys with `dev-push.sh --lock`, which lands in runs/ even when a change is named;
+# reading changes/<change>/runs/ there showed the change's stale feat-branch deploy as latest.
+dp_root="runs"; [ -n "$CHANGE" ] && [ "$LANE" != realign ] && dp_root="changes/$CHANGE/runs"
 last_remote="$(ls -1dt "$dp_root"/dev-push-*/ 2>/dev/null | head -1 || true)"
 last_remote_json="$(find "${last_remote:-/nonexistent}" -name verify-remote.json 2>/dev/null | head -1 || true)"
 if [ -s "${last_remote_json:-}" ]; then
@@ -304,6 +306,11 @@ for repo, e in ((d.get("deploy_set") or {}).get("repos") or {}).items():
         head = p.stdout.strip()
         note = ("  = local feat head" if head == e.get("sha")
                 else f"  ≠ local feat head {head[:12] or '?'} — the PR moved after this deploy")
+    if e.get("from") == "gitlink":
+        p = subprocess.run(["git", "rev-parse", f"HEAD:{repo}"], capture_output=True, text=True)
+        head = p.stdout.strip()
+        note = ("  = this branch's gitlink" if head == e.get("sha")
+                else f"  ≠ this branch's gitlink {head[:12] or '?'} — not the pin under review")
     print(f"  {repo:16} {e.get('tag')}  {e.get('from')} ({e.get('source')}){note}")
 PY
 else
