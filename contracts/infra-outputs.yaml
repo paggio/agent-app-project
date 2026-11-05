@@ -149,3 +149,42 @@ outputs:
     kind: secret_ref
     consumers: [backend, eval]
     example: "arn:aws:secretsmanager:eu-west-1:000000000000:secret:agentapp/dev/phoenix-api-key"
+
+  call_queue_url:
+    description: >
+      The SQS queue call-centre events are published to — one CallCompleted v1 event
+      (contracts/events/call-completed.v1.schema.json) per message. The backend's call worker
+      consumes it; the simulator and a CI eval run publish to it. A value, so the remote eval
+      can be handed it; publishing still needs IAM, which is what actually guards it.
+    type: string
+    kind: value
+    consumers: [backend, eval, smoke]
+    example: "https://sqs.eu-west-1.amazonaws.com/000000000000/agentapp-dev-calls"
+
+  call_dead_letter_queue_url:
+    description: >
+      Where an event the worker cannot accept ends up — malformed, or failing after the
+      redrive limit. Never silently dropped: a call missing from search is findable here.
+    type: string
+    kind: value
+    consumers: [backend, smoke]
+    example: "https://sqs.eu-west-1.amazonaws.com/000000000000/agentapp-dev-calls-dlq"
+
+  operator_login_email:
+    description: >
+      The fixed account a person signs in to the deployed app with. Seeded by the backend at
+      startup; a `.test` address, because the backend seeds nothing else.
+    type: string
+    kind: value
+    consumers: [backend, operator]
+    example: "operator@agentapp.test"
+
+  operator_password_secret_ref:
+    description: >
+      The one password for the operator account in the app AND the Phoenix `admin` user.
+      Created by bootstrap, so it survives `dev-down` and stays the same across rebuilds. A
+      name, never a value; `make -C infra credentials ENV=dev` prints how to read it.
+    type: string
+    kind: secret_ref
+    consumers: [backend, phoenix, operator]
+    example: "agentapp/dev/operator-password"

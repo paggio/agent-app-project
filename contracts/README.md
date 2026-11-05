@@ -11,9 +11,8 @@ starts. Each product repo vendors a copy and verifies conformance in its own CI.
 | `infra-outputs.yaml` | what infra promises the app repos (ARNs, URLs, secret names) |
 
 `openapi.yaml` describes the API as the backend serves it — paths without the `/api`
-prefix, which the proxy strips before forwarding. `events/` is still an empty skeleton;
-fill it in when the first real event exists, because an invented contract is worse than no
-contract.
+prefix, which the proxy strips before forwarding. `events/` holds one JSON Schema per event
+and version; each names its consumers in `x-consumers`, which is who it is published to.
 
 `infra-outputs.yaml` is real as of `version: 1`. It has **no environment dimension on
 purpose** — the environment lives in the invocation (`make -C infra outputs ENV=dev`),
@@ -274,6 +273,45 @@ on every turn, and the decision not to is the reason it is affordable.
 and it has no knowledge base either. That is its whole shape, and the reason it survives
 alongside the chat endpoints rather than being replaced. A caller that wants the knowledge
 base posts into a chat.
+
+## Call-centre calls
+
+**One event per finished call**, `events/call-completed.v1.schema.json`, as the body of one
+message on the call queue (`call_queue_url`). Producers: the call centre — here, the
+simulator (one call per minute) and the eval. Consumer: chatbot-backend's call worker. No
+other repo reads or writes the call index: the HTTP paths below are the only way out.
+
+- **At-least-once, so `call_id` is the idempotency key.** The latest event for a call_id
+  replaces every earlier copy; redelivering one changes nothing. `event_id` distinguishes
+  publishes, never calls.
+- **Retention is seven days from `ended_at`**, in every copy the backend keeps. An event
+  already past it is refused at ingest; one that ages out disappears from search, from
+  `GET /v1/calls` and from the detail path — `404 CALL_NOT_FOUND`, the same answer as never
+  received. Citations already written into a transcript keep their snapshot.
+- **A refused event goes to the dead-letter queue**, never silently dropped. Schema-invalid
+  events go there at once — retrying a malformed message cannot fix it; a transient failure
+  goes there after the redrive limit.
+- **Calls are organisation data.** Every signed-in account reads the same calls. There are no
+  roles, so "who may read calls" is "who holds a signup code"; a role is a contract change.
+- **No phone number in the clear**, anywhere: the producer masks it, the backend refuses an
+  event whose `phone_masked` does not match the mask pattern, and the API never returns one.
+- **An event is at most 256 KiB serialised**, the queue's limit.
+
+## The coordinator and its spokes
+
+Every chat turn is answered by **exactly one spoke**, chosen by the coordinator, and the
+assistant message says which in `route`: `documents` (the caller's own knowledge base),
+`calls` (the call-centre calls) or `general` (no retrieval). The criteria the coordinator
+uses are **not promised**, for the reason the knowledge-base decision never was.
+
+- `retrieval_consulted` keeps its meaning — *the knowledge base was consulted* — so it is
+  `true` exactly when `route` is `documents`. A consumer written before `route` still reads
+  every new turn correctly.
+- A `calls` turn carries `call_citations` and an empty `citations`; a `documents` turn the
+  reverse; a `general` turn neither. Markers are 1-based within whichever list is present.
+- A message that names a call id (`CALL-…`) is about that call. The `calls` spoke must cite
+  that call when it exists, and answer that it found nothing when it does not.
+- `POST /v1/chat` stays stateless and routes nothing.
 
 ## Trace correlation
 
