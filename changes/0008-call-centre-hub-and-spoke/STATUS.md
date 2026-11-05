@@ -26,6 +26,19 @@ frontend (tolerates absent `route`) → chatbot-eval (needs the backend's `route
 - report: `changes/0008-call-centre-hub-and-spoke/runs/20261102T155712Z/report.md`
 <!-- iterate:end -->
 
+### Merged — 2026-11-05, /realign
+
+- Merged: chatbot-backend#10, frontend#9, chatbot-eval#3, infra#4 (squash, `1e3202f`),
+  agent-app-project#36. Harness on the way: #38 (`[deployment-doc]`), #39 (`make smoke`
+  run id alphanumeric — the promoted call ids are built from it).
+- `repos.lock`: chatbot-backend `479e591`, chatbot-eval `97fb443`, frontend `888fa0f`,
+  infra `1e3202f`.
+- Contract: agrees with what is served; six framework-declared 422s left unpromised.
+- Promoted to `smoke/baseline.yaml`: the calls API, the simulator, the coordinator's three
+  routes, the Phoenix tags, and queue ingestion (idempotence, retention, PII, DLQ). Not the
+  queue-filter question (backend-provable) nor the eval steps (job-produced).
+- Local baseline on a restarted stack: 103/0.
+
 ## Remote — `verified`
 
 - [dev-push 41817426510](https://github.com/Paggio/agent-app-project/actions/runs/41817426510) (2026-11-04) (2026-11-02, after the amendment; backend `2182d09`), at the final PR heads:
@@ -58,4 +71,4 @@ root); the backend agent named it and stopped. That step now selects `name=LangG
 
 ## After merge
 
-- [ ] `/realign`
+- [x] `/realign`
