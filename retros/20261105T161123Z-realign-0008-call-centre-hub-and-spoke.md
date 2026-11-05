@@ -5,7 +5,7 @@ run: none
 date: 2026-11-05
 verdict: coherent-with-warnings
 findings: 2 proposed, 5 recorded, 3 rejected
-pr: none
+pr: https://github.com/paggio/agent-app-project/pull/41
 ---
 
 ## State audit
