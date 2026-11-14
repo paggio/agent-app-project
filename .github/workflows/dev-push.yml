@@ -61,7 +61,7 @@ jobs:
       group: env-dev
       cancel-in-progress: false
     env:
-      OWNER: Paggio
+      OWNER: ${{ github.repository_owner }}
       CONTROL: agent-app-project
       GH_TOKEN: ${{ github.token }}
     steps:
@@ -84,7 +84,9 @@ jobs:
           allow=false; only=""
           if [ "$EVENT" = "issue_comment" ]; then
             # The job `if` let anything starting with /dev-push through; this is the grammar.
-            re='^/dev-push(-(backend|frontend|infra))?( --allow-destroy)?[[:space:]]*$'
+            # Any `-<repo>`: the control repo is not checked out yet, so deploy-set.py --only
+            # is what refuses a name .gitmodules does not hold.
+            re='^/dev-push(-([a-z0-9-]+))?( --allow-destroy)?[[:space:]]*$'
             [[ "$BODY" =~ $re ]] || { echo "::error::not a /dev-push command: $BODY"; exit 2; }
             only="${BASH_REMATCH[2]}"; [ -n "${BASH_REMATCH[3]}" ] && allow=true
             gh api "repos/$REPO/issues/comments/$COMMENT_ID/reactions" -f content=eyes --silent || true
@@ -109,7 +111,6 @@ jobs:
             elif [ "$IN_LOCK" = "true" ]; then mode=lock; change=""
             else echo "::error::workflow_dispatch needs change=<NNNN-slug> or lock=true"; exit 2; fi
           fi
-          case "$only" in ""|backend|frontend|infra) ;; *) echo "::error::only: $only"; exit 2 ;; esac
           case "$only" in backend) only=chatbot-backend ;; esac
           {
             echo "mode=$mode"; echo "change=$change"; echo "product=$product"; echo "only=$only"
@@ -161,25 +162,11 @@ jobs:
           submodules: false
 
       # One host alias per repo, so `git ls-remote` presents that repo's own deploy key.
-      # With every key in one agent, GitHub authenticates the first and refuses the rest.
+      # The repos are .gitmodules'; each key is found by name in the secrets.
       - name: Deploy-key aliases for ls-remote
         env:
-          K_BACKEND: ${{ secrets.DEPLOY_KEY_CHATBOT_BACKEND }}
-          K_EVAL: ${{ secrets.DEPLOY_KEY_CHATBOT_EVAL }}
-          K_FRONTEND: ${{ secrets.DEPLOY_KEY_FRONTEND }}
-          K_INFRA: ${{ secrets.DEPLOY_KEY_INFRA }}
-        run: |
-          set -euo pipefail
-          mkdir -p ~/.ssh && chmod 700 ~/.ssh
-          ssh-keyscan -t ed25519 github.com >> ~/.ssh/known_hosts 2>/dev/null
-          for pair in chatbot-backend:K_BACKEND chatbot-eval:K_EVAL frontend:K_FRONTEND infra:K_INFRA; do
-            repo="${pair%%:*}"; var="${pair#*:}"
-            printf '%s\n' "${!var}" > ~/.ssh/"$repo"; chmod 600 ~/.ssh/"$repo"
-            printf 'Host github.com-%s\n  HostName github.com\n  User git\n  IdentityFile ~/.ssh/%s\n  IdentitiesOnly yes\n' \
-              "$repo" "$repo" >> ~/.ssh/config
-          done
-          echo "DEPLOY_SET_URL_TEMPLATE=git@github.com-{repo}:$OWNER/{repo}.git" >> "$GITHUB_ENV"
-          echo "DEPLOY_SET_KEY_TEMPLATE=$HOME/.ssh/{repo}" >> "$GITHUB_ENV"
+          SECRETS: ${{ toJSON(secrets) }}
+        run: ./scripts/ci-deploy-keys.sh
 
       - uses: astral-sh/setup-uv@v5
       - uses: hashicorp/setup-terraform@v3
@@ -246,27 +233,10 @@ jobs:
           ./scripts/deploy-set.py "${args[@]}" ${ONLY:+--only "$ONLY"} \
             --current evidence/previous-outputs.json \
             --json evidence/deploy-set.json --markdown evidence/deploy-set.md
-          for r in chatbot-backend frontend; do
-            src="$(jq -r --arg r "$r" '.repos[$r].source' evidence/deploy-set.json)"
-            sha="$(jq -r --arg r "$r" '.repos[$r].sha' evidence/deploy-set.json)"
-            echo "${r//-/_}_build=$([ "$src" = built ] && echo true || echo false)" >> "$GITHUB_OUTPUT"
-            echo "${r//-/_}_sha=$sha" >> "$GITHUB_OUTPUT"
-          done
 
-      - uses: actions/checkout@v4
-        if: steps.set.outputs.chatbot_backend_build == 'true'
-        with:
-          repository: ${{ env.OWNER }}/chatbot-backend
-          ref: ${{ steps.set.outputs.chatbot_backend_sha }}
-          ssh-key: ${{ secrets.DEPLOY_KEY_CHATBOT_BACKEND }}
-          path: chatbot-backend
-      - uses: actions/checkout@v4
-        if: steps.set.outputs.frontend_build == 'true'
-        with:
-          repository: ${{ env.OWNER }}/frontend
-          ref: ${{ steps.set.outputs.frontend_sha }}
-          ssh-key: ${{ secrets.DEPLOY_KEY_FRONTEND }}
-          path: frontend
+      # Every repo the set builds, at the commit it resolved. publish.sh builds from these.
+      - name: Check out what is built
+        run: ./scripts/ci-checkout.sh evidence/deploy-set.json
 
       # The chained deployer session lasts an hour and this job may not. verify-remote.sh
       # re-assumes the role from the pushed session before each stage that reaches AWS.

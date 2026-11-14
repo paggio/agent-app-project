@@ -47,7 +47,7 @@ predated `0d97eb1`, and the lane started a `dev` apply nobody wanted
 make repos
 ```
 
-If all three submodules already **match** `repos.lock` and no change was named, nothing
+If every submodule already **matches** `repos.lock` and no change was named, nothing
 product-side moved: this is what a merged harness pull request leaves behind, and by
 `docs/adr/0009` that is the most frequent merge this repo sees. Steps 1, 4 and 5 then have
 no input — there is nothing to bump, nothing to pin, no change directory to promote from.
@@ -57,7 +57,7 @@ request: an empty bump commit names the same triple the lock already names.
 Steps 2 and 3 are the seam check and they are not optional on that basis alone. Run them
 unless you can show a diff proving nothing the stack, the baseline or `contracts/` reads
 has moved — `git diff --stat <last realign>..HEAD -- contracts/ smoke/ stack/ repos.lock
-chatbot-backend frontend infra changes/` empty is that proof. Then their result is
+$(./scripts/repos.py names) changes/` empty is that proof. Then their result is
 **`not verified`, with that diff quoted**, and never a pass. The last lane that asserted
 the seam is the last one that ran them; say which it was.
 
@@ -67,7 +67,8 @@ it, and by then you will have stopped noticing.
 ## 1 — Bring each submodule to its merged main
 
 ```
-for r in chatbot-backend chatbot-eval frontend infra; do
+for r in $(./scripts/repos.py names); do
+  [ -e "$r/.git" ] || git submodule update --init "$r"   # attached by the merged change
   git -C "$r" switch main && git -C "$r" pull --ff-only
 done
 make repos
@@ -163,7 +164,7 @@ For a change that also needs the browser, `make e2e`.
 ```
 git switch -c chore/realign-<change>
 ./scripts/lock.sh
-git add chatbot-backend chatbot-eval frontend infra repos.lock
+git add $(./scripts/repos.py names) repos.lock
 git commit -m "chore: bump submodules for <change>"
 ```
 

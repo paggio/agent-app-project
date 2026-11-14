@@ -15,7 +15,7 @@ set -euo pipefail
 ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 cd "$ROOT"
 
-CONTROL="Paggio/agent-app-project"
+CONTROL="$("$ROOT"/scripts/repos.py owner)/agent-app-project"
 CHANGE=""; JUDGE=""; PR=""; WAIT=1
 while [ $# -gt 0 ]; do
   case "$1" in

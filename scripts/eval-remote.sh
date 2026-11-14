@@ -68,7 +68,7 @@ matches = None
 if pr_set and deployed:
     want, have = shas(pr_set), shas(deployed)
     # An empty sha is a repo an --only deploy carried: unknown, so not compared.
-    matches = all(want.get(r) == have.get(r) for r in ("chatbot-backend", "frontend", "infra")
+    matches = all(want.get(r) == have.get(r) for r in want if r != "chatbot-eval"
                   if want.get(r) and have.get(r))
 json.dump({
     "outcome": outcome, "exit": int(rc), "reason": reason or None,

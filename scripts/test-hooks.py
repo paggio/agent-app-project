@@ -9,12 +9,17 @@ half matters as much as the true-positive half: the first version of this hook f
 `echo "never write into chatbot-backend/"`, and a guard that blocks ordinary work is a guard
 the agent learns to route around.
 
-BLOCK carries one case per submodule. The guard's alternation is hand-kept in one regex,
-and this is the list that fails when a repo is attached and the regex is not extended.
+The guard reads its submodule set from .gitmodules, so the per-submodule cases are generated
+from the same file: a repo attached by new-repo.sh is probed in both directions, and its
+`Edit(./<path>/**)` deny rule in .claude/settings.json is checked to exist.
 """
 import json
+import os
 import subprocess
 import sys
+
+sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
+from repos import REPOS  # noqa: E402
 
 HOOK = ".claude/hooks/no-subrepo-edits.sh"
 
@@ -29,13 +34,9 @@ BLOCK = [
     "git apply /tmp/p.diff && mv chatbot-backend/a chatbot-backend/b",
     'python3 -c "x" ; touch infra/main.tf',
     "chmod +x chatbot-backend/scripts/x.sh",
-    # One case per submodule, on purpose: the hook's alternation is hand-kept, and
-    # this list is what notices a fourth repo being attached without it being
-    # extended. Writing these two cases is itself blocked by the guard when the patch
-    # is piped through a shell, which is the guard working.
     "cp /tmp/e.py chatbot-eval/src/eval/run.py",
     "rm -rf chatbot-eval/evalset/corpus",
-]
+] + [f"touch {r}/x" for r in REPOS] + [f"echo x > ./{r}/x" for r in REPOS]
 
 ALLOW = [
     "cat CLAUDE.md",
@@ -54,7 +55,7 @@ ALLOW = [
     "wc -l chatbot-backend/CLAUDE.md frontend/CLAUDE.md infra/CLAUDE.md",
     "git -C chatbot-eval switch -c feat/0006-chatbot-eval",
     "cat chatbot-eval/evalset/questions.yaml",
-]
+] + [f"git -C {r} switch -c feat/x" for r in REPOS] + [f"cat {r}/README.md" for r in REPOS]
 
 
 def verdict(cmd: str) -> str:
@@ -72,5 +73,11 @@ for want, cases in (("block", BLOCK), ("allow", ALLOW)):
         if got != want:
             fails += 1
         print(f"  {mark} {c!r}")
+deny = set((json.load(open(".claude/settings.json")).get("permissions") or {}).get("deny") or [])
+print("MUST DENY EDIT:")
+for r in REPOS:
+    ok = f"Edit(./{r}/**)" in deny
+    fails += not ok
+    print(f"  {'ok  ' if ok else 'FAIL'} Edit(./{r}/**) in .claude/settings.json")
 print(f"\n{fails} failure(s)")
 sys.exit(1 if fails else 0)

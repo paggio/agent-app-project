@@ -20,8 +20,8 @@ case "${1:-}" in --dry-run) DRY=1 ;; "") ;; *) echo "usage: push-gh-creds.sh [--
 # Every repo whose PRs can trigger /dev-push: the control repo, and each product repo's
 # thin caller of the reusable workflow. check-docs.py [workflow-secrets] holds the names
 # below to what the workflows read.
-OWNER="Paggio"
-REPOS="agent-app-project chatbot-backend chatbot-eval frontend infra"
+OWNER="$("$ROOT"/scripts/repos.py owner)"
+REPOS="agent-app-project $("$ROOT"/scripts/repos.py names)"
 
 python3 - "$ROOT/stack/secrets.env" "$OWNER" "$REPOS" "$DRY" <<'PY'
 import datetime, re, subprocess, sys

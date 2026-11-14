@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 # Trigger the remote pass the way a reviewer does, wait for it, and print its verdict.
 #
-#   ./scripts/dev-push.sh <change> [--only backend|frontend|infra] [--allow-destroy] [--no-wait]
+#   ./scripts/dev-push.sh <change> [--only <repo>|backend] [--allow-destroy] [--no-wait]
 #   ./scripts/dev-push.sh --lock --pr <control PR> [--no-wait]
 #   ./scripts/dev-push.sh --lock [--ref <control branch>] [--no-wait]
 #
@@ -21,7 +21,7 @@ set -euo pipefail
 ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 cd "$ROOT"
 
-CONTROL="Paggio/agent-app-project"
+CONTROL="$("$ROOT"/scripts/repos.py owner)/agent-app-project"
 CHANGE=""; ONLY=""; LOCK=0; REF=""; PR_ARG=""; ALLOW=""; WAIT=1
 while [ $# -gt 0 ]; do
   case "$1" in
@@ -40,7 +40,10 @@ done
 say() { echo "dev-push: $*"; }
 refuse() { say "$*" >&2; exit 2; }
 
-case "$ONLY" in ""|backend|frontend|infra) ;; *) refuse "--only takes backend, frontend or infra" ;; esac
+if [ -n "$ONLY" ]; then
+  case " backend $("$ROOT"/scripts/repos.py names) " in
+    *" $ONLY "*) ;; *) refuse "--only takes a submodule ($("$ROOT"/scripts/repos.py names)) or backend" ;; esac
+fi
 { [ "$LOCK" = "1" ] && [ -z "$CHANGE" ]; } || { [ "$LOCK" = "0" ] && [ -n "$CHANGE" ]; } \
   || refuse "usage: dev-push.sh <change> [--only <repo>] | dev-push.sh --lock [--pr <n> | --ref <branch>]"
 [ -z "$PR_ARG" ] || { [ "$LOCK" = "1" ] && [ -z "$REF" ]; } || refuse "--pr goes with --lock, and not with --ref"

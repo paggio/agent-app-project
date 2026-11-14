@@ -59,7 +59,7 @@ if [ -n "$RUN_DIR" ] && [ ! -d "$RUN_DIR" ]; then
 fi
 
 TS="$(date -u +%Y%m%dT%H%M%SZ)"
-REPOS="chatbot-backend chatbot-eval frontend infra"
+REPOS="$("$ROOT"/scripts/repos.py names)"
 
 say() { printf '%s\n' "$*"; }
 
@@ -315,7 +315,7 @@ for repo, e in ((d.get("deploy_set") or {}).get("repos") or {}).items():
 PY
 else
   say "  none in $dp_root/ — no remote pass is in evidence. If one ran, it was not downloaded:"
-  say "  gh run download <id> -R Paggio/agent-app-project -n dev-push-evidence"
+  say "  gh run download <id> -R $(./scripts/repos.py owner)/agent-app-project -n dev-push-evidence"
 fi
 say ""
 say "contract against what is served:"

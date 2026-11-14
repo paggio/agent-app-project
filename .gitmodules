@@ -1,9 +1,11 @@
 [submodule "backend"]
 	path = chatbot-backend
 	url = https://github.com/Paggio/chatbot-backend.git
+	images = backend
 [submodule "frontend"]
 	path = frontend
 	url = https://github.com/Paggio/frontend.git
+	images = frontend proxy:Dockerfile.proxy
 [submodule "infra"]
 	path = infra
 	url = https://github.com/Paggio/infra.git

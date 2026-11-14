@@ -17,7 +17,8 @@
 # contradiction in opposite directions. Publishing from the owner dissolves it: nobody
 # edits the vendored copy, and it is always current. See docs/adr/0008.
 #
-# Async event schemas, contracts/events/*.schema.json, go to exactly the submodules their
+# Every JSON contract one directory down — contracts/events/*.schema.json, and any new kind
+# such as contracts/mcp/<server>.json — goes to exactly the submodules its
 # top-level "x-consumers" names — a first-time file has no reader yet for the rule below to
 # find, so the schema says who it binds. Missing or empty x-consumers, unparseable JSON, or a
 # consumer that is not a submodule is a refusal naming the file.
@@ -33,7 +34,7 @@ ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 cd "$ROOT"
 
 FILES="openapi.yaml infra-outputs.yaml"
-REPOS="chatbot-backend chatbot-eval frontend infra"
+REPOS="$("$ROOT"/scripts/repos.py names)"
 FROM="$ROOT/contracts"
 CHECK=0; QUIET=0
 
@@ -53,14 +54,14 @@ done
 
 say() { [ "$QUIET" = "1" ] || echo "$@"; }
 
-# "<repo> events/<file>" per consumer, for every events schema in $FROM. Exit 2 on any
-# schema that does not say, validly, who consumes it.
+# "<repo> <kind>/<file>" per consumer, for every JSON contract under $FROM/<kind>/. Exit 2 on
+# any that does not say, validly, who consumes it.
 EVENTS="$(python3 - "$FROM" "$(git config -f .gitmodules --get-regexp '\.path$' | awk '{print $2}' | tr '\n' ' ')" <<'PY'
 import glob, json, os, sys
 src, subs = sys.argv[1], set(sys.argv[2].split())
 bad = []
-for path in sorted(glob.glob(os.path.join(src, "events", "*.schema.json"))):
-    name = "events/" + os.path.basename(path)
+for path in sorted(glob.glob(os.path.join(src, "*", "*.json"))):
+    name = os.path.relpath(path, src)
     try:
         doc = json.load(open(path))
     except (OSError, ValueError) as exc:
@@ -106,7 +107,7 @@ for r in $REPOS; do
   done
 done
 
-# Events: the consumer list is the reader, so a missing copy is drift, and the directory is
+# JSON contracts: the consumer list is the reader, so a missing copy is drift, and the directory is
 # created. A consumer outside --repos, or not checked out, is skipped like the YAML above.
 while read -r r f; do
   [ -n "$r" ] || continue

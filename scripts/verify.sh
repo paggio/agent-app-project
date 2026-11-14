@@ -285,7 +285,7 @@ fi
 # Not a failure: verify always tests the working tree, and during a change the submodules
 # are supposed to be ahead of the lock. Said out loud so a stale pin is never mistaken for
 # a verified one.
-for repo in chatbot-backend chatbot-eval frontend infra; do
+for repo in $(./scripts/repos.py names); do
   pinned="$(awk -v r="$repo" '$1==r{print $2}' repos.lock 2>/dev/null || true)"
   current="$(git -C "$repo" rev-parse HEAD 2>/dev/null || true)"
   if [ -n "$pinned" ] && [ -n "$current" ] && [ "$pinned" != "$current" ]; then
