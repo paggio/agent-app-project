@@ -1,0 +1,25 @@
+{
+  "$comment": "Self-contained: settings.json does not layer from parent directories. Secrets are denied by filename, never by a glob — `.env*` would also deny the `.env.example` .gitignore requires committed (docs/init/README.md in the control repo).",
+  "permissions": {
+    "deny": [
+      "Edit(./contracts/**)",
+      "Edit(./.env)",
+      "Edit(./.env.local)",
+      "Read(./.env)",
+      "Read(./.env.local)"
+    ]
+  },
+  "hooks": {
+    "PostToolUse": [
+      {
+        "matcher": "Edit|Write",
+        "hooks": [{ "type": "command", "command": ".claude/hooks/format.sh" }]
+      }
+    ],
+    "Stop": [
+      {
+        "hooks": [{ "type": "command", "command": ".claude/hooks/gate.sh" }]
+      }
+    ]
+  }
+}
