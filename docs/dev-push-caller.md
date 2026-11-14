@@ -33,7 +33,7 @@ What it needs, all written by the control repo's hand tools, never by hand:
 | --- | --- | --- |
 | `DEV_AWS_ACCESS_KEY_ID`, `DEV_AWS_SECRET_ACCESS_KEY`, `DEV_AWS_SESSION_TOKEN`, `DEV_AWS_CREDENTIALS_EXPIRE_AT` | secret | `make push-gh-creds` |
 | `DEV_AWS_REGION` | variable | `make push-gh-creds` |
-| `DEPLOY_KEY_<REPO>` for all five repos | secret | `make gh-setup` |
+| `DEPLOY_KEY_<REPO>` for every repo | secret | `make gh-setup` |
 | `DEV_AWS_DEPLOYER_ROLE_ARN` | variable | `make gh-setup --role-arn …` |
 
 A called workflow sees the caller's `github` context, so `github.repository` is how the

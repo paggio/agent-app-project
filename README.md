@@ -1,6 +1,6 @@
 # agent-app-project
 
-The control repo for four product repos, each a git submodule. It owns what no single repo
+The control repo for the product repos, each a git submodule. It owns what no single repo
 can: the contracts between them, the cross-repo changes, and the proof they work together.
 `dev` is the one AWS environment: CI deploys PRs there, and it costs money while it is up.
 
@@ -8,13 +8,16 @@ can: the contracts between them, the cross-repo changes, and the proof they work
 
 ```mermaid
 flowchart TD
-    start([A piece of work]) --> q{Touches more than one repo,<br/>or contracts/?}
+    start([A piece of work]) --> q{Touches more than one repo,<br/>contracts/, or needs a new repo?}
     q -- no --> one["Work inside that repo<br/>cd &lt;repo&gt; && claude"]
     one --> onemerge[Its own PR, its own CI]
     onemerge -- CI: contract touched --> ship
     onemerge -- merged --> realign
     q -- yes --> ship["/ship<br/>what you want, the checks that prove it,<br/>the contract locked before anyone builds"]
-    ship --> loop["Local loop<br/>agents build each repo,<br/>smoke suite on the joined stack"]
+    ship --> newq{You asked for<br/>a new repo?}
+    newq -. yes .-> newrepo["/ship creates it<br/>private repo from the template,<br/>attached as a submodule"]
+    newrepo -.-> loop
+    newq -- no --> loop["Local loop<br/>agents build each repo,<br/>smoke suite on the joined stack"]
     loop --> prs[One PR per repo<br/>smoke suite green locally]
     prs --> push["/ship runs /dev-push on the PR<br/>CI deploys to dev in AWS"]
     prs --> ok
@@ -50,6 +53,9 @@ that repo, then run `/realign` again.
 | [`frontend`](https://github.com/Paggio/frontend) | web client and edge proxy |
 | [`infra`](https://github.com/Paggio/infra) | Terraform and the Helm chart for `dev` on AWS |
 
+All of them carry the `agent-app-project` topic:
+[filter the repo list by it](https://github.com/Paggio?tab=repositories&q=topic%3Aagent-app-project).
+
 ```bash
 git clone --recurse-submodules git@github.com:Paggio/agent-app-project.git
 ```
@@ -62,7 +68,7 @@ A lane is one slash command in `claude`, run from this repo. Run one lane per se
 | When | Run |
 | --- | --- |
 | One repo, no interface change | nothing here: `cd <repo> && claude` |
-| Two or more repos, or any contract change | `/ship "<what you want>"` |
+| Two or more repos, any contract change, or a new repo | `/ship "<what you want>"` — say "new repo" explicitly; it never creates one unasked |
 | PRs open, nothing merged, and the result is wrong | `/ship-correct <change>: <what is wrong>` |
 | PRs open, nothing merged, and you want something different | `/ship-iterate <change>: <what to change>` |
 | PRs have merged | `/realign` |

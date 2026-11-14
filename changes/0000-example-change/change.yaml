@@ -14,6 +14,17 @@ slices:
   - frontend
   - infra
 
+# NEW REPOS, optional — only when the request explicitly asks for one (docs/adr/0020).
+# Each must also be in slices:. ./scripts/new-repo.sh <change> <name> creates, scaffolds
+# and attaches it; manifest.py --validate refuses dispatch until it has.
+#   name     the repo, its submodule path and its GitHub name
+#   purpose  one line: its description, README and CLAUDE.md first line
+#   images   what it ships, [] for none; written to .gitmodules as its `images`
+# new_repos:
+#   - name: <name>
+#     purpose: <one line>
+#     images: [<image>]
+
 deploy:
   # Required when infra is true, and no default — a default is how prod gets applied by a
   # typo. Not "local": that is the boolean below. See docs/infra-interface.md.

@@ -1,15 +1,15 @@
 # Control repo — agent-app-project
 
-Four INDEPENDENT projects vendored as submodules, each with its own git history, CI,
-deploy cadence and CLAUDE.md. This file is additive context — never assume a sub-repo
-session can see it.
+INDEPENDENT product repos vendored as submodules (`.gitmodules` is the list), each with its
+own git history, CI, deploy cadence and CLAUDE.md. This file is additive context — never
+assume a sub-repo session can see it.
 
 ## Which lane am I in?
 
 | The work | Do this |
 | --- | --- |
 | One repo, no interface change | Not here — `cd <repo> && claude`. That repo's CI fails if the work turns out to touch contract surface; come back for `/ship` if it does. |
-| Two or more repos, or any change to `contracts/` | `/ship "<what you want>"` — one command: plan artifact, contract freeze, dispatch, iterate, smoke, pull requests. |
+| Two or more repos, any change to `contracts/`, or a new repo you explicitly ask for | `/ship "<what you want>"` — one command: plan artifact, (new repo,) contract freeze, dispatch, iterate, smoke, pull requests. |
 | A change is in flight — PRs open, nothing merged — and the result is not what you asked for | `/ship-correct <change>: <what is wrong>` — turn the objection into a failing assertion, route it to the repo answerable, run the loop. |
 | Same window, and you now want a different requirement | `/ship-iterate <change>: <what to change>` — amend the brief, the criteria and the slices, then run the loop again against the same branches. |
 | The product PRs are merged and this repo is behind | `/realign` — bump the submodules, re-check the contract against what is served, re-run the baseline, promote the durable steps. |
@@ -18,8 +18,8 @@ Never run two lanes in one session.
 
 ## Hard rules
 
-- NEVER edit inside a submodule from here (`chatbot-backend/`, `chatbot-eval/`, `frontend/`,
-  `infra/`). Implementation happens in a session inside that repo, or via `/ship`'s dispatch.
+- NEVER edit inside a submodule from here (any path in `.gitmodules`). Implementation
+  happens in a session inside that repo, or via `/ship`'s dispatch.
 - `contracts/` is owned here and only here. Product repos vendor it, verify against it, never edit it.
 - Smoke assertions are owned here too. A failing assertion means fix the cause, or change
   the criterion here on purpose — never in a product repo.
@@ -51,7 +51,7 @@ Never run two lanes in one session.
 - `smoke/baseline.yaml`  the cross-repo regression suite
 - `docs/adr/`  decisions and their accepted costs — read before proposing a redesign
 - `docs/infra-interface.md`  what this repo requires of `infra/`
-- `repos.lock`  the submodule SHAs known to work together
+- `repos.lock`  the submodule SHAs known to work together; `templates/product-repo/` a new repo's scaffold
 
 ## Commands
 

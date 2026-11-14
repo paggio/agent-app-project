@@ -12,17 +12,21 @@ the mechanism wins, and the mechanism is never quoted here.
 
 ---
 
-## 1. Four repos, one of them a control repo
+## 1. Product repos, and one control repo
 
 | Repo | Contents | Deploy cadence |
 | --- | --- | --- |
 | `agent-app-project` (control) | contracts, change artifacts, cross-cutting docs, orchestration | n/a |
 | `chatbot-backend` | API service and agent graph | per merge |
 | `frontend` | web client | per merge |
+| `chatbot-eval` | eval runs against the deployed API | per merge |
 | `infra` | IaC | reviewed, gated |
 
-The product repos — `chatbot-backend`, `chatbot-eval`, `frontend`, `infra` — are
-vendored here as git submodules.
+The product repos are vendored here as git submodules, and `.gitmodules` is their one list
+— every script reads it through `scripts/repos.py`. A new one is born inside `/ship`, only
+when the request asks for it: `scripts/new-repo.sh` creates it from
+`templates/product-repo/` and attaches it, and from that commit it is a submodule like any
+other (`docs/adr/0020`).
 
 **Why split at all.** Each product repo keeps its own git history, CI pipeline, deploy
 cadence, secret scope and observability. A shared pipeline couples deploy risk across tiers
@@ -220,6 +224,12 @@ That is the whole invocation. What it does, and what you should read as it goes:
 | 4 loop | a session per slice, all repos up as one stack, the suite through one origin, repair on failure | the outcome word, and the assertion count beside it |
 | 5 PRs | `runs/<ts>/prs.json` | the URLs, which are checked facts rather than an agent's claim |
 
+**When the work is a new service**, say so: *"/ship add an MCP server, in a new repo, that
+the agent can call"*. Phase 1 then records it in `new_repos:` and runs `new-repo.sh`, which
+creates the private repo from `templates/product-repo/` and attaches it; from there it is
+one more slice, its interface frozen in `contracts/` like any other. `/ship` never creates a
+repo you did not ask for — if the plan wants one, it stops and asks.
+
 Phase 4 takes tens of minutes and runs a real agent per slice, so start it where it will
 outlive the turn. A run killed halfway reports `unattributable` with no assertion evidence
 — honest about a run that did not finish, and not a result about the change.
@@ -353,7 +363,7 @@ trigger and posted on the PR before anything is built:
 
 An unpushed slice branch, or a gitlink that disagrees with `repos.lock`, is a refusal
 (exit 2). Images are tagged with the commit and never rebuilt, so a second `/dev-push`
-costs an apply, not a build. `/dev-push-backend` (or `-frontend`, `-infra`) rebuilds one
+costs an apply, not a build. `/dev-push-<repo>` (`-backend` for short) rebuilds one
 repo and carries the others at what `dev` already runs; that is `deployed-partial`, never
 `verified`, because the commits it asserts are not all the PR's.
 
@@ -371,7 +381,7 @@ A single-repo change is the same: its PR's `/dev-push` proves the PR, the realig
 
 **The credentials, end to end.** `make login` is SSO, and rewrites the four credential lines
 of `stack/secrets.env`, expiry included. `make push-gh-creds` copies that session into
-`DEV_AWS_*` repository secrets of the five repos — GitHub Free has no Environments for
+`DEV_AWS_*` repository secrets of every repo — GitHub Free has no Environments for
 private repos, so the prefix is where `dev` lives. Every job refuses with under 30 minutes
 left (exit 2, naming the command), then assumes `agentapp-dev-deployer` and uses nothing
 else. That role, the state bucket, the registries and the budget come from
