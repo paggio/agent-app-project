@@ -108,13 +108,15 @@ fi
 python3 - "$NAME" "$PURPOSE" "https://github.com/$OWNER/$NAME" <<'PY'
 import json, re, sys
 name, purpose, url = sys.argv[1:]
+# Inserted as text after the last Edit deny rule, so the hand-formatted file keeps its shape.
 p = ".claude/settings.json"
-d = json.load(open(p))
-deny = d.setdefault("permissions", {}).setdefault("deny", [])
+s = open(p).read()
 rule = f"Edit(./{name}/**)"
-if rule not in deny:
-    deny.append(rule)
-    open(p, "w").write(json.dumps(d, indent=2, ensure_ascii=False) + "\n")
+if rule not in json.load(open(p)).get("permissions", {}).get("deny", []):
+    last = list(re.finditer(r'^(\s*)"Edit\(\./[\w.-]+/\*\*\)"', s, re.M))[-1]
+    s = s[:last.end()] + f',\n{last.group(1)}"{rule}"' + s[last.end():]
+    json.loads(s)  # still valid, or fail before writing
+    open(p, "w").write(s)
 p = "README.md"
 s = open(p).read()
 rows = list(re.finditer(r"^\| \[`[\w.-]+`\]\(.*\n", s, re.M))

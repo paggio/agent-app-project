@@ -529,10 +529,12 @@ def _dev_push_commands() -> set[str]:
         text = open(DEV_PUSH_WORKFLOW).read()
     except OSError:
         return set()
-    m = re.search(r"re='\^/(dev-push)\(-\(([a-z|-]+)\)\)\?", text)
-    if not m:
+    # `-<repo>` takes any name, and deploy-set.py --only refuses one .gitmodules does not
+    # hold — so the valid set is every submodule, plus the workflow's own aliases.
+    if not re.search(r"re='\^/dev-push\(-\(\[a-z0-9-\]\+\)\)\?", text):
         return set()
-    return {m.group(1)} | {f"{m.group(1)}-{v}" for v in m.group(2).split("|")}
+    aliases = re.findall(r'case "\$only" in (\w+)\) only=', text)
+    return {"dev-push"} | {f"dev-push-{r}" for r in (*SUBMODULES, *aliases)}
 
 
 def _dev_eval_commands() -> set[str]:
