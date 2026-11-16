@@ -92,7 +92,7 @@ because the thing that would let it is a gate failure.
   `test-hooks.py` would have failed if one had been missed. That is a real tax and it is
   now paid four times over rather than three; it is also the strongest argument available
   for eventually deriving the list from `.gitmodules`, which is a retrospective's business
-  rather than this change's.
+  rather than this change's. *Superseded by `0020`: the list is now `.gitmodules`.*
 - **An eval that cannot reach past the API cannot measure everything.** Chunk-level
   retrieval quality, embedding drift and index health are invisible to it, and some of
   them are things an eval would legitimately want. The answer is a contract change, which

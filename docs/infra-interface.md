@@ -13,7 +13,7 @@ are `make dev-bootstrap` and `make dev-down`, through `scripts/with-aws.sh`.
 | `plan` | `ENV`, `BACKEND_IMAGE`, `FRONTEND_IMAGE`, `PROXY_IMAGE` | the plan, and where it was saved | 0 additive · **3 contains a destroy or replace** · 1 failed · 2 usage |
 | `deploy` | the same | apply and rollout log | 0 **applied and the new revision is serving** · 1 failed · 2 usage |
 | `outputs` | `ENV` | **a flat JSON object, and nothing else** | 0 · 1 no state for `ENV` · 2 usage |
-| `registries` | `ENV` | the three `*_image_repository` values from the **bootstrap** state, as one flat JSON object | 0 · 1 not bootstrapped · 2 usage |
+| `registries` | `ENV` | one `<image>_image_repository` per image (`.gitmodules` `images`) from the **bootstrap** state, as one flat JSON object | 0 · 1 not bootstrapped · 2 usage |
 | `bootstrap` | `ENV` | log, ending with the deployer role ARN | one-time, local; state backend, registries, the deployer role. Survives `destroy`. |
 | `destroy` | `ENV`, `CONFIRM=<env>` | log | 0 everything outside bootstrap is gone · never called by a loop |
 | `leftovers` | `ENV` | one line per billable resource still tagged for `ENV` | 0 none · 1 some remain |
@@ -65,6 +65,13 @@ exported, as `INFRA_<NAME>`. A `secret_ref` promises a *name*; if you want to ex
 what you actually want is for the deployed app to read it, which is the app's environment
 and not smoke's. Before any apply, `verify-remote.sh` runs `infra-outputs.py --contract-only`, so a
 contract that still promises nothing fails in preflight rather than after spending an apply.
+
+## A new image
+
+An image is declared once, as `images` on its repo in `.gitmodules` (`scripts/repos.py`).
+`publish.sh` then needs `<image>_image_repository` from `registries`, and the deploy set
+reads `deployed_<image>_image` from `outputs` — both in `contracts/infra-outputs.yaml`,
+so a repo born with an image (`docs/adr/0020`) brings an infra slice that adds them.
 
 ## The first infra change
 

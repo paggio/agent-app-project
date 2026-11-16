@@ -18,9 +18,10 @@
 set -uo pipefail
 
 PAYLOAD="$(cat)"   # JSON on stdin
+ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"
 
-VERDICT="$(HOOK_PAYLOAD="$PAYLOAD" python3 - <<'PY'
-import json, os, re
+VERDICT="$(HOOK_PAYLOAD="$PAYLOAD" GITMODULES="$ROOT/.gitmodules" python3 - <<'PY'
+import configparser, json, os, re
 
 raw = os.environ.get("HOOK_PAYLOAD", "")
 try:
@@ -28,13 +29,19 @@ try:
 except Exception:
     cmd = raw   # unparseable payload: scan it whole rather than waving it through
 
-SUB = r"(chatbot-backend|chatbot-eval|frontend|infra)"
+# The submodule set is read from .gitmodules, the one list (docs/adr/0020), so a repo
+# attached by new-repo.sh is guarded from the commit that attaches it. Unreadable: every
+# writer is blocked (fail closed), reads still pass. scripts/test-hooks.py probes a write
+# into every submodule.
+cp = configparser.ConfigParser(interpolation=None)
+try:
+    cp.read(os.environ["GITMODULES"])
+    paths = [cp[s]["path"] for s in cp.sections() if s.startswith("submodule ") and "path" in cp[s]]
+except Exception:
+    paths = []
+SUB = "(" + "|".join(re.escape(p) for p in sorted(paths)) + ")" if paths else r"([^\s/]+)"
 # A path inside a submodule — `chatbot-backend/x`, `./frontend/x`, `"infra/x` — but not
 # `-C chatbot-backend`, which is how a legitimate read or branch switch is spelled.
-# One alternation, and it is the fourth place the submodule set is written down; the
-# others are .claude/settings.json, the Makefile's REPOS and check-docs.py's
-# SUBMODULES. scripts/test-hooks.py holds this one to reality — it probes a write into
-# every submodule, so a set that falls behind fails a gate rather than going quiet.
 SUBPATH = re.compile(rf"(^|[^\w./-]){SUB}/")
 WRITERS = re.compile(
     r"(^|[^\w./-])"
@@ -62,8 +69,7 @@ PY
 
 if [ "$VERDICT" != "allow" ]; then
   cat >&2 <<'MSG'
-Blocked: this command writes inside a submodule
-(chatbot-backend/, chatbot-eval/, frontend/, infra/).
+Blocked: this command writes inside a submodule (any path in .gitmodules).
 
 Implementation never happens from the control session. Either:
   - start a session inside that repo, so it picks up its own CLAUDE.md, settings,

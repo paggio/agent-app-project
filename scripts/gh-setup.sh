@@ -11,13 +11,20 @@
 #      may call the reusable dev-push.yml. Without it the caller fails to resolve the file.
 #   3. DEV_AWS_DEPLOYER_ROLE_ARN, the role every job assumes (bootstrap creates it, so pass
 #      --role-arn once `make -C infra bootstrap` has printed it).
+#   4. the `agent-app-project` topic on every repo, so the project's repos filter together:
+#      github.com/<owner>?tab=repositories&q=topic:agent-app-project
+#
+# The repos are .gitmodules' (scripts/repos.py), plus this one. A repo attached by
+# new-repo.sh runs this again: a new holder cannot read the existing keys' private halves.
 #
 # A re-run replaces the key rather than adding a second: an unused key with read access is
 # exactly the credential nobody remembers to revoke. docs/adr/0018 §7.
 set -euo pipefail
 
-OWNER="Paggio"
-REPOS="agent-app-project chatbot-backend chatbot-eval frontend infra"
+ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
+OWNER="$("$ROOT"/scripts/repos.py owner)"
+REPOS="agent-app-project $("$ROOT"/scripts/repos.py names)"
+TOPIC="agent-app-project"
 TITLE="agentapp-dev-push"
 ROLE_ARN=""; DRY=0
 while [ $# -gt 0 ]; do
@@ -66,3 +73,8 @@ if [ -n "$ROLE_ARN" ]; then
 else
   say "no --role-arn: DEV_AWS_DEPLOYER_ROLE_ARN not set. Re-run with the ARN bootstrap printed."
 fi
+
+for repo in $REPOS; do
+  run gh repo edit "$OWNER/$repo" --add-topic "$TOPIC"
+done
+say "topic $TOPIC on: $REPOS"

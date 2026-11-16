@@ -21,7 +21,8 @@ ONLY         ?=
 VIA          ?=
 ROLE_ARN     ?=
 
-REPOS := chatbot-backend chatbot-eval frontend infra
+REPOS := $(shell ./scripts/repos.py names)
+OWNER := $(shell ./scripts/repos.py owner)
 
 .DEFAULT_GOAL := help
 .PHONY: help up down restart ps logs rebuild config urls open health chat smoke verify iterate \
@@ -189,8 +190,8 @@ dev-down: ## Take dev to zero and prove nothing billable is left; VIA=ci runs it
 	@./scripts/dev-down.sh $(if $(VIA),--via $(VIA),)
 
 dev-status: ## The last deploys and teardowns, and what dev runs now
-	@gh run list -R Paggio/agent-app-project --workflow dev-push.yml --limit 5
-	@gh run list -R Paggio/agent-app-project --workflow dev-down.yml --limit 3
+	@gh run list -R $(OWNER)/agent-app-project --workflow dev-push.yml --limit 5
+	@gh run list -R $(OWNER)/agent-app-project --workflow dev-down.yml --limit 3
 	@./scripts/with-aws.sh ./scripts/infra.sh outputs ENV=dev 2>/dev/null \
 		|| echo "  (no outputs: dev is down, infra is not checked out, or the session expired)"
 

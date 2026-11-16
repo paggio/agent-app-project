@@ -35,9 +35,9 @@ import yaml
 # about what counts as a finding.
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 import retro_findings  # noqa: E402
+from repos import REPOS as SUBMODULES  # noqa: E402  — .gitmodules, docs/adr/0020
 
 ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
-SUBMODULES = ("chatbot-backend", "chatbot-eval", "frontend", "infra")
 
 problems: list[str] = []
 warnings: list[str] = []
@@ -529,10 +529,12 @@ def _dev_push_commands() -> set[str]:
         text = open(DEV_PUSH_WORKFLOW).read()
     except OSError:
         return set()
-    m = re.search(r"re='\^/(dev-push)\(-\(([a-z|-]+)\)\)\?", text)
-    if not m:
+    # `-<repo>` takes any name, and deploy-set.py --only refuses one .gitmodules does not
+    # hold — so the valid set is every submodule, plus the workflow's own aliases.
+    if not re.search(r"re='\^/dev-push\(-\(\[a-z0-9-\]\+\)\)\?", text):
         return set()
-    return {m.group(1)} | {f"{m.group(1)}-{v}" for v in m.group(2).split("|")}
+    aliases = re.findall(r'case "\$only" in (\w+)\) only=', text)
+    return {"dev-push"} | {f"dev-push-{r}" for r in (*SUBMODULES, *aliases)}
 
 
 def _dev_eval_commands() -> set[str]:
@@ -675,9 +677,10 @@ def _head_sha(sub: str) -> str | None:
 
 
 def _events_for(sub: str) -> list[str]:
-    """The events schemas whose x-consumers names `sub` — what vendor-contracts.sh sends it."""
+    """The JSON contracts (contracts/<kind>/*.json) whose x-consumers names `sub` — what
+    vendor-contracts.sh sends it."""
     names = []
-    for path in sorted(glob.glob(os.path.join(ROOT, "contracts", "events", "*.schema.json"))):
+    for path in sorted(glob.glob(os.path.join(ROOT, "contracts", "*", "*.json"))):
         try:
             cons = json.load(open(path)).get("x-consumers") or []
         except (OSError, ValueError, AttributeError):
@@ -685,7 +688,7 @@ def _events_for(sub: str) -> list[str]:
                                        f"can publish")
             continue
         if sub in cons:
-            names.append("events/" + os.path.basename(path))
+            names.append(os.path.relpath(path, os.path.join(ROOT, "contracts")))
     return names
 
 
@@ -1356,6 +1359,39 @@ def check_dev_env_inline_comments() -> None:
 
 
 
+# --- repo-set: the product repos are .gitmodules, and nothing else lists them ----------
+# docs/adr/0013 attached a fourth repo by editing ten hand-kept lists, and only the hook
+# probe would have noticed a missed one. docs/adr/0020 made .gitmodules the one list
+# (scripts/repos.py). Two things can still drift: a hand list creeping back into the
+# harness, and the human-facing repo table.
+def check_repo_set() -> None:
+    word = {r: re.compile(rf"(?<![\w-]){re.escape(r)}(?![\w-])") for r in SUBMODULES}
+    harness = (glob.glob(os.path.join(ROOT, "scripts", "*")) +
+               glob.glob(os.path.join(ROOT, ".github", "workflows", "*.yml")) +
+               glob.glob(os.path.join(ROOT, ".claude", "commands", "*.md")) +
+               glob.glob(os.path.join(ROOT, ".claude", "hooks", "*")) +
+               [os.path.join(ROOT, "Makefile")])
+    for path in sorted(harness):
+        if os.path.basename(path) == "test-hooks.py" or not os.path.isfile(path):
+            continue  # its cases name every repo on purpose: they are probe data
+        try:
+            lines = open(path).read().splitlines()
+        except (OSError, UnicodeDecodeError):
+            continue
+        for n, line in enumerate(lines, 1):
+            if len(SUBMODULES) > 1 and all(w.search(line) for w in word.values()):
+                fail("repo-set", f"{rel(path)}:{n} lists every product repo by hand. A repo "
+                                 f"attached by new-repo.sh would be missing from it — read "
+                                 f"the set from scripts/repos.py (docs/adr/0020).")
+    readme = open(os.path.join(ROOT, "README.md")).read()
+    rows = set(re.findall(r"^\| \[`([\w.-]+)`\]\(", readme, re.M))
+    for missing in sorted(set(SUBMODULES) - rows):
+        fail("repo-set", f"README.md § The repos has no row for {missing}, a submodule — "
+                         f"add `| [`{missing}`](<url>) | <contents> |`.")
+    for extra in sorted(rows - set(SUBMODULES)):
+        fail("repo-set", f"README.md § The repos lists {extra}, which .gitmodules does not.")
+
+
 # --- the deploy workflows, held to the scripts that feed them -------------------------
 # docs/adr/0018. Three defects this design makes easy, each silent until a real deploy:
 #
@@ -1413,9 +1449,9 @@ def check_workflow_secrets() -> None:
             continue
         written |= set(re.findall(r'"(DEV_AWS_[A-Z_]+)"', src))
         written |= set(re.findall(r"\b(DEV_AWS_[A-Z_]+)\b", src))
-        m = re.search(r'^REPOS="([^"]*)"', src, re.M)
-        if m and "DEPLOY_KEY_" in src:
-            written |= {"DEPLOY_KEY_" + r.upper().replace("-", "_") for r in m.group(1).split()}
+        if "DEPLOY_KEY_" in src:
+            written |= {"DEPLOY_KEY_" + r.upper().replace("-", "_")
+                        for r in ("agent-app-project",) + SUBMODULES}
     for path, text in _workflows().items():
         for kind, name in re.findall(r"\$\{\{\s*(secrets|vars)\.([A-Za-z0-9_]+)", text):
             if name not in written:
@@ -1603,7 +1639,7 @@ def main() -> int:
               check_provider_credentials, check_dev_env_inline_comments,
               check_pr_commands, check_environments, check_workflow_secrets,
               check_release_main_only, check_infra_invocation,
-              check_deployment_doc,
+              check_deployment_doc, check_repo_set,
               report_readme_divergence)
     for fn in checks:
         try:

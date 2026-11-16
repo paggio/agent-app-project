@@ -40,17 +40,18 @@ import sys
 
 import yaml
 
-REPOS = ("chatbot-backend", "chatbot-eval", "frontend", "infra")
+sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
+from repos import REPOS, REPOS_INFO  # noqa: E402
 
-# What each repo contributes to a deploy. publish.sh builds these and infra's `deploy`
-# takes them; chatbot-eval deploys nothing yet and is recorded so the set names all four.
-IMAGES = {"chatbot-backend": ["backend"], "frontend": ["frontend", "proxy"],
-          "infra": [], "chatbot-eval": []}
+# What each repo contributes to a deploy: its `images` in .gitmodules. publish.sh builds
+# these and infra's `deploy` takes them; a repo with none is still recorded, so the set
+# names every repo.
+IMAGES = {r: list(info["images"]) for r, info in REPOS_INFO.items()}
 
-# The output that says what `dev` runs for each image. A carried image's tag comes from
-# here, and infra-crosscheck.py compares the same names after the deploy.
-DEPLOYED_OUTPUT = {"backend": "deployed_backend_image", "frontend": "deployed_frontend_image",
-                   "proxy": "deployed_proxy_image"}
+# The output that says what `dev` runs for each image — `deployed_<image>_image`, by the
+# infra contract. A carried image's tag comes from here, and infra-crosscheck.py compares
+# the same names after the deploy.
+DEPLOYED_OUTPUT = {img: f"deployed_{img}_image" for imgs in IMAGES.values() for img in imgs}
 
 ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 

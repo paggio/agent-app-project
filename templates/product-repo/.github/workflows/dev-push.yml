@@ -1,0 +1,22 @@
+# `/dev-push` or `/dev-push-__NAME__` on a PR deploys it to dev and runs the remote pass.
+# The logic lives in the control repo; it resolves `__NAME__@<head sha>` itself.
+name: dev-push
+
+on:
+  issue_comment:
+    types: [created]
+
+permissions:
+  contents: read
+  pull-requests: write
+  issues: write
+
+jobs:
+  dev-push:
+    if: >-
+      github.event.issue.pull_request &&
+      (startsWith(github.event.comment.body, '/dev-push ') ||
+       github.event.comment.body == '/dev-push' ||
+       startsWith(github.event.comment.body, '/dev-push-__NAME__'))
+    uses: __OWNER__/agent-app-project/.github/workflows/dev-push.yml@main
+    secrets: inherit

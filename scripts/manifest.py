@@ -14,6 +14,7 @@ same idea applied to the change itself.
   manifest.py <change-dir> --shell            eval-able assignments for bash
   manifest.py <change-dir> --get deploy.infra dotted lookup, one value on stdout
   manifest.py <change-dir> --jobs             one TSV line per one-shot job
+  manifest.py <change-dir> --new-repo <name>  "<purpose>\t<images>" for one new_repos entry
   manifest.py <change-dir> --validate         the ship gate; exit 2 on problems
 
 --validate is the ONE gate that decides whether a change is shippable. It used to check
@@ -31,13 +32,15 @@ from __future__ import annotations
 
 import argparse
 import os
+import re
 import shlex
 import subprocess
 import sys
 
 import yaml
 
-REPOS = ("chatbot-backend", "chatbot-eval", "frontend", "infra")
+sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
+from repos import REPOS  # noqa: E402  — .gitmodules, the one list (docs/adr/0020)
 
 # Environments verify-remote.sh may deploy to — one AWS account, treated as `dev`
 # (docs/adr/0018). `prod` is deliberately absent: adding it is a reviewed commit in this
@@ -71,7 +74,10 @@ def validate(doc: dict, change_dir: str) -> list[str]:
     slices = doc.get("slices") or []
     if not slices:
         problems.append("slices: is empty — nothing would be dispatched")
+    new = {e.get("name") for e in (doc.get("new_repos") or []) if isinstance(e, dict)}
     for repo in slices:
+        if repo not in REPOS and repo in new:
+            continue  # validate_new_repos names the one fix
         if repo not in REPOS:
             problems.append(f"slices: unknown repo {repo!r} (expected one of {', '.join(REPOS)})")
         elif not os.path.exists(os.path.join(change_dir, f"{repo}.md")):
@@ -95,6 +101,42 @@ def validate(doc: dict, change_dir: str) -> list[str]:
     problems += validate_prose(change_dir)
     problems += validate_smoke(doc, change_dir, slices)
     problems += validate_jobs(doc, slices)
+    problems += validate_new_repos(doc, change_dir, slices)
+    return problems
+
+
+NEW_REPO_NAME = re.compile(r"^[a-z0-9][a-z0-9-]*$")
+
+
+def validate_new_repos(doc: dict, change_dir: str, slices: list) -> list[str]:
+    """`new_repos:` is the record that a repo is born in this change — docs/adr/0020. The
+    dispatch cannot start until new-repo.sh has attached it: a slice needs a submodule."""
+    problems: list[str] = []
+    entries = doc.get("new_repos") or []
+    if not isinstance(entries, list):
+        return ["new_repos: must be a list of {name, purpose, images}"]
+    change = os.path.basename(change_dir.rstrip("/"))
+    for e in entries:
+        if not isinstance(e, dict) or not isinstance(e.get("name"), str):
+            problems.append(f"new_repos: entry {e!r} needs name, purpose and images")
+            continue
+        name = e["name"]
+        if not NEW_REPO_NAME.match(name):
+            problems.append(f"new_repos: {name!r} is not a repo name (lowercase, digits, -)")
+        if not str(e.get("purpose") or "").strip():
+            problems.append(f"new_repos: {name} has no purpose — it becomes the repo's "
+                            f"description, README and CLAUDE.md first line")
+        imgs = e.get("images", [])
+        if not isinstance(imgs, list) or not all(isinstance(i, str) and NEW_REPO_NAME.match(i)
+                                                 for i in imgs):
+            problems.append(f"new_repos: {name} images must be a list of image names "
+                            f"([] when it deploys nothing)")
+        if name not in slices:
+            problems.append(f"new_repos names {name} but slices: does not — a repo born in "
+                            f"this change is implemented by it")
+        if name not in REPOS:
+            problems.append(f"new_repos: {name} is not attached yet — run "
+                            f"./scripts/new-repo.sh {change} {name}")
     return problems
 
 
@@ -429,6 +471,7 @@ def main() -> int:
     ap.add_argument("--get")
     ap.add_argument("--validate", action="store_true")
     ap.add_argument("--jobs", action="store_true")
+    ap.add_argument("--new-repo")
     args = ap.parse_args()
 
     change_dir = args.change_dir.rstrip("/")
@@ -450,6 +493,15 @@ def main() -> int:
         if args.validate:
             print(f"manifest: {os.path.join(change_dir, 'change.yaml')} is valid")
             return 0
+
+    if args.new_repo:
+        e = next((e for e in doc.get("new_repos") or []
+                  if isinstance(e, dict) and e.get("name") == args.new_repo), None)
+        if e is None:
+            fail(f"{args.new_repo} is not in new_repos: of {change_dir}/change.yaml — a repo "
+                 f"is created only when the change records it")
+        print(f"{' '.join(str(e.get('purpose') or '').split())}\t{' '.join(e.get('images') or [])}")
+        return 0
 
     if args.jobs:
         # TSV, like fanout.sh's results: shell reads it with `while IFS=$\'\\t\' read`.

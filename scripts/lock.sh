@@ -12,7 +12,9 @@
 # `make repos` read as truth. A lie in a committed file outlives the run that wrote it.
 set -euo pipefail
 
-REPOS=(chatbot-backend chatbot-eval frontend infra)
+ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
+cd "$ROOT"
+read -ra REPOS <<< "$(./scripts/repos.py names)"
 
 TMP="$(mktemp)"
 trap 'rm -f "$TMP"' EXIT

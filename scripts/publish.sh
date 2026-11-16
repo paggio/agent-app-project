@@ -70,13 +70,14 @@ fi
 OUTPUTS="$REGISTRIES"
 
 # One line per image: <image> <repo> <tag> <source> <registry> <context> <dockerfile>
-PLAN="$(python3 - "$SET" "$OUTPUTS" <<'PY'
+# What builds each image is .gitmodules' `images` (scripts/repos.py).
+PLAN="$(python3 - "$SET" "$OUTPUTS" "$ROOT/scripts" <<'PY'
 import json, sys
 ds = json.load(open(sys.argv[1]))
 out = json.load(open(sys.argv[2]))
-BUILD = {"backend": ("chatbot-backend", "Dockerfile"),
-         "frontend": ("frontend", "Dockerfile"),
-         "proxy": ("frontend", "Dockerfile.proxy")}
+sys.path.insert(0, sys.argv[3])
+from repos import all_images
+BUILD = all_images()
 for repo, e in ds["repos"].items():
     for image, tag in (e.get("images") or {}).items():
         ctx, dockerfile = BUILD[image]

@@ -1,18 +1,20 @@
 # contracts/ — owned here, consumed everywhere
 
-The interface between the three product repos. Edited only in this repo, only in a
-sequential single-purpose session, and frozen by commit before any implementation
-starts. Each product repo vendors a copy and verifies conformance in its own CI.
+The interface between the product repos. Edited only in this repo, and frozen by commit
+before any implementation starts. Each product repo vendors a copy and verifies conformance in its own CI.
 
 | File | Interface |
 | --- | --- |
 | `openapi.yaml` | HTTP |
 | `events/*.schema.json` | async messages |
+| `<kind>/*.json` | any other interface a service exposes — e.g. `mcp/<server>.json`, an MCP server's tools |
 | `infra-outputs.yaml` | what infra promises the app repos (ARNs, URLs, secret names) |
 
 `openapi.yaml` describes the API as the backend serves it — paths without the `/api`
 prefix, which the proxy strips before forwarding. `events/` holds one JSON Schema per event
 and version; each names its consumers in `x-consumers`, which is who it is published to.
+Any JSON contract under a `<kind>/` directory follows the same rule, so a new kind of
+interface needs no script change (`docs/adr/0020`).
 
 `infra-outputs.yaml` is real as of `version: 1`. It has **no environment dimension on
 purpose** — the environment lives in the invocation (`make -C infra outputs ENV=dev`),

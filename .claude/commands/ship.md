@@ -59,6 +59,35 @@ image carries a hand-bumped `local-<n>.<n>.<n>`; leaving it means every experime
 deployed environment records this build as the previous one. `check-docs.py [image-tags]`
 refuses it, and `docs/adr/0015` says why the git SHA is not the answer.
 
+### 1b — A new repo, only when asked
+
+Create a repo **only when the request explicitly asks for one** — a new service, a new repo.
+If planning concludes one is needed and the request did not say so, stop and ask; a repo
+is a permanent cost (`docs/adr/0020`), not a planning detail.
+
+When it is asked for:
+
+1. Record it in `change.yaml` — `new_repos: [{name, purpose, images}]` — and list it in
+   `slices:`. `images` is what it ships (`[]` for none); `purpose` becomes its description,
+   README and CLAUDE.md first line.
+2. `./scripts/new-repo.sh <change> <name>` — creates the private repo, pushes
+   `templates/product-repo/` as its `main`, attaches it as a submodule with its images,
+   adds the write-guard deny rule and the README row, re-pins, commits `attach <name>`, and
+   re-runs `gh-setup` so every repo holds every deploy key. Idempotent. Until it has run,
+   phase 3 refuses.
+3. Its control-repo half, in this phase like any slice's: its services in
+   `stack/compose.yml` (an `include:` of its compose file, an `agentapp.owner` label each),
+   `scripts/stack.sh` and `scripts/failure-brief.py` `SERVICES`, an image tag in
+   `stack/dev.env` if anything reads its build identity (`check-docs.py [image-tags]`).
+   `check-docs.py [stack-services]` names any you miss.
+4. Its interface in `contracts/`, frozen in phase 2 like any other. A new kind of contract
+   goes under `contracts/<kind>/` as JSON with `x-consumers` — e.g. an MCP server's tools
+   in `contracts/mcp/<name>.json` — and is vendored with no script change. If it deploys,
+   the infra slice adds its registry (`<image>_image_repository`) and
+   `deployed_<image>_image` output (`docs/infra-interface.md`).
+5. Its slice file says it starts from the scaffold: choose the toolchain, make
+   `make check` real (it refuses until then), fill `docs/architecture.md`.
+
 ## 2 — Freeze the contract
 
 If no interface between repos moves, skip to phase 3.
