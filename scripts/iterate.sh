@@ -459,7 +459,8 @@ for r, s in sorted((d.get('repos') or {}).items()):
   # --verify-only means "check what is on disk", so the branch check would be wrong there.
   [ "$VERIFY_ONLY" = "1" ] && VERIFY_ARGS+=(--any-branch)
   # Keep the stack up between attempts: rebuilding from cold on every pass is most of the
-  # wall-clock, and the repair agent may want to poke at a running system.
+  # wall-clock, and the repair agent may want to poke at a running system. Images survive;
+  # a change with jobs still gets cold volumes (verify.sh).
   if [ "$ATTEMPT" -lt "$MAX_ATTEMPTS" ] || [ "$KEEP_UP" = "1" ]; then
     VERIFY_ARGS+=(--keep-up)
   fi
