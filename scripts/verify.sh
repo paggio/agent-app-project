@@ -301,7 +301,7 @@ done
 # YAML specs and every events schema whose x-consumers names it.
 for _r in $CHANGE_SLICES; do
   set +e
-  ./scripts/vendor-contracts.sh --check --repos "$_r" 2>&1 | sed 's/^/verify:   /'
+  ./scripts/vendor-contracts.sh --check --briefs "$CHANGE_DIR" --repos "$_r" 2>&1 | sed 's/^/verify:   /'
   _vc="${PIPESTATUS[0]}"
   set -e
   case "$_vc" in

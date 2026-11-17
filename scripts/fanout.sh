@@ -109,7 +109,7 @@ fi
 # and its CLAUDE.md says never to, so requiring it made the correct action the one that
 # violated the rule — and the two repos resolved that contradiction in opposite directions.
 # See docs/adr/0008.
-if ! ./scripts/vendor-contracts.sh --from "$FROZEN_CONTRACTS" \
+if ! ./scripts/vendor-contracts.sh --from "$FROZEN_CONTRACTS" --briefs "$CHANGE_DIR" \
       --repos "$(echo "${TARGETS# }" | tr ' ' ',')"; then
   echo "fanout: could not publish the frozen contracts into the slice repos" >&2
   exit 2
