@@ -85,7 +85,7 @@ for the current sha without flipping (the nightly CronJob). Connects as `index_w
 Every `tools/call`, refusals included, writes one `audit.tool_call` row before returning
 and one span in Phoenix project `PHOENIX_PROJECT_NAME` (default `metrics-gateway`) named
 `tools/call <tool>` with `mcp.tool`, `audit.id`, `audit.outcome`, `metrics.sha` — the
-contract's `x-telemetry`. Honour an incoming `traceparent`. Export OTLP to
+contract's `x-telemetry`. Each span starts its OWN trace; an incoming `traceparent` becomes a span link and `caller.trace_id` (re-frozen: joining moved every chat trace into project `metrics-gateway`, because Phoenix files a trace under one project). Export OTLP to
 `PHOENIX_COLLECTOR_ENDPOINT`; fail open if Phoenix is down.
 
 ### 6. Compose

@@ -24,7 +24,11 @@ chatbot-backend (additive route; spoke off without `METRICS_GATEWAY_URL`) → fr
 ## Deploy verification
 
 <!-- iterate:begin -->
-_Never run._
+- **failed** — 20261117T183509Z, 3 attempt(s)
+- first dispatch: chatbot-backend (`--only`)
+- failed at: `smoke: assertions failed`
+- answerable: chatbot-backend
+- report: `changes/0009-governed-metrics-spoke/runs/20261117T183509Z/report.md`
 <!-- iterate:end -->
 
 ## Blockers

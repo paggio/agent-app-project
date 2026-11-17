@@ -5,7 +5,7 @@ change: 0009-governed-metrics-spoke
 
 # The commit that landed contracts/ alone. The dispatch extracts contracts/ at exactly this
 # SHA and gives the slices nothing else, so it refuses to run without one.
-freeze_sha: "86700daa8d521f291581626059a6e0a93cc42b05"
+freeze_sha: "9508c3f12c7b734dbc9963149fd4cd7f7a844c4b"
 
 # Which repos get a slice. Each needs a matching <name>.md here. Use the SUBMODULE PATH:
 # chatbot-backend, not backend.

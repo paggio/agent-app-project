@@ -10,8 +10,9 @@ tools, and a fourth route.
 - `METRICS_GATEWAY_URL` (e.g. `http://metrics-gateway:8080/mcp`). Unset → the spoke is off
   and `metrics` is never routed to; the app runs exactly as today.
 - Client: the official `mcp` SDK over streamable HTTP (or `langchain-mcp-adapters` if it
-  fits the exact langgraph/langchain pins — check, do not move the pins). Propagate
-  `traceparent` so the gateway's spans join the turn's trace.
+  fits the exact langgraph/langchain pins — check, do not move the pins). Send
+  `traceparent`; the gateway links it (`caller.trace_id`) and keeps its own trace, so the
+  turn's trace stays whole in project `chatbot-backend` (baseline Phoenix steps).
 - Gateway unreachable, or `no_release`: treat as no match for routing; never a 5xx, never a
   hang (short connect/read timeouts, settings).
 
