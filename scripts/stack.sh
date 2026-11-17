@@ -46,6 +46,12 @@ case "$cmd" in
     # declared in each repo's compose plus the proxy healthcheck added in stack/compose.yml.
     # ${x[@]+"${x[@]}"} rather than "${x[@]}": bash 3.2 (what macOS ships) treats an empty
     # array as unbound under `set -u`.
+    # `up --build` skips `manual`-profile services, and `run` builds only a MISSING image,
+    # so a job's image froze at its first build and a slice's fix to it never ran (0009:
+    # the eval ran last change's question set). Build them with everything else.
+    if [ ${#build[@]} -gt 0 ]; then
+      "${COMPOSE[@]}" --profile manual build
+    fi
     "${COMPOSE[@]}" up -d ${build[@]+"${build[@]}"} --wait
     ;;
   down)
