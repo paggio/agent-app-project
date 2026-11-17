@@ -5,7 +5,8 @@
       "Edit(./chatbot-backend/**)",
       "Edit(./frontend/**)",
       "Edit(./infra/**)",
-      "Edit(./chatbot-eval/**)"
+      "Edit(./chatbot-eval/**)",
+      "Edit(./analytics-dbt/**)"
     ]
   },
   "hooks": {

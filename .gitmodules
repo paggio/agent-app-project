@@ -12,3 +12,7 @@
 [submodule "chatbot-eval"]
 	path = chatbot-eval
 	url = https://github.com/Paggio/chatbot-eval.git
+[submodule "analytics-dbt"]
+	path = analytics-dbt
+	url = https://github.com/Paggio/analytics-dbt.git
+	images = dbt

@@ -52,6 +52,7 @@ that repo, then run `/realign` again.
 | [`chatbot-eval`](https://github.com/Paggio/chatbot-eval) | eval runs: documents and call fixtures, questions per route, Phoenix experiments |
 | [`frontend`](https://github.com/Paggio/frontend) | web client and edge proxy |
 | [`infra`](https://github.com/Paggio/infra) | Terraform and the Helm chart for `dev` on AWS |
+| [`analytics-dbt`](https://github.com/Paggio/analytics-dbt) | Governed metrics as code - dbt and MetricFlow projects over Olist in Postgres and the marketing funnel in Iceberg, and the release bundles they publish. |
 
 All of them carry the `agent-app-project` topic:
 [filter the repo list by it](https://github.com/Paggio?tab=repositories&q=topic%3Aagent-app-project).
