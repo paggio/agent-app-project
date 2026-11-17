@@ -16,3 +16,7 @@
 	path = analytics-dbt
 	url = https://github.com/Paggio/analytics-dbt.git
 	images = dbt
+[submodule "metrics-gateway"]
+	path = metrics-gateway
+	url = https://github.com/Paggio/metrics-gateway.git
+	images = gateway
