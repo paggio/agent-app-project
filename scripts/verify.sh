@@ -339,6 +339,14 @@ esac
 # ---------------------------------------------------------------- local deploy
 if [ "$CHANGE_DEPLOY_LOCAL" = "1" ]; then
   stage "deploy: joined local stack"
+  # Jobs build state in sequence and the suite asserts it, so they start from cold volumes
+  # (docs/adr/0011). iterate.sh keeps the stack up between attempts for speed; without this
+  # an attempt replays its jobs over the last one's leftovers — 0009's second attempt
+  # indexed a release its first had published, and seven steps blamed the gateway.
+  if [ "${CHANGE_JOBS_COUNT:-0}" -gt 0 ]; then
+    note "change declares jobs — starting from cold volumes"
+    ./scripts/stack.sh down >/dev/null 2>&1 || true
+  fi
   # Tee'd, because compose names the failing service on a BUILD failure — and a build
   # failure leaves nothing "unhealthy" for `ps` to report, which is exactly the case where
   # the responsible repo used to be told nothing at all.
