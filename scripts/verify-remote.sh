@@ -248,9 +248,13 @@ refresh_aws
 ./scripts/publish.sh --deploy-set "$SET" --env "$ENV_NAME" --json "$RUN_DIR/published.json" \
     2>&1 | tee "$RUN_DIR/publish.log" \
   || fail_stage "publish: could not build and push the images the deploy set names" "" harness
-img() { python3 -c "import json,sys;print((json.load(open(sys.argv[1]))['images']).get(sys.argv[2],''))" "$RUN_DIR/published.json" "$1"; }
-BACKEND_IMAGE="$(img backend)"; FRONTEND_IMAGE="$(img frontend)"; PROXY_IMAGE="$(img proxy)"
-IMAGE_ARGS=(BACKEND_IMAGE="$BACKEND_IMAGE" FRONTEND_IMAGE="$FRONTEND_IMAGE" PROXY_IMAGE="$PROXY_IMAGE")
+# One <IMAGE>_IMAGE per image the set published — every `images` entry in .gitmodules, not a
+# hand list (docs/adr/0020): a new repo's image reaches the apply with no edit here.
+IMAGE_ARGS=()
+while IFS= read -r a; do IMAGE_ARGS+=("$a"); done < <(python3 -c "
+import json, sys
+for k, v in sorted(json.load(open(sys.argv[1]))['images'].items()):
+    print(f'{k.upper().replace(\"-\", \"_\")}_IMAGE={v}')" "$RUN_DIR/published.json")
 record_stage publish pass
 
 # ------------------------------------------------------------------------ plan

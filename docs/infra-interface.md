@@ -10,7 +10,7 @@ are `make dev-bootstrap` and `make dev-down`, through `scripts/with-aws.sh`.
 
 | Target | Args | stdout | Exit |
 | --- | --- | --- | --- |
-| `plan` | `ENV`, `BACKEND_IMAGE`, `FRONTEND_IMAGE`, `PROXY_IMAGE` | the plan, and where it was saved | 0 additive · **3 contains a destroy or replace** · 1 failed · 2 usage |
+| `plan` | `ENV`, one `<IMAGE>_IMAGE` per image in `.gitmodules` (`BACKEND_IMAGE`, …) | the plan, and where it was saved | 0 additive · **3 contains a destroy or replace** · 1 failed · 2 usage |
 | `deploy` | the same | apply and rollout log | 0 **applied and the new revision is serving** · 1 failed · 2 usage |
 | `outputs` | `ENV` | **a flat JSON object, and nothing else** | 0 · 1 no state for `ENV` · 2 usage |
 | `registries` | `ENV` | one `<image>_image_repository` per image (`.gitmodules` `images`) from the **bootstrap** state, as one flat JSON object | 0 · 1 not bootstrapped · 2 usage |
