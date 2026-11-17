@@ -190,7 +190,7 @@ def main() -> int:
             refuse(f"--current {args.current} is not readable JSON: {exc}")
 
     for r, entry in repos.items():
-        entry["tag"] = entry["sha"][:12]
+        entry["tag"] = entry["sha"]
         entry["images"] = {}
         carried = args.only is not None and r != args.only and IMAGES[r]
         entry["source"] = "carried" if carried else "built"

@@ -8,6 +8,10 @@
 #                  handed exactly the promise it is judged against.
 #     --repos a,b  only these submodules (default: every one of them)
 #     --check      report what would change and exit 1 if anything would; write nothing
+#     --briefs DIR a change directory: a repo whose slice brief (DIR/<repo>.md) names
+#                  contracts/<file> reads it. fanout.sh and verify.sh both pass it, so a
+#                  reader the slice is about to become gets its copy at dispatch, not a
+#                  refusal at verify (0009: analytics-dbt, infra-outputs.yaml).
 #
 # WHY THIS EXISTS. contracts/ has one author, and the product repos are consumers: their
 # own settings deny editing it and their CLAUDE.md says never to. But their CI verifies
@@ -19,7 +23,7 @@
 #
 # Every JSON contract one directory down — contracts/events/*.schema.json, and any new kind
 # such as contracts/mcp/<server>.json — goes to exactly the submodules its
-# top-level "x-consumers" names — a first-time file has no reader yet for the rule below to
+# top-level "x-consumers" names, plus its "x-producer" when it declares one — a first-time file has no reader yet for the rule below to
 # find, so the schema says who it binds. Missing or empty x-consumers, unparseable JSON, or a
 # consumer that is not a submodule is a refusal naming the file.
 #
@@ -36,6 +40,7 @@ cd "$ROOT"
 FILES="openapi.yaml infra-outputs.yaml"
 REPOS="$("$ROOT"/scripts/repos.py names)"
 FROM="$ROOT/contracts"
+BRIEFS=""
 CHECK=0; QUIET=0
 
 while [ $# -gt 0 ]; do
@@ -43,8 +48,9 @@ while [ $# -gt 0 ]; do
     --from) FROM="$2"; shift ;;
     --repos) REPOS="$(echo "$2" | tr ',' ' ')"; shift ;;
     --check) CHECK=1 ;;
+    --briefs) BRIEFS="$2"; shift ;;
     --quiet) QUIET=1 ;;
-    -h|--help) sed -n '2,27p' "${BASH_SOURCE[0]}"; exit 0 ;;
+    -h|--help) sed -n '2,31p' "${BASH_SOURCE[0]}"; exit 0 ;;
     *) echo "vendor-contracts: unknown option $1" >&2; exit 2 ;;
   esac
   shift
@@ -67,12 +73,16 @@ for path in sorted(glob.glob(os.path.join(src, "*", "*.json"))):
     except (OSError, ValueError) as exc:
         bad.append(f"contracts/{name} is not valid JSON: {exc}"); continue
     cons = doc.get("x-consumers") if isinstance(doc, dict) else None
+    # The producer verifies what it serves against the same copy its consumers hold.
+    prod = doc.get("x-producer") if isinstance(doc, dict) else None
     if not isinstance(cons, list) or not cons or not all(isinstance(c, str) for c in cons):
         bad.append(f"contracts/{name} has no x-consumers list naming the submodules it binds"); continue
     unknown = [c for c in cons if c not in subs]
     if unknown:
         bad.append(f"contracts/{name} x-consumers names {', '.join(unknown)}, not a submodule"); continue
-    for c in dict.fromkeys(cons):
+    if prod is not None and prod not in subs:
+        bad.append(f"contracts/{name} x-producer names {prod}, not a submodule"); continue
+    for c in dict.fromkeys(cons + ([prod] if prod else [])):
         print(c, name)
 for b in bad:
     print(f"vendor-contracts: {b}", file=sys.stderr)
@@ -92,7 +102,8 @@ for r in $REPOS; do
     # Publish what the repo vendors, or reads: a file nothing there names would be a promise
     # nobody checks. "Already vendors" alone never reached infra, whose tests/contract.sh
     # reads contracts/infra-outputs.yaml and SKIPPED, green, for want of it (0007).
-    if [ ! -f "$dst" ] && ! git -C "$r" grep -qF "contracts/$f" -- . ':(exclude)contracts' 2>/dev/null; then
+    if [ ! -f "$dst" ] && ! git -C "$r" grep -qF "contracts/$f" -- . ':(exclude)contracts' 2>/dev/null \
+       && ! { [ -n "$BRIEFS" ] && grep -qF "contracts/$f" "$BRIEFS/$r.md" 2>/dev/null; }; then
       continue
     fi
     if cmp -s "$src" "$dst" 2>/dev/null; then continue; fi
@@ -118,7 +129,7 @@ while read -r r f; do
   DRIFT=1
   if [ "$CHECK" = "1" ]; then
     if [ -f "$dst" ]; then say "vendor-contracts: $dst is stale"
-    else say "vendor-contracts: $dst is missing, and x-consumers names $r"; fi
+    else say "vendor-contracts: $dst is missing, and x-consumers or x-producer names $r"; fi
   else
     mkdir -p "$(dirname "$dst")"
     cp "$src" "$dst"

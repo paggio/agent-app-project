@@ -53,8 +53,9 @@ no environment variables, no protection rules.
    It exits 2 when a slice branch is not pushed, or when a gitlink and `repos.lock`
    disagree. The set is posted on the PR and uploaded as `deploy-set.json`.
 
-5. **Images are built in CI, tagged with the 12-character SHA, into immutable ECR
-   repositories.** A tag that already exists is not rebuilt. Each repo owns its
+5. **Images are built in CI, tagged with the full 40-character SHA, into immutable ECR
+   repositories.** (12 until change 0009: a semantic release is named by the commit that
+   built it, and a 12-character tag is not one.) A tag that already exists is not rebuilt. Each repo owns its
    `Dockerfile`; the control workflow builds them because it is the only place that can
    see every repo at the resolved SHAs.
 
