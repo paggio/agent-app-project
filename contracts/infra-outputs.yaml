@@ -188,3 +188,79 @@ outputs:
     kind: secret_ref
     consumers: [backend, phoenix, operator]
     example: "agentapp/dev/operator-password"
+
+  # ── The metrics spoke (change 0009). Two images, a lake, a releases bucket, one in-cluster URL.
+
+  dbt_image_repository:
+    description: Where scripts/publish.sh pushes analytics-dbt's image. Created by bootstrap.
+    type: string
+    kind: value
+    consumers: [smoke]
+    example: "000000000000.dkr.ecr.eu-west-1.amazonaws.com/analytics-dbt"
+
+  deployed_dbt_image:
+    description: >
+      The image the release Job last ran — loaders, dbt build, publish. A Job, not a
+      Deployment, so this is read from the Job the deploy ran, and its tag is also the
+      release sha it published.
+    type: string
+    kind: value
+    consumers: [smoke]
+    example: "000000000000.dkr.ecr.eu-west-1.amazonaws.com/analytics-dbt:0f1ada8c2b3d"
+
+  gateway_image_repository:
+    description: Where scripts/publish.sh pushes metrics-gateway's image (server and indexer). Created by bootstrap.
+    type: string
+    kind: value
+    consumers: [smoke]
+    example: "000000000000.dkr.ecr.eu-west-1.amazonaws.com/metrics-gateway"
+
+  deployed_gateway_image:
+    description: The image the metrics-gateway Deployment is running.
+    type: string
+    kind: value
+    consumers: [smoke]
+    example: "000000000000.dkr.ecr.eu-west-1.amazonaws.com/metrics-gateway:370a5d2e4f5a"
+
+  semantic_releases_bucket:
+    description: >
+      The bucket holding semantic releases, laid out as contracts/releases/semantic-release.schema.json
+      says. analytics-dbt's Job writes releases; only the indexer writes current.json; the
+      gateway reads.
+    type: string
+    kind: value
+    consumers: [analytics-dbt, metrics-gateway]
+    example: "agentapp-dev-semantic-releases"
+
+  iceberg_warehouse_bucket:
+    description: The S3 warehouse of the Iceberg tables Trino reads and the funnel loader writes.
+    type: string
+    kind: value
+    consumers: [analytics-dbt]
+    example: "agentapp-dev-iceberg-warehouse"
+
+  glue_database:
+    description: The Glue database the Iceberg catalog registers the funnel tables in.
+    type: string
+    kind: value
+    consumers: [analytics-dbt]
+    example: "agentapp_dev_funnel"
+
+  metrics_gateway_url:
+    description: >
+      The gateway's MCP endpoint, reachable only inside the cluster and only from the backend.
+      The backend reads it as METRICS_GATEWAY_URL. Not an origin smoke can reach.
+    type: string
+    kind: value
+    consumers: [backend]
+    example: "http://metrics-gateway:8080/mcp"
+
+  metrics_db_secret_refs:
+    description: >
+      Secrets Manager prefix under which the four database logins live, one secret each:
+      olist-writer (dbt build), olist-reader (gateway serve), index-writer (indexer),
+      index-reader (gateway: reads the index, inserts audit only). Names, never values.
+    type: string
+    kind: secret_ref
+    consumers: [analytics-dbt, metrics-gateway]
+    example: "agentapp/dev/metrics/"
