@@ -5,7 +5,7 @@
   "description": "The tools, resources and HTTP surface metrics-gateway serves. Producer: metrics-gateway, whose CI diffs its live tools/list against `tools` below (name, inputSchema, outputSchema, annotations). Consumer: chatbot-backend's metrics spoke. contracts/README.md § 'The metrics spoke' holds the rules no schema can state.",
   "x-consumers": ["chatbot-backend"],
   "x-producer": "metrics-gateway",
-  "x-version": "1.0.0",
+  "x-version": "1.0.1",
 
   "x-transport": {
     "protocol": "MCP, streamable HTTP, protocol version 2025-06-18",
@@ -58,7 +58,7 @@
 
   "x-telemetry": {
     "phoenix_project": "metrics-gateway",
-    "span": "One span per tools/call, named `tools/call <tool>`, refusals and timeouts included, carrying attributes `mcp.tool`, `audit.id` (= the result's audit_id), `audit.outcome` (ok | no_match | refused | timeout | error) and `metrics.sha` when a release was served. Its trace id is the result's trace_id. When the call carries a W3C `traceparent` header the span joins that trace.",
+    "span": "One span per tools/call, named `tools/call <tool>`, refusals and timeouts included, carrying attributes `mcp.tool`, `audit.id` (= the result's audit_id), `audit.outcome` (ok | no_match | refused | timeout | error) and `metrics.sha` when a release was served. Its trace id is the result's trace_id. The span ALWAYS starts a new trace, even when the call carries a W3C `traceparent`: Phoenix files a whole trace under one project, so joining the caller's trace would move the caller's spans out of its own project. An incoming traceparent is recorded instead as a span link and as attribute `caller.trace_id`.",
     "audit": "One row in audit.tool_call per tools/call, written before the result is returned: at, tool, args, project, sha, sql, rows, ms, outcome, trace_id."
   },
 
