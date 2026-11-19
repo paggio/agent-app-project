@@ -1100,7 +1100,7 @@ steps:
     tags: [remote]
     expect:
       status: 200
-      body_matches: '"image_tag":\s*"[0-9a-f]{12}"'
+      body_matches: '"image_tag":\s*"[0-9a-f]{40}"'
       json:
         chat_model: bedrock
 
