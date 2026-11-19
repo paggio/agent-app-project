@@ -5,7 +5,7 @@ run: changes/0009-governed-metrics-spoke/runs/20261119T091127Z
 date: 2026-11-19
 verdict: coherent-with-warnings
 findings: 2 proposed, 9 recorded, 4 rejected
-pr: none
+pr: https://github.com/paggio/agent-app-project/pull/48
 ---
 
 ## State audit
