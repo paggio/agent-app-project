@@ -1,0 +1,566 @@
+# Acceptance criteria, made executable. Run against the joined stack; a failure is fed back
+# to the repo named in `owner`. Write them while planning — a criterion in BRIEF.md that
+# never became a step here is a criterion nobody checks.
+#
+# Step shape (smoke.py owns it; `./scripts/smoke.py --lint <suite>` checks all of this
+# without making a request, and manifest.py --validate runs that for you):
+#   name      unique, stable — it appears in the repair prompt sent back to the agent
+#   owner     the repo answerable for this step. THIS FIELD ROUTES THE REPAIR.
+#   GET/POST/PUT/PATCH/DELETE/HEAD/OPTIONS   the path, relative to `base` in change.yaml
+#   headers   map, optional
+#   body      JSON body, optional
+#   form      form-encoded body, optional
+#   files     {field: <path beside this suite>} or {field: {path, filename,
+#             content_type}} — a multipart upload. Use `form` for the text fields
+#             beside it; `body` and `files` together are refused. A criterion whose
+#             only oracle is a browser is one the seam cannot see.
+#   base      a different origin for this step only (env vars interpolate)
+#   expect    REQUIRED: status (int or list) | json (deep subset) | body_matches (regex)
+#             | body_excludes (regex) | headers {name: regex} | cookie (name or list).
+#             No exemption — a step with no expect passes on any response, including a 500.
+#   capture   {var: dotted.json.path | header:Name | cookie:name}, bound into ${var} later
+#   retry     {attempts: 3, delay: 1.0} for anything eventually consistent
+#   contract  false when this is not API surface (the app shell, a static asset)
+#   tags      [local] or [remote]. UNTAGGED RUNS IN BOTH PASSES — tag a step only to opt it
+#             out. local = no remote analogue; remote = cannot hold locally.
+#
+# Cookies persist across steps within a run, so register -> login -> me works. The two
+# passes are separate processes, so never depend on a variable captured in the other.
+#
+# Variables are declared in stack/dev.env. ${SMOKE_RUN_ID} is the run nonce — use it in
+# every identity a step creates. ${SMOKE_ORIGIN} is the origin under test.
+
+# `steps: []` is REFUSED by manifest.py --validate.
+#
+# Gateway steps speak MCP's streamable HTTP directly: stateless, JSON responses, no
+# initialize (contracts/mcp/metrics-gateway.json x-transport). Tool results are read from
+# `result.structuredContent`. They are `local`: the gateway has no origin on dev.
+
+x-mcp-headers: &mcp
+  Accept: "application/json, text/event-stream"
+  Content-Type: application/json
+  MCP-Protocol-Version: "2025-06-18"
+
+steps:
+  # ───────────────────────────────────────────── release order (criteria 1, 2)
+
+  - name: the-gateway-serves-the-indexed-release-not-the-unindexed-one
+    owner: metrics-gateway
+    tags: [local]
+    base: ${METRICS_GATEWAY_ORIGIN}
+    contract: false
+    GET: /healthz
+    # After the jobs: A was indexed and flipped, B published and never indexed. Polls for
+    # the swap after the last flip.
+    retry: {attempts: 30, delay: 2.0}
+    expect:
+      status: 200
+      json:
+        status: ok
+        projects:
+          olist: {sha: "${METRICS_FIXTURE_SHA_A}"}
+          funnel: {sha: "${METRICS_FIXTURE_SHA_A}"}
+
+  - name: fixture-metric-a-is-searchable
+    owner: metrics-gateway
+    tags: [local]
+    base: ${METRICS_GATEWAY_ORIGIN}
+    contract: false
+    POST: /mcp
+    headers: *mcp
+    body:
+      jsonrpc: "2.0"
+      id: 1
+      method: tools/call
+      params:
+        name: search_semantic
+        arguments: {question: "fixture metric A orders counted for the release ordering check", kinds: [metric], top_k: 3}
+    expect:
+      status: 200
+      json:
+        result:
+          structuredContent: {no_match: false}
+      body_matches: '"name"\s*:\s*"fixture_order_count_a"'
+      # Criterion 1: every hit carries the served sha and no other.
+      body_excludes: '"sha"\s*:\s*"(?!${METRICS_FIXTURE_SHA_A}")'
+
+  - name: fixture-metric-a-is-queryable
+    owner: metrics-gateway
+    tags: [local]
+    base: ${METRICS_GATEWAY_ORIGIN}
+    contract: false
+    POST: /mcp
+    headers: *mcp
+    body:
+      jsonrpc: "2.0"
+      id: 2
+      method: tools/call
+      params:
+        name: query_metrics
+        arguments: {project: olist, metrics: [fixture_order_count_a]}
+    expect:
+      status: 200
+      json:
+        result:
+          structuredContent:
+            sha: "${METRICS_FIXTURE_SHA_A}"
+            metrics: [fixture_order_count_a]
+            row_count: 1
+
+  - name: unindexed-fixture-metric-b-is-not-searchable
+    owner: metrics-gateway
+    tags: [local]
+    base: ${METRICS_GATEWAY_ORIGIN}
+    contract: false
+    POST: /mcp
+    headers: *mcp
+    body:
+      jsonrpc: "2.0"
+      id: 3
+      method: tools/call
+      params:
+        name: search_semantic
+        arguments: {question: "fixture metric B orders counted for the release ordering check", kinds: [metric], top_k: 10}
+    expect:
+      status: 200
+      body_excludes: 'fixture_order_count_b'
+
+  - name: unindexed-fixture-metric-b-is-not-queryable
+    owner: metrics-gateway
+    tags: [local]
+    base: ${METRICS_GATEWAY_ORIGIN}
+    contract: false
+    POST: /mcp
+    headers: *mcp
+    body:
+      jsonrpc: "2.0"
+      id: 4
+      method: tools/call
+      params:
+        name: query_metrics
+        arguments: {project: olist, metrics: [fixture_order_count_b]}
+    expect:
+      status: 200
+      json:
+        result:
+          isError: true
+          structuredContent:
+            error: {code: unknown_metric}
+
+  # ───────────────────────────────────────────── search (criteria 3, 4)
+
+  - name: revenue-by-state-finds-gmv-in-the-top-three
+    owner: metrics-gateway
+    tags: [local]
+    base: ${METRICS_GATEWAY_ORIGIN}
+    contract: false
+    POST: /mcp
+    headers: *mcp
+    body:
+      jsonrpc: "2.0"
+      id: 5
+      method: tools/call
+      params:
+        name: search_semantic
+        arguments: {question: "revenue by state", kinds: [metric], top_k: 3}
+    expect:
+      status: 200
+      json:
+        result:
+          structuredContent: {no_match: false}
+      body_matches: '"name"\s*:\s*"gmv"'
+
+  - name: health-and-beauty-finds-the-category-value
+    owner: metrics-gateway
+    tags: [local]
+    base: ${METRICS_GATEWAY_ORIGIN}
+    contract: false
+    POST: /mcp
+    headers: *mcp
+    body:
+      jsonrpc: "2.0"
+      id: 6
+      method: tools/call
+      params:
+        name: search_semantic
+        arguments: {question: "health and beauty products", kinds: [dimension_value], top_k: 3}
+    expect:
+      status: 200
+      body_matches: '"name"\s*:\s*"health_beauty"'
+
+  - name: an-off-topic-question-is-no-match
+    owner: metrics-gateway
+    tags: [local]
+    base: ${METRICS_GATEWAY_ORIGIN}
+    contract: false
+    POST: /mcp
+    headers: *mcp
+    body:
+      jsonrpc: "2.0"
+      id: 7
+      method: tools/call
+      params:
+        name: search_semantic
+        arguments: {question: "Write a linked list in Python"}
+    expect:
+      status: 200
+      json:
+        result:
+          structuredContent: {no_match: true}
+      body_matches: '"hits"\s*:\s*\[\s*\]'
+
+  # ───────────────────────────────────────────── queries (criteria 5, 7, 9)
+
+  - name: describe-gmv-lists-state-as-a-valid-group-by
+    owner: metrics-gateway
+    tags: [local]
+    base: ${METRICS_GATEWAY_ORIGIN}
+    contract: false
+    POST: /mcp
+    headers: *mcp
+    body:
+      jsonrpc: "2.0"
+      id: 8
+      method: tools/call
+      params:
+        name: describe_metric
+        arguments: {project: olist, metric: gmv}
+    expect:
+      status: 200
+      json:
+        result:
+          structuredContent: {name: gmv, sha: "${METRICS_FIXTURE_SHA_A}"}
+      body_matches: '"group_bys"\s*:\s*\[[^\]]*"customer__state"'
+
+  - name: gmv-by-state-runs-through-metricflow
+    owner: metrics-gateway
+    tags: [local]
+    base: ${METRICS_GATEWAY_ORIGIN}
+    contract: false
+    POST: /mcp
+    headers: *mcp
+    body:
+      jsonrpc: "2.0"
+      id: 9
+      method: tools/call
+      params:
+        name: query_metrics
+        arguments: {project: olist, metrics: [gmv], group_by: [customer__state]}
+    expect:
+      status: 200
+      json:
+        result:
+          structuredContent:
+            project: olist
+            sha: "${METRICS_FIXTURE_SHA_A}"
+            metrics: [gmv]
+            group_by: [customer__state]
+      body_matches: '"sql"\s*:\s*"(?i:[^"]*select)'
+
+  - name: gmv-by-state-has-a-row-for-each-of-the-27-federative-units
+    owner: analytics-dbt
+    tags: [local]
+    base: ${METRICS_GATEWAY_ORIGIN}
+    contract: false
+    POST: /mcp
+    headers: *mcp
+    body:
+      jsonrpc: "2.0"
+      id: 10
+      method: tools/call
+      params:
+        name: query_metrics
+        arguments: {project: olist, metrics: [gmv], group_by: [customer__state]}
+    # The slice must keep every state; the 26 states plus the Federal District.
+    expect:
+      status: 200
+      json:
+        result:
+          structuredContent: {row_count: 27}
+
+  - name: funnel-conversion-computes-through-trino-over-iceberg
+    owner: analytics-dbt
+    tags: [local]
+    base: ${METRICS_GATEWAY_ORIGIN}
+    contract: false
+    POST: /mcp
+    headers: *mcp
+    body:
+      jsonrpc: "2.0"
+      id: 11
+      method: tools/call
+      params:
+        name: query_metrics
+        arguments: {project: funnel, metrics: [mql_to_deal_conversion], group_by: [mql__origin]}
+    # The SQL names the Iceberg catalog `lake`, so it ran on Trino; [0, 1] is dbt's own test.
+    expect:
+      status: 200
+      json:
+        result:
+          structuredContent: {project: funnel, metrics: [mql_to_deal_conversion]}
+      body_matches: '(?s)(?=.*"row_count"\s*:\s*[1-9])(?=.*"sql"\s*:\s*"[^"]*\blake\.)'
+
+  - name: zip-prefixes-are-never-indexed
+    owner: analytics-dbt
+    tags: [local]
+    base: ${METRICS_GATEWAY_ORIGIN}
+    contract: false
+    POST: /mcp
+    headers: *mcp
+    body:
+      jsonrpc: "2.0"
+      id: 12
+      method: tools/call
+      params:
+        name: get_dimension_values
+        arguments: {project: olist, dimension: customer__zip_code_prefix}
+    expect:
+      status: 200
+      json:
+        result:
+          isError: true
+          structuredContent:
+            error: {code: values_not_indexed}
+
+  # ───────────────────────────────────────────── guards (criteria 6, 8)
+
+  - name: an-unknown-dimension-is-refused-before-any-sql
+    owner: metrics-gateway
+    tags: [local]
+    base: ${METRICS_GATEWAY_ORIGIN}
+    contract: false
+    POST: /mcp
+    headers: *mcp
+    body:
+      jsonrpc: "2.0"
+      id: 13
+      method: tools/call
+      params:
+        name: query_metrics
+        arguments:
+          project: olist
+          metrics: [gmv]
+          filters: [{dimension: customer__planet, op: eq, value: mars}]
+    expect:
+      status: 200
+      json:
+        result:
+          isError: true
+          structuredContent:
+            error: {code: unknown_dimension}
+      body_excludes: '"sql"\s*:'
+    capture:
+      refusal_trace: result.structuredContent.trace_id
+
+  - name: a-disallowed-operator-is-refused
+    owner: metrics-gateway
+    tags: [local]
+    base: ${METRICS_GATEWAY_ORIGIN}
+    contract: false
+    POST: /mcp
+    headers: *mcp
+    body:
+      jsonrpc: "2.0"
+      id: 14
+      method: tools/call
+      params:
+        name: query_metrics
+        arguments:
+          project: olist
+          metrics: [gmv]
+          filters: [{dimension: customer__state, op: like, value: "S%"}]
+    expect:
+      status: 200
+      json:
+        result:
+          isError: true
+          structuredContent:
+            error: {code: operator_not_allowed}
+      body_excludes: '"sql"\s*:'
+
+  - name: a-brace-in-a-literal-is-refused
+    owner: metrics-gateway
+    tags: [local]
+    base: ${METRICS_GATEWAY_ORIGIN}
+    contract: false
+    POST: /mcp
+    headers: *mcp
+    body:
+      jsonrpc: "2.0"
+      id: 15
+      method: tools/call
+      params:
+        name: query_metrics
+        arguments:
+          project: olist
+          metrics: [gmv]
+          filters: [{dimension: customer__state, op: eq, value: "{{ ref('orders') }}"}]
+    expect:
+      status: 200
+      json:
+        result:
+          isError: true
+          structuredContent:
+            error: {code: literal_refused}
+      body_excludes: '"sql"\s*:'
+
+  - name: a-refusal-is-an-audited-span
+    owner: metrics-gateway
+    tags: [local]
+    base: ${PHOENIX_BASE}
+    contract: false
+    GET: /v1/projects/${METRICS_PHOENIX_PROJECT_NAME}/spans?trace_id=${refusal_trace}
+    retry: {attempts: 15, delay: 2.0}
+    expect:
+      status: 200
+      body_matches: '(?s)(?=.*"name"\s*:\s*"tools/call query_metrics")(?=.*"audit\.outcome"\s*:\s*"refused")(?=.*"audit\.id"\s*:\s*"[^"]+")'
+
+  - name: a-query-over-its-time-budget-is-cancelled
+    owner: metrics-gateway
+    tags: [local]
+    base: ${METRICS_GATEWAY_ORIGIN}
+    contract: false
+    POST: /mcp
+    headers: *mcp
+    body:
+      jsonrpc: "2.0"
+      id: 16
+      method: tools/call
+      params:
+        name: query_metrics
+        arguments: {project: olist, metrics: [gmv], group_by: [customer__state, metric_time__day], timeout_ms: 1}
+    expect:
+      status: 200
+      json:
+        result:
+          isError: true
+          structuredContent:
+            error: {code: engine_timeout}
+
+  # ───────────────────────────────────────────── the spoke, through the app (criteria 10, 11)
+
+  - name: register-a-metrics-account
+    owner: chatbot-backend
+    POST: /api/v1/auth/register
+    body:
+      email: smoke-metrics-${SMOKE_RUN_ID}@auth.test
+      password: "${SMOKE_PASSWORD}"
+      signup_code: "${SIGNUP_CODE}"
+      display_name: Smoke Metrics
+    expect:
+      status: [201, 409]
+
+  - name: login-the-metrics-account
+    owner: chatbot-backend
+    POST: /api/v1/auth/login
+    body:
+      email: smoke-metrics-${SMOKE_RUN_ID}@auth.test
+      password: "${SMOKE_PASSWORD}"
+    expect:
+      status: 200
+      cookie: session
+
+  - name: a-chat-for-metrics
+    owner: chatbot-backend
+    POST: /api/v1/threads
+    body: {}
+    expect:
+      status: 201
+    capture:
+      metrics_thread_id: thread.id
+
+  - name: the-metrics-route-is-reached-through-the-proxy
+    owner: frontend
+    GET: /api/v1/threads/${metrics_thread_id}
+    expect:
+      status: 200
+      headers:
+        content-type: '^application/json'
+      body_excludes: '<!doctype html'
+
+  - name: gmv-in-sp-in-2017-routes-to-metrics-and-cites-gmv
+    owner: chatbot-backend
+    tags: [local]
+    POST: /api/v1/threads/${metrics_thread_id}/messages
+    body:
+      message: "What was GMV in SP in 2017?"
+    expect:
+      status: 200
+      json:
+        messages:
+          - role: user
+          - role: assistant
+            route: metrics
+            metric_citations:
+              - marker: 1
+                project: olist
+                metric: gmv
+                sha: "${METRICS_FIXTURE_SHA_A}"
+                start: "2017-01-01"
+                end: "2017-12-31"
+                result: {row_count: 1, truncated: false}
+      body_matches: '"filters"\s*:\s*\[[^\]]*SP'
+    retry: {attempts: 3, delay: 3.0}
+
+  - name: the-deployed-spoke-cites-gmv
+    owner: infra
+    tags: [remote]
+    POST: /api/v1/threads/${metrics_thread_id}/messages
+    body:
+      message: "What was GMV in SP in 2017?"
+    # Criterion 14: release Job, indexer, gateway, RDS roles, Trino and the backend→gateway
+    # NetworkPolicy all have to be right on dev for this to hold.
+    retry: {attempts: 20, delay: 15.0}
+    expect:
+      status: 200
+      json:
+        messages:
+          - role: user
+          - role: assistant
+            route: metrics
+            metric_citations:
+              - marker: 1
+                project: olist
+                metric: gmv
+                start: "2017-01-01"
+                end: "2017-12-31"
+                result: {row_count: 1}
+      body_matches: '"sha"\s*:\s*"[0-9a-f]{40}"'
+
+  - name: a-coding-question-does-not-route-to-metrics
+    owner: chatbot-backend
+    POST: /api/v1/threads/${metrics_thread_id}/messages
+    body:
+      message: "Write a linked list in Python."
+    expect:
+      status: 200
+      json:
+        messages:
+          - role: user
+          - role: assistant
+            route: general
+      body_excludes: '"metric_citations"\s*:\s*\[\s*\{'
+
+  # ───────────────────────────────────────────── the eval (criterion 12; the jobs prove the gate)
+
+  - name: the-eval-dataset-for-metrics
+    owner: chatbot-eval
+    tags: [local]
+    GET: /v1/datasets?name=${EVAL_DATASET_NAME}
+    base: ${PHOENIX_BASE}
+    contract: false
+    expect:
+      status: 200
+      body_matches: '"name":\s*"${EVAL_DATASET_NAME}".*"example_count":\s*[1-9]'
+    capture:
+      eval_dataset_id: data.0.id
+
+  - name: the-question-set-covers-all-four-spokes
+    owner: chatbot-eval
+    tags: [local]
+    GET: /v1/datasets/${eval_dataset_id}/examples
+    base: ${PHOENIX_BASE}
+    contract: false
+    expect:
+      status: 200
+      body_matches: '(?s)^(?=.*"expected_route":\s*"calls")(?=.*"expected_route":\s*"documents")(?=.*"expected_route":\s*"general")(?=.*"expected_route":\s*"metrics")'

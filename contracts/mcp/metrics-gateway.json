@@ -1,0 +1,316 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://agentapp.local/contracts/mcp/metrics-gateway.json",
+  "title": "metrics-gateway MCP surface v1",
+  "description": "The tools, resources and HTTP surface metrics-gateway serves. Producer: metrics-gateway, whose CI diffs its live tools/list against `tools` below (name, inputSchema, outputSchema, annotations). Consumer: chatbot-backend's metrics spoke. contracts/README.md § 'The metrics spoke' holds the rules no schema can state.",
+  "x-consumers": ["chatbot-backend"],
+  "x-producer": "metrics-gateway",
+  "x-version": "1.0.1",
+
+  "x-transport": {
+    "protocol": "MCP, streamable HTTP, protocol version 2025-06-18",
+    "endpoint": "POST /mcp",
+    "mode": "Stateless with JSON responses: a request carrying `Accept: application/json, text/event-stream` gets one `application/json` JSON-RPC response, and `tools/call`, `tools/list`, `resources/read` need no prior `initialize` and no `Mcp-Session-Id`. `initialize` still works for clients that send it.",
+    "auth": "None. The gateway is reachable only inside the cluster network, and only from the backend (contracts/README.md § 'The metrics spoke').",
+    "port": 8080
+  },
+
+  "x-http": {
+    "GET /healthz": {
+      "description": "Liveness, and the release each project is serving. 200 from the moment the process listens, with or without a release; a project with no release yet is absent from `projects`. Not traced.",
+      "response": {
+        "type": "object",
+        "required": ["status", "projects"],
+        "properties": {
+          "status": {"const": "ok"},
+          "projects": {
+            "type": "object",
+            "additionalProperties": {
+              "type": "object",
+              "required": ["sha", "indexed_at"],
+              "properties": {
+                "sha": {"$ref": "#/$defs/sha"},
+                "indexed_at": {"type": "string", "format": "date-time"}
+              }
+            }
+          }
+        }
+      }
+    }
+  },
+
+  "x-errors": {
+    "description": "A refused or failed tool call is a JSON-RPC result with `isError: true` and `structuredContent` = #/$defs/ToolError. Never a JSON-RPC error object, except for an unknown tool name or malformed JSON-RPC. The code is the contract; the message is for people and may change.",
+    "codes": {
+      "invalid_arguments": "the arguments do not satisfy the tool's inputSchema",
+      "no_release": "the project has no served release yet",
+      "unknown_project": "project is not one the gateway serves",
+      "unknown_metric": "a metric name is not in the served release; `candidates` lists close names",
+      "unknown_dimension": "a group_by, filter or order_by name is not valid for these metrics at the served release; `candidates` lists close names",
+      "unknown_saved_query": "the saved query is not in the served release; `candidates` lists close names",
+      "operator_not_allowed": "a filter op outside the allow-list",
+      "literal_refused": "a filter value contains `{` or `}`, or is not a scalar",
+      "values_not_indexed": "get_dimension_values on a dimension not opted in with meta.index_values",
+      "engine_timeout": "the warehouse did not answer within the effective time limit; the query was cancelled",
+      "engine_error": "the warehouse failed the query"
+    }
+  },
+
+  "x-telemetry": {
+    "phoenix_project": "metrics-gateway",
+    "span": "One span per tools/call, named `tools/call <tool>`, refusals and timeouts included, carrying attributes `mcp.tool`, `audit.id` (= the result's audit_id), `audit.outcome` (ok | no_match | refused | timeout | error) and `metrics.sha` when a release was served. Its trace id is the result's trace_id. The span ALWAYS starts a new trace, even when the call carries a W3C `traceparent`: Phoenix files a whole trace under one project, so joining the caller's trace would move the caller's spans out of its own project. An incoming traceparent is recorded instead as a span link and as attribute `caller.trace_id`.",
+    "audit": "One row in audit.tool_call per tools/call, written before the result is returned: at, tool, args, project, sha, sql, rows, ms, outcome, trace_id."
+  },
+
+  "x-resources": {
+    "metricflow://{project}/semantic_manifest": "The semantic_manifest.json of the served release, application/json.",
+    "metricflow://{project}/osi": "The release's OSI document when the bundle carries one, application/json; resources/read returns an error when it does not."
+  },
+
+  "tools": [
+    {
+      "name": "search_semantic",
+      "description": "Find the governed objects that answer a plain-language question: metrics, dimensions, entities, saved queries and dimension values, at the served release. Returns no_match when nothing clears the score floor.",
+      "annotations": {"readOnlyHint": true, "openWorldHint": false},
+      "inputSchema": {
+        "type": "object",
+        "required": ["question"],
+        "additionalProperties": false,
+        "properties": {
+          "question": {"type": "string", "minLength": 1, "maxLength": 2000},
+          "kinds": {"type": "array", "items": {"$ref": "#/$defs/kind"}, "minItems": 1, "uniqueItems": true},
+          "project": {"type": "string"},
+          "top_k": {"type": "integer", "minimum": 1, "maximum": 10, "default": 5}
+        }
+      },
+      "outputSchema": {
+        "type": "object",
+        "required": ["no_match", "hits", "audit_id", "trace_id"],
+        "properties": {
+          "no_match": {"type": "boolean", "description": "True exactly when hits is empty."},
+          "hits": {"type": "array", "maxItems": 10, "items": {"$ref": "#/$defs/hit"}},
+          "audit_id": {"$ref": "#/$defs/audit_id"},
+          "trace_id": {"$ref": "#/$defs/trace_id"}
+        }
+      }
+    },
+    {
+      "name": "describe_metric",
+      "description": "A metric's type, readable definition, filters, the group_bys valid for it, and the saved queries that use it.",
+      "annotations": {"readOnlyHint": true, "openWorldHint": false},
+      "inputSchema": {
+        "type": "object",
+        "required": ["project", "metric"],
+        "additionalProperties": false,
+        "properties": {
+          "project": {"type": "string"},
+          "metric": {"type": "string"}
+        }
+      },
+      "outputSchema": {
+        "type": "object",
+        "required": ["project", "sha", "name", "label", "type", "description", "definition", "filters", "group_bys", "saved_queries", "audit_id", "trace_id"],
+        "properties": {
+          "project": {"type": "string"},
+          "sha": {"$ref": "#/$defs/sha"},
+          "name": {"type": "string"},
+          "label": {"type": "string"},
+          "type": {"enum": ["simple", "ratio", "derived", "cumulative", "conversion"]},
+          "description": {"type": "string"},
+          "definition": {"type": "string", "description": "Readable, e.g. \"gmv / delivered orders\"."},
+          "filters": {"type": "array", "items": {"type": "string"}},
+          "group_bys": {"type": "array", "items": {"type": "string"}, "description": "MetricFlow names, e.g. customer__state, metric_time__month."},
+          "saved_queries": {"type": "array", "items": {"type": "string"}},
+          "audit_id": {"$ref": "#/$defs/audit_id"},
+          "trace_id": {"$ref": "#/$defs/trace_id"}
+        }
+      }
+    },
+    {
+      "name": "describe_saved_query",
+      "description": "A saved query's metrics, group_bys, where clauses and intended use.",
+      "annotations": {"readOnlyHint": true, "openWorldHint": false},
+      "inputSchema": {
+        "type": "object",
+        "required": ["project", "name"],
+        "additionalProperties": false,
+        "properties": {
+          "project": {"type": "string"},
+          "name": {"type": "string"}
+        }
+      },
+      "outputSchema": {
+        "type": "object",
+        "required": ["project", "sha", "name", "description", "metrics", "group_bys", "where", "audit_id", "trace_id"],
+        "properties": {
+          "project": {"type": "string"},
+          "sha": {"$ref": "#/$defs/sha"},
+          "name": {"type": "string"},
+          "label": {"type": "string"},
+          "description": {"type": "string"},
+          "metrics": {"type": "array", "items": {"type": "string"}},
+          "group_bys": {"type": "array", "items": {"type": "string"}},
+          "where": {"type": "array", "items": {"type": "string"}},
+          "audit_id": {"$ref": "#/$defs/audit_id"},
+          "trace_id": {"$ref": "#/$defs/trace_id"}
+        }
+      }
+    },
+    {
+      "name": "get_dimension_values",
+      "description": "Up to 200 known values of a dimension opted in with meta.index_values, served from the index; never touches the warehouse.",
+      "annotations": {"readOnlyHint": true, "openWorldHint": false},
+      "inputSchema": {
+        "type": "object",
+        "required": ["project", "dimension"],
+        "additionalProperties": false,
+        "properties": {
+          "project": {"type": "string"},
+          "dimension": {"type": "string"},
+          "contains": {"type": "string", "maxLength": 200}
+        }
+      },
+      "outputSchema": {
+        "type": "object",
+        "required": ["project", "dimension", "values", "refreshed_at", "audit_id", "trace_id"],
+        "properties": {
+          "project": {"type": "string"},
+          "dimension": {"type": "string"},
+          "values": {
+            "type": "array",
+            "maxItems": 200,
+            "items": {
+              "type": "object",
+              "required": ["value", "label"],
+              "properties": {"value": {"type": "string"}, "label": {"type": "string"}}
+            }
+          },
+          "refreshed_at": {"type": ["string", "null"], "format": "date-time"},
+          "audit_id": {"$ref": "#/$defs/audit_id"},
+          "trace_id": {"$ref": "#/$defs/trace_id"}
+        }
+      }
+    },
+    {
+      "name": "query_metrics",
+      "description": "Compile and run a governed metric query through MetricFlow at the served release. Read-only; at most 500 rows.",
+      "annotations": {"readOnlyHint": true, "openWorldHint": false},
+      "inputSchema": {
+        "type": "object",
+        "required": ["project", "metrics"],
+        "additionalProperties": false,
+        "properties": {
+          "project": {"type": "string"},
+          "metrics": {"type": "array", "items": {"type": "string"}, "minItems": 1, "maxItems": 5},
+          "group_by": {"type": "array", "items": {"type": "string"}, "maxItems": 5},
+          "filters": {"type": "array", "items": {"$ref": "#/$defs/filter"}, "maxItems": 10},
+          "order_by": {
+            "type": "array",
+            "maxItems": 5,
+            "items": {
+              "type": "object",
+              "required": ["name"],
+              "additionalProperties": false,
+              "properties": {"name": {"type": "string"}, "descending": {"type": "boolean", "default": false}}
+            }
+          },
+          "start": {"type": "string", "format": "date", "description": "Inclusive, on metric_time."},
+          "end": {"type": "string", "format": "date", "description": "Inclusive, on metric_time."},
+          "limit": {"type": "integer", "minimum": 1, "maximum": 500, "default": 500},
+          "timeout_ms": {"type": "integer", "minimum": 1, "description": "A tighter budget than the server's limit; the effective limit is the smaller of the two."}
+        }
+      },
+      "outputSchema": {"$ref": "#/$defs/query_result"}
+    },
+    {
+      "name": "run_saved_query",
+      "description": "Run a saved query at the served release, optionally narrowed in time. Same guards and result as query_metrics.",
+      "annotations": {"readOnlyHint": true, "openWorldHint": false},
+      "inputSchema": {
+        "type": "object",
+        "required": ["project", "name"],
+        "additionalProperties": false,
+        "properties": {
+          "project": {"type": "string"},
+          "name": {"type": "string"},
+          "start": {"type": "string", "format": "date"},
+          "end": {"type": "string", "format": "date"},
+          "limit": {"type": "integer", "minimum": 1, "maximum": 500, "default": 500},
+          "timeout_ms": {"type": "integer", "minimum": 1}
+        }
+      },
+      "outputSchema": {"$ref": "#/$defs/query_result"}
+    }
+  ],
+
+  "$defs": {
+    "sha": {"type": "string", "pattern": "^[0-9a-f]{40}$"},
+    "audit_id": {"type": "string", "description": "The audit row this call wrote. Opaque."},
+    "trace_id": {"type": "string", "pattern": "^[0-9a-f]{32}$", "description": "W3C trace id of the call's span in Phoenix project `metrics-gateway`."},
+    "kind": {"enum": ["metric", "dimension", "entity", "saved_query", "dimension_value"]},
+    "hit": {
+      "type": "object",
+      "required": ["kind", "project", "name", "score", "sha", "uri"],
+      "properties": {
+        "kind": {"$ref": "#/$defs/kind"},
+        "project": {"type": "string"},
+        "name": {"type": "string", "description": "The object's MetricFlow name; for a dimension_value, the value itself."},
+        "label": {"type": "string"},
+        "parent": {"type": ["string", "null"], "description": "For a dimension_value, its dimension (e.g. customer__state); for a dimension, its semantic model."},
+        "score": {"type": "number", "description": "Fused rank score. Comparable within one response only; its scale is not promised."},
+        "sha": {"$ref": "#/$defs/sha"},
+        "uri": {"type": "string", "description": "metricflow://{project}/{kind}/{name}"}
+      }
+    },
+    "filter": {
+      "type": "object",
+      "required": ["dimension", "op"],
+      "additionalProperties": false,
+      "properties": {
+        "dimension": {"type": "string"},
+        "op": {"type": "string", "description": "Allow-list: eq, ne, lt, lte, gt, gte, in, not_in. Deliberately a string, not an enum, so anything else reaches the gateway and is refused as operator_not_allowed rather than as a schema error."},
+        "value": {"type": ["string", "number", "boolean"]},
+        "values": {"type": "array", "items": {"type": ["string", "number", "boolean"]}, "minItems": 1, "maxItems": 100}
+      }
+    },
+    "query_result": {
+      "type": "object",
+      "required": ["project", "sha", "metrics", "definitions", "group_by", "columns", "rows", "row_count", "sql", "audit_id", "trace_id"],
+      "properties": {
+        "project": {"type": "string"},
+        "sha": {"$ref": "#/$defs/sha"},
+        "saved_query": {"type": ["string", "null"]},
+        "metrics": {"type": "array", "items": {"type": "string"}},
+        "definitions": {
+          "type": "object",
+          "additionalProperties": {"type": "string"},
+          "description": "Readable definition of each metric queried, keyed by name."
+        },
+        "group_by": {"type": "array", "items": {"type": "string"}},
+        "columns": {"type": "array", "items": {"type": "string"}},
+        "rows": {"type": "array", "maxItems": 500, "items": {"type": "array"}},
+        "row_count": {"type": "integer", "minimum": 0},
+        "sql": {"type": "string", "description": "The SQL MetricFlow compiled and the warehouse ran."},
+        "audit_id": {"$ref": "#/$defs/audit_id"},
+        "trace_id": {"$ref": "#/$defs/trace_id"}
+      }
+    },
+    "ToolError": {
+      "type": "object",
+      "required": ["error", "audit_id", "trace_id"],
+      "properties": {
+        "error": {
+          "type": "object",
+          "required": ["code", "message"],
+          "properties": {
+            "code": {"type": "string", "description": "One of x-errors.codes; a consumer tolerates an unknown one."},
+            "message": {"type": "string"},
+            "candidates": {"type": "array", "items": {"type": "string"}}
+          }
+        },
+        "audit_id": {"$ref": "#/$defs/audit_id"},
+        "trace_id": {"$ref": "#/$defs/trace_id"}
+      }
+    }
+  }
+}

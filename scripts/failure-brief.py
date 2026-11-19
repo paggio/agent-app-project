@@ -36,7 +36,8 @@ import sys
 SERVICES = {
     "chatbot-backend": {"primary": ["backend", "call-worker", "call-simulator"],
                         "supporting": ["postgres", "redis", "opensearch", "minio",
-                                       "phoenix", "phoenix-db", "elasticmq"]},
+                                       "phoenix", "phoenix-db", "elasticmq",
+                                       "metrics-gateway"]},
     "frontend": {"primary": ["frontend", "proxy"], "supporting": []},
     "infra": {"primary": [], "supporting": []},
     # The eval is a CLIENT of the backend, so `backend` is supporting here as well as
@@ -49,6 +50,15 @@ SERVICES = {
     "chatbot-eval": {"primary": ["eval"],
                      "supporting": ["backend", "call-worker", "elasticmq", "phoenix",
                                     "phoenix-db", "opensearch", "minio", "proxy"]},
+    # The release job builds against both engines and publishes to the bucket the gateway
+    # reads; the gateway queries the same engines through MetricFlow. Each is supporting for
+    # the other, because a release that does not load and a gateway that cannot read it fail
+    # the same steps.
+    "analytics-dbt": {"primary": ["dbt-release"],
+                      "supporting": ["trino", "iceberg-rest", "postgres", "minio"]},
+    "metrics-gateway": {"primary": ["metrics-gateway", "indexer"],
+                        "supporting": ["trino", "iceberg-rest", "postgres", "minio",
+                                       "phoenix", "dbt-release"]},
 }
 
 # Health probes run every few seconds against every container, so by the time anything
