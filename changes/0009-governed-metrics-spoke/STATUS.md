@@ -33,8 +33,8 @@ chatbot-backend (additive route; spoke off without `METRICS_GATEWAY_URL`) → fr
 
 ## Blockers
 
-- Before `/dev-push`: `make dev-bootstrap` (two new ECR repos) — human. Harness #43, #44,
-  #45 are merged.
+- None. Verified on dev; harness #43, #44, #45, #47 merged. Dev covers 6 change steps
+  (2 substantive); the gateway's 20 steps are local-only — it has no public origin on dev.
 
 ## After merge
 
