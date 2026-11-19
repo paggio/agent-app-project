@@ -101,3 +101,17 @@ Spell out IAM and probes exactly: the last change lost three remote rounds to a 
 permission and a probe shape.
 
 The assertions belong to the control repo: fix the cause, never the assertion.
+
+## Remote failure — /dev-push run 44489795903
+
+`helm upgrade --install` failed at the pre-install hook `Job/metrics-db` (BackoffLimitExceeded)
+on a fresh RDS 17.9. The RDS log, every retry:
+
+    agentapp@postgres: ERROR:  must be able to SET ROLE "olist_writer"
+
+`SET createrole_self_grant` did not give the RDS master SET on the roles, so
+`CREATE DATABASE … OWNER olist_writer` and `ALTER DEFAULT PRIVILEGES FOR ROLE olist_writer`
+fail. Grant the master membership explicitly (it holds ADMIN on roles it created; idempotent
+on re-runs, roles may already exist), e.g. `GRANT olist_writer, index_writer TO CURRENT_USER
+WITH SET TRUE, INHERIT FALSE`, before those statements. Your job tests must cover a
+non-superuser CREATEROLE admin, which is what RDS is — a superuser hides this.
