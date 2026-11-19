@@ -14,7 +14,7 @@
 | chatbot-backend | `feat/0009-governed-metrics-spoke` @ `96a9b94` | [chatbot-backend#11](https://github.com/paggio/chatbot-backend/pull/11) | ☑ | ☐ |
 | chatbot-eval | `feat/0009-governed-metrics-spoke` @ `44ae893` | [chatbot-eval#4](https://github.com/paggio/chatbot-eval/pull/4) | ☑ | ☐ |
 | frontend | `feat/0009-governed-metrics-spoke` @ `3eb9499` | [frontend#10](https://github.com/paggio/frontend/pull/10) | ☑ | ☐ |
-| infra | `feat/0009-governed-metrics-spoke` @ `9d20ba7` | [infra#5](https://github.com/paggio/infra/pull/5) | ☑ | ☐ |
+| infra | `feat/0009-governed-metrics-spoke` @ `dda5ba3` | [infra#5](https://github.com/paggio/infra/pull/5) | ☑ | ☐ |
 
 Merge order: analytics-dbt and metrics-gateway (new, nothing consumes them yet) →
 chatbot-backend (additive route; spoke off without `METRICS_GATEWAY_URL`) → frontend
@@ -28,6 +28,8 @@ chatbot-backend (additive route; spoke off without `METRICS_GATEWAY_URL`) → fr
 - first dispatch: infra (`--only`)
 - report: `changes/0009-governed-metrics-spoke/runs/20261119T091127Z/report.md`
 <!-- iterate:end -->
+
+- **verified** on dev — `/dev-push` run [44498487651](https://github.com/paggio/agent-app-project/actions/runs/44498487651), 82 assertions passed (6 from the change's suite). Dev is up and billing: `make dev-down` when idle.
 
 ## Blockers
 
