@@ -24,9 +24,9 @@ chatbot-backend (additive route; spoke off without `METRICS_GATEWAY_URL`) → fr
 ## Deploy verification
 
 <!-- iterate:begin -->
-- **verified-local** — 20261117T193113Z, 1 attempt(s)
-- first dispatch: metrics-gateway chatbot-backend (`--only`)
-- report: `changes/0009-governed-metrics-spoke/runs/20261117T193113Z/report.md`
+- **verified-local** — 20261119T091127Z, 1 attempt(s)
+- first dispatch: infra (`--only`)
+- report: `changes/0009-governed-metrics-spoke/runs/20261119T091127Z/report.md`
 <!-- iterate:end -->
 
 ## Blockers
