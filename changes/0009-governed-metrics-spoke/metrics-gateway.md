@@ -132,3 +132,83 @@ returns SQL and sha; the three refusals with no SQL; the refusal's Phoenix span 
 `audit.outcome = refused`; `timeout_ms: 1` → `engine_timeout`.
 
 The assertions belong to the control repo: fix the cause, never the assertion.
+
+## Amendment, 2026-11-23 — documentation (BRIEF criterion 15)
+
+**Docs only. No code, behaviour, tool surface or contract changes. Nothing is removed.**
+
+The user wants `docs/` to explain the whole mechanism to someone who has never seen
+MetricFlow. Write it from the code as it stands, verify every claim against `src/`, and use
+Olist/funnel examples (`gmv`, `customer__state`, `health_beauty`, `mql_to_deal_conversion`),
+never invented ones. Diagrams: Mermaid (GitHub renders it) where it fits; the ASCII ones below
+may stay ASCII. Keep `architecture.md` the module/config reference; put the explanation in a
+new `docs/how-it-works.md`, linked from `README.md`, `CLAUDE.md` and `architecture.md`.
+
+It must contain, explicitly:
+
+1. **MetricFlow, as this repo uses it** — this diagram (the user's), then what our code does at
+   each arrow: which files the bundle carries, `MetricFlowEngine` over `semantic_manifest.json`
+   in a worker process, compile-only SQL client (`docs/adr/0001`), execution in `warehouse.py`.
+   State which dbt version analytics-dbt pins and whether `osi_document.json` is produced/used.
+
+   ```
+   your dbt project                      dbt-core                  MetricFlow (Apache 2.0)
+   ─────────────────                     ────────                  ───────────────────────
+   models/*.sql        ┐
+   semantic_models:    ├── dbt parse ──► target/semantic_manifest.json ──► semantic graph
+   metrics:            │                 target/osi_document.json            │
+   saved_queries:      ┘                 (dbt ≥1.12 also exports OSI)        ▼
+                                                                request: metrics + group_by
+                                                                         + where + grain
+                                                                             │
+                                                                             ▼
+                                                                dataflow plan ──► SQL in the
+                                                                target dialect (Redshift,
+                                                                Trino, DuckDB, Snowflake, ...)
+                                                                             │
+                                                        dbt adapter (your profiles.yml) ──► rows
+   ```
+
+2. **The semantic index** — a table of every kind (metric; dimension/entity; saved query;
+   model/column docs; dimension values): where it comes from (`semantic_manifest.json`,
+   `manifest.json`, the warehouse via dimension-values queries), and the EXACT text embedded
+   for each, quoted from `catalog.py`/`indexer.py` with a real Olist example. Say that
+   model/column docs are context only, never a hit; which dimensions get values
+   (`meta.index_values`) and which never do (identifiers, zip prefixes); embeddings (local
+   ONNX MiniLM 384-d), hybrid search (cosine + `ts_rank` in simple/portuguese/english → RRF →
+   floor → top_k), pinned to the served sha. Link `docs/search.md` for calibration.
+
+3. **The tools, under the hood** — one diagram of the six, then per tool: purpose, inputs,
+   the steps it takes (guards → catalog lookup → MetricFlow request → compiled SQL →
+   warehouse → rows, or index query), what it returns, its refusals. E.g. `query_metrics`:
+   names checked against the served catalog, op allow-list, literals escaped into a MetricFlow
+   `where`, `start`/`end` as `metric_time` filters, the worker compiles the dataflow plan to
+   dialect SQL, `warehouse.py` runs it under the deadline, the result carries SQL, sha and
+   readable definitions. Plus the per-call span and audit row.
+
+4. **The agent workflow it is designed for** — a sequence diagram: human question →
+   `search_semantic` → a metric / dimension / value / saved query → the agent reasons
+   (`describe_metric` for valid group-bys, `get_dimension_values` to resolve a literal) →
+   `query_metrics` or `run_saved_query` → rows with definition and sha → cited answer. Then
+   how chatbot-backend's metrics spoke actually uses it (deterministic first pass under
+   `CHAT_MODEL=echo`, tool-calling with a capable model) — describe only from the contract
+   and `contracts/README.md` § "The metrics spoke", not another repo's internals.
+
+5. **Releases, CI/CD** — this diagram (the user's ideal), then what is built today and where
+   it differs: analytics-dbt's release job (load → `dbt build` → `mf validate-configs` →
+   `bundle.tar.gz`, `release.json` LAST under `<project>/<sha>/`), the indexer the only writer
+   of `current.json` (index first, flip second — so "gateway reload" happens AFTER the
+   indexer, not in parallel), the gateway polling and swapping with a query in flight. On dev
+   the release and the indexer run as post-install/upgrade hook Jobs at deploy, with
+   `RELEASE_SHA` = analytics-dbt's image sha; there is no merge-triggered prod dbt job and
+   no prod (BRIEF out of scope). PR-time CI uses the local topology.
+
+   ```
+     PR ─► CI ─────────────────► merge ─► prod dbt job ──► publish artifacts ──┬─► gateway reload
+           dbt parse                       dbt build        s3://semantic/      └─► indexer (re-embed diffs)
+           mf validate-configs             (tables first!)  referrals/<sha>/...
+           dbt build (CI schema)                            + pointer "current"
+           explain/run saved queries
+   ```
+
+Concise: diagrams and short prose, no padding. The repo's docs gate must pass.

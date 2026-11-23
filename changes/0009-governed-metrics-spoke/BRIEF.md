@@ -76,6 +76,13 @@ Local-only criteria are marked (L): the gateway has no origin on dev.
     the result as a table (frontend's Playwright suite against the joined origin).
 14. On dev, the deployed spoke answers criterion 10 end to end; the gateway is reachable
     only from the backend pods (infra's chart test asserts the NetworkPolicy).
+15. (Amended 2026-11-23) metrics-gateway's docs explain the whole mechanism to a reader who
+    has never seen MetricFlow: the dbt → semantic manifest → MetricFlow → SQL → rows pipeline,
+    every kind of semantic object and the exact text embedded for it, each tool and what it
+    does under the hood, the agent workflow it is designed for, and the release CI/CD flow —
+    each as a diagram plus prose, with the ideal flow and what is built today told apart.
+    No smoke step: a document is reviewed, not asserted; the slice's docs gate and the PR
+    review are its oracle.
 
 ## Out of scope
 

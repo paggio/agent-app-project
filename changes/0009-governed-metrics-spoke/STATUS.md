@@ -31,6 +31,12 @@ chatbot-backend (additive route; spoke off without `METRICS_GATEWAY_URL`) → fr
 
 - **verified** on dev — `/dev-push` run [44498487651](https://github.com/paggio/agent-app-project/actions/runs/44498487651), 82 assertions passed (6 from the change's suite). Re-verified 2026-11-23, run [45154679035](https://github.com/paggio/agent-app-project/actions/runs/45154679035), 82 passed. Dev is up and billing: `make dev-down` when idle.
 
+## Amended, 2026-11-23 — /ship-iterate
+
+BRIEF criterion 15: metrics-gateway documents MetricFlow, the semantic index, each tool
+under the hood, the agent workflow and the release CI/CD flow (ideal vs built). Docs only; the
+user asked for it after reviewing. Only the metrics-gateway slice is re-dispatched.
+
 ## Blockers
 
 - None. Verified on dev; harness #43, #44, #45, #47 merged. Dev covers 6 change steps
