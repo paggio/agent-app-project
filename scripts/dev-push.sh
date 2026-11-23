@@ -15,7 +15,8 @@
 # deploy-set.json, verify-remote.json, the logs.
 #
 # Exit 0 verified (or deployed-partial with --only) · 1 the deploy or an assertion failed ·
-# 2 refused — no PR, expired credentials, a run that produced no verdict. docs/adr/0003.
+# 2 refused — no PR, a gitlink off repos.lock or an unpushed slice branch (checked before
+# commenting), expired credentials, a run that produced no verdict. docs/adr/0003.
 set -euo pipefail
 
 ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
@@ -31,7 +32,7 @@ while [ $# -gt 0 ]; do
     --pr) PR_ARG="$2"; shift ;;
     --allow-destroy) ALLOW=" --allow-destroy" ;;
     --no-wait) WAIT=0 ;;
-    -h|--help) sed -n '2,18p' "${BASH_SOURCE[0]}"; exit 0 ;;
+    -h|--help) sed -n '2,19p' "${BASH_SOURCE[0]}"; exit 0 ;;
     -*) echo "dev-push: unknown option $1" >&2; exit 2 ;;
     *) CHANGE="$1" ;;
   esac
@@ -72,6 +73,10 @@ else
   [ -d "changes/$CHANGE" ] || refuse "no such change: changes/$CHANGE"
   PR="$(gh pr list -R "$CONTROL" --head "feat/$CHANGE" --state open --json number --jq '.[0].number // empty')"
   [ -n "$PR" ] || refuse "no open control PR from feat/$CHANGE — /ship phase 5 opens it (prs.sh --create)"
+  # CI's resolver, run here first: a gitlink off repos.lock or an unpushed slice branch is
+  # otherwise learned from a failed CI run (0008 R2, 0009 892a3e8).
+  git fetch -q origin "feat/$CHANGE" || refuse "could not fetch feat/$CHANGE from origin"
+  "$ROOT"/scripts/deploy-set.py --change "$CHANGE" --ref FETCH_HEAD >/dev/null || exit 2
   BODY="/dev-push${ONLY:+-$ONLY}$ALLOW"
   gh pr comment "$PR" -R "$CONTROL" --body "$BODY" >/dev/null
   EVENT="issue_comment"
@@ -86,14 +91,24 @@ fi
 # anything can refuse, so even a run that stopped early is identifiable.
 [ "$WAIT" = "1" ] || { say "not waiting — gh run list -R $CONTROL --workflow dev-push.yml"; exit 0; }
 DEADLINE=$(( $(date +%s) + 120 * 60 ))
-SEEN=" "; RUN=""; OUT=""
+SEEN=" "; HELD=" "; RUN=""; OUT=""
 while [ -z "$RUN" ]; do
   [ "$(date +%s)" -lt "$DEADLINE" ] || refuse "no dev-push run for this trigger finished within two hours"
   CANDIDATES="$(gh run list -R "$CONTROL" --workflow dev-push.yml --event "$EVENT" --limit 30 \
       --json databaseId,createdAt \
       --jq "[.[] | select(.createdAt >= \"$SINCE\")] | sort_by(.createdAt) | .[].databaseId")"
   NEXT=""
-  for id in $CANDIDATES; do case "$SEEN" in *" $id "*) ;; *) NEXT="$id"; break ;; esac; done
+  for id in $CANDIDATES; do
+    case "$SEEN" in *" $id "*) continue ;; esac
+    # A run GitHub holds for approval completes at once with no jobs, and approving it
+    # re-runs the SAME id — so it is revisited, never marked seen (0009: 44489379590).
+    if [ "$(gh run view "$id" -R "$CONTROL" --json conclusion --jq .conclusion 2>/dev/null)" = action_required ]; then
+      case "$HELD" in *" $id "*) ;; *) HELD="$HELD$id "
+        say "run $id is held for approval: https://github.com/$CONTROL/actions/runs/$id" ;; esac
+      continue
+    fi
+    NEXT="$id"; break
+  done
   if [ -z "$NEXT" ]; then sleep 10; continue; fi
   SEEN="$SEEN$NEXT "
   gh run watch "$NEXT" -R "$CONTROL" --interval 30 >/dev/null 2>&1 || true
