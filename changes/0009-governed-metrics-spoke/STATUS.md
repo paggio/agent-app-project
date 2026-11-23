@@ -24,9 +24,9 @@ chatbot-backend (additive route; spoke off without `METRICS_GATEWAY_URL`) → fr
 ## Deploy verification
 
 <!-- iterate:begin -->
-- **verified-local** — 20261119T091127Z, 1 attempt(s)
-- first dispatch: infra (`--only`)
-- report: `changes/0009-governed-metrics-spoke/runs/20261119T091127Z/report.md`
+- **verified-local** — 20261123T135733Z, 1 attempt(s)
+- first dispatch: metrics-gateway (`--only`)
+- report: `changes/0009-governed-metrics-spoke/runs/20261123T135733Z/report.md`
 <!-- iterate:end -->
 
 - **verified** on dev — `/dev-push` run [44498487651](https://github.com/paggio/agent-app-project/actions/runs/44498487651), 82 assertions passed (6 from the change's suite). Re-verified 2026-11-23, run [45154679035](https://github.com/paggio/agent-app-project/actions/runs/45154679035), 82 passed. Dev is up and billing: `make dev-down` when idle.
