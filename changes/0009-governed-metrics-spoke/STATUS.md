@@ -10,7 +10,7 @@
 | Repo | Branch | PR | CI | Merged |
 | --- | --- | --- | --- | --- |
 | analytics-dbt | `feat/0009-governed-metrics-spoke` @ `18212d0` | [analytics-dbt#1](https://github.com/paggio/analytics-dbt/pull/1) | ☑ | ☐ |
-| metrics-gateway | `feat/0009-governed-metrics-spoke` @ `1bd32a9` | [metrics-gateway#1](https://github.com/paggio/metrics-gateway/pull/1) | ☑ | ☐ |
+| metrics-gateway | `feat/0009-governed-metrics-spoke` @ `a8eb739` | [metrics-gateway#1](https://github.com/paggio/metrics-gateway/pull/1) | ☑ | ☐ |
 | chatbot-backend | `feat/0009-governed-metrics-spoke` @ `96a9b94` | [chatbot-backend#11](https://github.com/paggio/chatbot-backend/pull/11) | ☑ | ☐ |
 | chatbot-eval | `feat/0009-governed-metrics-spoke` @ `44ae893` | [chatbot-eval#4](https://github.com/paggio/chatbot-eval/pull/4) | ☑ | ☐ |
 | frontend | `feat/0009-governed-metrics-spoke` @ `3eb9499` | [frontend#10](https://github.com/paggio/frontend/pull/10) | ☑ | ☐ |
@@ -29,7 +29,7 @@ chatbot-backend (additive route; spoke off without `METRICS_GATEWAY_URL`) → fr
 - report: `changes/0009-governed-metrics-spoke/runs/20261123T135733Z/report.md`
 <!-- iterate:end -->
 
-- **verified** on dev — `/dev-push` run [44498487651](https://github.com/paggio/agent-app-project/actions/runs/44498487651), 82 assertions passed (6 from the change's suite). Re-verified 2026-11-23, run [45154679035](https://github.com/paggio/agent-app-project/actions/runs/45154679035), 82 passed. Dev is up and billing: `make dev-down` when idle.
+- **verified** on dev — `/dev-push` run [44498487651](https://github.com/paggio/agent-app-project/actions/runs/44498487651), 82 assertions passed (6 from the change's suite). Re-verified 2026-11-23 after the docs amendment, run [45191545782](https://github.com/paggio/agent-app-project/actions/runs/45191545782), 82 passed. Dev is up and billing: `make dev-down` when idle.
 
 ## Amended, 2026-11-23 — /ship-iterate
 
