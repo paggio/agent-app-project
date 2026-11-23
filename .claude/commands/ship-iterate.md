@@ -40,6 +40,10 @@ Each is the input to the next. Never start with code, never with a product repo.
    deleted without being named there is one an agent helpfully puts back.
 2. **`smoke.yaml`** — the same criteria as steps. Delete what encoded the old requirement,
    add what encodes the new. Criteria and steps drift the moment you edit one alone.
+   A new criterion no step can express takes `/ship-correct` § 1 "Assertable, but not by
+   the suite" unchanged: a `check-docs.py` check, or name it unasserted in `STATUS.md` and
+   the report. Not the docs-currency gate — it diffs the whole branch against
+   `origin/main`, so a branch that already moved a doc passes it before the amendment lands.
 3. **The slice files** — and say what to **remove**, explicitly. The old implementation is
    sitting on the branch; a brief that merely stops mentioning it leaves it there. A purely
    additive amendment is a normal shape: say "Nothing is removed" rather than leaving the
