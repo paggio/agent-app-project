@@ -31,16 +31,17 @@ with repos.lock, nothing deployed to carry. docs/adr/0003.
 from __future__ import annotations
 
 import argparse
-import configparser
 import json
 import os
 import re
 import subprocess
 import sys
+import tempfile
 
 import yaml
 
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
+import repos as repos_mod  # noqa: E402
 from repos import REPOS, REPOS_INFO  # noqa: E402
 
 # What each repo contributes to a deploy: its `images` in .gitmodules. publish.sh builds
@@ -89,15 +90,28 @@ def locked(ref: str) -> dict[str, str]:
     return out
 
 
+def use_repos_at(ref: str) -> None:
+    """The repo list and images of the control commit under test, not of this checkout.
+
+    CI runs this from `main` (dev-eval) or an older harness; a change that attaches a repo
+    names it only at its own ref, and the set must describe that ref.
+    """
+    global REPOS, REPOS_INFO, IMAGES, DEPLOYED_OUTPUT
+    with tempfile.NamedTemporaryFile("w", suffix=".gitmodules") as f:
+        f.write(git("show", f"{ref}:.gitmodules"))
+        f.flush()
+        REPOS_INFO = repos_mod.load(f.name)
+    REPOS = tuple(REPOS_INFO)
+    IMAGES = {r: list(info["images"]) for r, info in REPOS_INFO.items()}
+    DEPLOYED_OUTPUT = {img: f"deployed_{img}_image" for imgs in IMAGES.values() for img in imgs}
+
+
 def remote_url(repo: str) -> str:
     template = os.environ.get("DEPLOY_SET_URL_TEMPLATE")
     if template:
         return template.format(repo=repo)
-    cfg = configparser.ConfigParser()
-    cfg.read(os.path.join(ROOT, ".gitmodules"))
-    for section in cfg.sections():
-        if cfg[section].get("path") == repo:
-            return cfg[section]["url"]
+    if repo in REPOS_INFO:
+        return str(REPOS_INFO[repo]["url"])
     refuse(f".gitmodules names no submodule at {repo}")
     return ""
 
@@ -129,13 +143,16 @@ def main() -> int:
     trig.add_argument("--product-pr", metavar="REPO@SHA")
     trig.add_argument("--lock", action="store_true")
     ap.add_argument("--ref", default="HEAD", help="the control-repo commit under test")
-    ap.add_argument("--only", choices=REPOS)
+    ap.add_argument("--only")
     ap.add_argument("--current", help="`infra/bin/infra outputs` of what dev runs now")
     ap.add_argument("--json", dest="json_out")
     ap.add_argument("--markdown", dest="md_out")
     args = ap.parse_args()
 
     ref = git("rev-parse", args.ref).strip()
+    use_repos_at(ref)
+    if args.only is not None and args.only not in REPOS:
+        refuse(f"--only takes one of {', '.join(REPOS)}, got {args.only!r}")
     links = gitlinks(ref)
 
     # The lock and the gitlinks move together in one /realign commit. If they disagree,
