@@ -8,10 +8,14 @@ can: the contracts between them, the cross-repo changes, and the proof they work
 
 [![The dev architecture: every repo, workload and AWS component](architecture.svg)](architecture.svg)
 
-What `dev` runs, drawn from `scripts/architecture/build.py`: edit that, then `make architecture`.
-`check-docs.py [architecture]` fails when a repo or a chart workload is missing, or the SVG
-is stale. Open [`architecture.excalidraw`](architecture.excalidraw) at excalidraw.com to zoom.
-The prose is `docs/deployment.md`.
+## CI/CD
+
+[![CI/CD: the lanes, /dev-push, the metrics release hooks, /dev-eval, PR checks](cicd.svg)](cicd.svg)
+
+Both pictures are generated: edit `scripts/diagrams/architecture.py` or `cicd.py`, then
+`make diagrams`. `check-docs.py [diagrams]` fails when one is stale, or leaves out a repo, a
+chart workload, a workflow, a lane or a dev target. Open the `.excalidraw` twins at
+excalidraw.com to zoom. The prose: `docs/deployment.md`, `docs/adr/0018`.
 
 ## The paths
 

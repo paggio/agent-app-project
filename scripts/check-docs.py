@@ -1623,35 +1623,59 @@ def check_deployment_doc() -> None:
                                    f"which is what infra/{chart} sets — update the row")
 
 
-# --- architecture: architecture.svg is rebuilt from its script and names what dev runs -----
-# The README's picture is drawn by scripts/architecture/build.py. A new repo or a new chart
-# workload left out of it, or a script edit nobody rebuilt, is a picture of the previous
-# system. Workload names self-skip without infra/ checked out (CI), like deployment-doc.
-def check_architecture() -> None:
+# --- diagrams: the README's pictures are rebuilt from their scenes and draw what exists --
+# architecture.svg and cicd.svg are drawn by scripts/diagrams/. A new repo, chart workload,
+# workflow, lane or dev target left out of them, or a scene edit nobody rebuilt, is a picture
+# of the previous system. What lives in submodules self-skips without them (CI).
+def check_diagrams() -> None:
     import hashlib
-    src = os.path.join(ROOT, "scripts", "architecture")
-    svg_path = os.path.join(ROOT, "architecture.svg")
-    if not os.path.isfile(svg_path):
-        fail("architecture", "architecture.svg is missing — run `make architecture`")
-        return
-    digest = hashlib.sha256(open(os.path.join(src, "build.py"), "rb").read() +
-                            open(os.path.join(src, "Excalifont-Regular.woff2"), "rb").read()
-                            ).hexdigest()
-    svg = open(svg_path).read()
-    if f"source-sha256: {digest}" not in svg:
-        fail("architecture", "architecture.svg was not rebuilt from scripts/architecture/build.py "
-                             "— run `make architecture` and commit both outputs")
-    scene = open(os.path.join(src, "build.py")).read().replace("\\n", "\n")
-    names = set(SUBMODULES)
-    templates = os.path.join(ROOT, "infra", "charts", "agentapp", "templates")
-    for path in glob.glob(os.path.join(templates, "*.yaml")):
-        names |= set(re.findall(r"^kind: (?:Deployment|StatefulSet|Job|CronJob)\nmetadata:\n"
-                                r"(?:  .*\n)*?  name: ([\w-]+)$", open(path).read(), re.M))
-    for name in sorted(names):
-        if not re.search(rf"(?<![\w-]){re.escape(name)}(?![\w-])", scene):
-            fail("architecture", f"`{name}` is a repo or a workload infra's chart deploys, and "
-                                 f"scripts/architecture/build.py does not draw it — add it, then "
-                                 f"`make architecture`")
+    src = os.path.join(ROOT, "scripts", "diagrams")
+    h = hashlib.sha256()
+    for p in sorted(glob.glob(os.path.join(src, "*.py")) +
+                    [os.path.join(src, "Excalifont-Regular.woff2")]):
+        h.update(os.path.basename(p).encode() + b"\0" + open(p, "rb").read())
+    for name in ("architecture", "cicd"):
+        svg = os.path.join(ROOT, f"{name}.svg")
+        if not os.path.isfile(svg) or f"source-sha256: {h.hexdigest()}" not in open(svg).read():
+            fail("diagrams", f"{name}.svg was not rebuilt from scripts/diagrams/ — run "
+                             f"`make diagrams` and commit the .svg and .excalidraw")
+
+    def scene(name: str) -> str:
+        return open(os.path.join(src, f"{name}.py")).read().replace("\\n", "\n")
+
+    def require(name: str, what: str, items: set[str]) -> None:
+        text = scene(name)
+        for item in sorted(items):
+            if not re.search(rf"(?<![\w-]){re.escape(item)}(?![\w-])", text):
+                fail("diagrams", f"`{item}` is {what}, and scripts/diagrams/{name}.py does not "
+                                 f"draw it — add it, then `make diagrams`")
+
+    workloads: set[str] = set()
+    for path in glob.glob(os.path.join(ROOT, "infra", "charts", "agentapp", "templates", "*.yaml")):
+        workloads |= set(re.findall(r"^kind: (?:Deployment|StatefulSet|Job|CronJob)\nmetadata:\n"
+                                    r"(?:  .*\n)*?  name: ([\w-]+)$", open(path).read(), re.M))
+    require("architecture", "a repo in .gitmodules", set(SUBMODULES))
+    require("architecture", "a workload infra's chart deploys", workloads)
+
+    flows = {os.path.basename(p) for p in glob.glob(os.path.join(ROOT, ".github", "workflows", "*.yml"))}
+    callers = set()
+    for repo in SUBMODULES:
+        found = glob.glob(os.path.join(ROOT, repo, ".github", "workflows", "*.yml"))
+        flows |= {os.path.basename(p) for p in found}
+        if any(os.path.basename(p) == "dev-push.yml" for p in found):
+            callers.add(repo)
+    require("cicd", "a workflow in this repo or a product repo", flows)
+    require("cicd", "a lane", {"/" + os.path.basename(p)[:-3] for p in
+                               glob.glob(os.path.join(ROOT, ".claude", "commands", "*.md"))})
+    targets = set(re.findall(r"^((?:dev-[\w-]+|login|push-gh-creds|gh-setup)):",
+                             open(os.path.join(ROOT, "Makefile")).read(), re.M))
+    require("cicd", "a make target that reaches dev or its credentials", targets)
+    m = re.search(r"^CALLERS = \[(.*?)\]", scene("cicd"), re.M)
+    drawn = set(re.findall(r'"([\w-]+)"', m.group(1))) if m else set()
+    if any(os.path.isdir(os.path.join(ROOT, r, ".github")) for r in SUBMODULES) and drawn != callers:
+        fail("diagrams", f"scripts/diagrams/cicd.py CALLERS is {sorted(drawn)}, and the repos "
+                         f"carrying a dev-push.yml caller are {sorted(callers)} — update it, then "
+                         f"`make diagrams`")
 
 
 def main() -> int:
@@ -1670,7 +1694,7 @@ def main() -> int:
               check_provider_credentials, check_dev_env_inline_comments,
               check_pr_commands, check_environments, check_workflow_secrets,
               check_release_main_only, check_infra_invocation,
-              check_deployment_doc, check_architecture, check_repo_set,
+              check_deployment_doc, check_diagrams, check_repo_set,
               report_readme_divergence)
     for fn in checks:
         try:
