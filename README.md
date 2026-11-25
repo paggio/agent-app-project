@@ -4,6 +4,15 @@ The control repo for the product repos, each a git submodule. It owns what no si
 can: the contracts between them, the cross-repo changes, and the proof they work together.
 `dev` is the one AWS environment: CI deploys PRs there, and it costs money while it is up.
 
+## Architecture
+
+[![The dev architecture: every repo, workload and AWS component](architecture.svg)](architecture.svg)
+
+What `dev` runs, drawn from `scripts/architecture/build.py`: edit that, then `make architecture`.
+`check-docs.py [architecture]` fails when a repo or a chart workload is missing, or the SVG
+is stale. Open [`architecture.excalidraw`](architecture.excalidraw) at excalidraw.com to zoom.
+The prose is `docs/deployment.md`.
+
 ## The paths
 
 ```mermaid

@@ -1623,6 +1623,37 @@ def check_deployment_doc() -> None:
                                    f"which is what infra/{chart} sets — update the row")
 
 
+# --- architecture: architecture.svg is rebuilt from its script and names what dev runs -----
+# The README's picture is drawn by scripts/architecture/build.py. A new repo or a new chart
+# workload left out of it, or a script edit nobody rebuilt, is a picture of the previous
+# system. Workload names self-skip without infra/ checked out (CI), like deployment-doc.
+def check_architecture() -> None:
+    import hashlib
+    src = os.path.join(ROOT, "scripts", "architecture")
+    svg_path = os.path.join(ROOT, "architecture.svg")
+    if not os.path.isfile(svg_path):
+        fail("architecture", "architecture.svg is missing — run `make architecture`")
+        return
+    digest = hashlib.sha256(open(os.path.join(src, "build.py"), "rb").read() +
+                            open(os.path.join(src, "Excalifont-Regular.woff2"), "rb").read()
+                            ).hexdigest()
+    svg = open(svg_path).read()
+    if f"source-sha256: {digest}" not in svg:
+        fail("architecture", "architecture.svg was not rebuilt from scripts/architecture/build.py "
+                             "— run `make architecture` and commit both outputs")
+    scene = open(os.path.join(src, "build.py")).read().replace("\\n", "\n")
+    names = set(SUBMODULES)
+    templates = os.path.join(ROOT, "infra", "charts", "agentapp", "templates")
+    for path in glob.glob(os.path.join(templates, "*.yaml")):
+        names |= set(re.findall(r"^kind: (?:Deployment|StatefulSet|Job|CronJob)\nmetadata:\n"
+                                r"(?:  .*\n)*?  name: ([\w-]+)$", open(path).read(), re.M))
+    for name in sorted(names):
+        if not re.search(rf"(?<![\w-]){re.escape(name)}(?![\w-])", scene):
+            fail("architecture", f"`{name}` is a repo or a workload infra's chart deploys, and "
+                                 f"scripts/architecture/build.py does not draw it — add it, then "
+                                 f"`make architecture`")
+
+
 def main() -> int:
     ap = argparse.ArgumentParser()
     ap.add_argument("--warnings-are-errors", action="store_true")
@@ -1639,7 +1670,7 @@ def main() -> int:
               check_provider_credentials, check_dev_env_inline_comments,
               check_pr_commands, check_environments, check_workflow_secrets,
               check_release_main_only, check_infra_invocation,
-              check_deployment_doc, check_repo_set,
+              check_deployment_doc, check_architecture, check_repo_set,
               report_readme_divergence)
     for fn in checks:
         try:

@@ -26,7 +26,7 @@ OWNER := $(shell ./scripts/repos.py owner)
 
 .DEFAULT_GOAL := help
 .PHONY: help up down restart ps logs rebuild config urls open health chat smoke verify iterate \
-        e2e eval creds phoenix-durability repos lock prs check check-docs init clean \
+        e2e eval creds phoenix-durability repos lock prs check check-docs architecture init clean \
         login push-gh-creds gh-setup dev-bootstrap dev-push dev-eval dev-up dev-down dev-status k9s dev-index
 
 help: ## Show this list
@@ -125,6 +125,9 @@ smoke: ## Run the baseline suite against the running stack
 
 check-docs: ## The prose-versus-mechanism checks (see scripts/check-docs.py)
 	@./scripts/check-docs.py
+
+architecture: ## Redraw architecture.svg and .excalidraw from scripts/architecture/build.py
+	@./scripts/architecture/build.py
 
 verify: ## Assert what is checked out, without dispatching: make verify CHANGE=0001-auth
 	@test -n "$(CHANGE)" || { echo "usage: make verify CHANGE=<change-dir>"; exit 2; }
