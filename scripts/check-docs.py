@@ -1631,51 +1631,54 @@ def check_diagrams() -> None:
     import hashlib
     src = os.path.join(ROOT, "scripts", "diagrams")
     h = hashlib.sha256()
-    for p in sorted(glob.glob(os.path.join(src, "*.py")) +
-                    [os.path.join(src, "Excalifont-Regular.woff2")]):
+    for p in sorted(glob.glob(os.path.join(src, "*.py")) + glob.glob(os.path.join(src, "*.woff2"))):
         h.update(os.path.basename(p).encode() + b"\0" + open(p, "rb").read())
-    for name in ("architecture", "cicd"):
+    for name in ("architecture", "cicd", "tests"):
         svg = os.path.join(ROOT, f"{name}.svg")
         if not os.path.isfile(svg) or f"source-sha256: {h.hexdigest()}" not in open(svg).read():
             fail("diagrams", f"{name}.svg was not rebuilt from scripts/diagrams/ — run "
-                             f"`make diagrams` and commit the .svg and .excalidraw")
+                             f"`make diagrams` and commit it")
 
     def scene(name: str) -> str:
         return open(os.path.join(src, f"{name}.py")).read().replace("\\n", "\n")
 
-    def require(name: str, what: str, items: set[str]) -> None:
-        text = scene(name)
-        for item in sorted(items):
-            if not re.search(rf"(?<![\w-]){re.escape(item)}(?![\w-])", text):
-                fail("diagrams", f"`{item}` is {what}, and scripts/diagrams/{name}.py does not "
-                                 f"draw it — add it, then `make diagrams`")
-
+    # The architecture is drawn in full: every repo and every workload.
     workloads: set[str] = set()
     for path in glob.glob(os.path.join(ROOT, "infra", "charts", "agentapp", "templates", "*.yaml")):
         workloads |= set(re.findall(r"^kind: (?:Deployment|StatefulSet|Job|CronJob)\nmetadata:\n"
                                     r"(?:  .*\n)*?  name: ([\w-]+)$", open(path).read(), re.M))
-    require("architecture", "a repo in .gitmodules", set(SUBMODULES))
-    require("architecture", "a workload infra's chart deploys", workloads)
+    text = scene("architecture")
+    for what, items in (("a repo in .gitmodules", set(SUBMODULES)),
+                        ("a workload infra's chart deploys", workloads)):
+        for item in sorted(items):
+            if not re.search(rf"(?<![\w-]){re.escape(item)}(?![\w-])", text):
+                fail("diagrams", f"`{item}` is {what}, and scripts/diagrams/architecture.py does "
+                                 f"not draw it — add it, then `make diagrams`")
 
-    flows = {os.path.basename(p) for p in glob.glob(os.path.join(ROOT, ".github", "workflows", "*.yml"))}
-    callers = set()
-    for repo in SUBMODULES:
-        found = glob.glob(os.path.join(ROOT, repo, ".github", "workflows", "*.yml"))
-        flows |= {os.path.basename(p) for p in found}
-        if any(os.path.basename(p) == "dev-push.yml" for p in found):
-            callers.add(repo)
-    require("cicd", "a workflow in this repo or a product repo", flows)
-    require("cicd", "a lane", {"/" + os.path.basename(p)[:-3] for p in
-                               glob.glob(os.path.join(ROOT, ".claude", "commands", "*.md"))})
-    targets = set(re.findall(r"^((?:dev-[\w-]+|login|push-gh-creds|gh-setup)):",
-                             open(os.path.join(ROOT, "Makefile")).read(), re.M))
-    require("cicd", "a make target that reaches dev or its credentials", targets)
-    m = re.search(r"^CALLERS = \[(.*?)\]", scene("cicd"), re.M)
-    drawn = set(re.findall(r'"([\w-]+)"', m.group(1))) if m else set()
-    if any(os.path.isdir(os.path.join(ROOT, r, ".github")) for r in SUBMODULES) and drawn != callers:
-        fail("diagrams", f"scripts/diagrams/cicd.py CALLERS is {sorted(drawn)}, and the repos "
-                         f"carrying a dev-push.yml caller are {sorted(callers)} — update it, then "
-                         f"`make diagrams`")
+    # CI/CD and tests are drawn at the level of intent: each lists what it was last reviewed
+    # against, so a new or removed workflow, lane, CI or suite forces a look, not a box.
+    if not any(os.path.isdir(os.path.join(ROOT, r, ".github")) for r in SUBMODULES):
+        return                                    # submodules not checked out
+    flows = {f"{repo}/{os.path.basename(p)}"
+             for repo, base in [("agent-app-project", ROOT)] +
+             [(r, os.path.join(ROOT, r)) for r in SUBMODULES]
+             for p in glob.glob(os.path.join(base, ".github", "workflows", "*.yml"))}
+    lanes = {"/" + os.path.basename(p)[:-3]
+             for p in glob.glob(os.path.join(ROOT, ".claude", "commands", "*.md"))}
+    suites = {os.path.relpath(p, ROOT) for p in glob.glob(os.path.join(ROOT, "smoke", "*.yaml"))}
+    actual = {"cicd": flows | lanes,
+              "tests": {f for f in flows if f.endswith("/ci.yml")} | suites}
+    for name, have in actual.items():
+        m = re.search(r"^REVIEWED_AGAINST = \[(.*?)\]", scene(name), re.M | re.S)
+        listed = set(re.findall(r'"([^"]+)"', m.group(1))) if m else set()
+        for item in sorted(have - listed):
+            fail("diagrams", f"`{item}` is new since {name}.svg was last reviewed — redraw "
+                             f"scripts/diagrams/{name}.py if it changes the story, add it to "
+                             f"REVIEWED_AGAINST, then `make diagrams`")
+        for item in sorted(listed - have):
+            fail("diagrams", f"`{item}` is gone, and {name}.svg was reviewed against it — "
+                             f"redraw scripts/diagrams/{name}.py if it changes the story, drop "
+                             f"it from REVIEWED_AGAINST, then `make diagrams`")
 
 
 def main() -> int:

@@ -10,12 +10,17 @@ can: the contracts between them, the cross-repo changes, and the proof they work
 
 ## CI/CD
 
-[![CI/CD: the lanes, /dev-push, the metrics release hooks, /dev-eval, PR checks](cicd.svg)](cicd.svg)
+[![How a change reaches dev: plan, build, test together, deploy, score, merge](cicd.svg)](cicd.svg)
 
-Both pictures are generated: edit `scripts/diagrams/architecture.py` or `cicd.py`, then
-`make diagrams`. `check-docs.py [diagrams]` fails when one is stale, or leaves out a repo, a
-chart workload, a workflow, a lane or a dev target. Open the `.excalidraw` twins at
-excalidraw.com to zoom. The prose: `docs/deployment.md`, `docs/adr/0018`.
+## Tests
+
+[![What we test, where and when: PR CI, the local loop, dev, answer quality](tests.svg)](tests.svg)
+
+All three pictures are generated: edit `scripts/diagrams/<name>.py`, then `make diagrams`.
+`check-docs.py [diagrams]` fails when one is stale; when the architecture leaves out a repo or
+a chart workload; and when a workflow, lane, repo CI or smoke suite appears or disappears that
+the CI/CD or tests picture was not reviewed against. Those two stay at the level of intent;
+the detail is in `docs/deployment.md` and `docs/adr/0018`.
 
 ## The paths
 
