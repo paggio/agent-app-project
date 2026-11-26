@@ -1623,6 +1623,78 @@ def check_deployment_doc() -> None:
                                    f"which is what infra/{chart} sets — update the row")
 
 
+# --- diagrams: the README's pictures are rebuilt from their scenes and draw what exists --
+# architecture.svg and cicd.svg are drawn by scripts/diagrams/. A new repo, chart workload,
+# workflow, lane or dev target left out of them, or a scene edit nobody rebuilt, is a picture
+# of the previous system. What lives in submodules self-skips without them (CI).
+def check_diagrams() -> None:
+    import hashlib
+    src = os.path.join(ROOT, "scripts", "diagrams")
+    h = hashlib.sha256()
+    for p in sorted(glob.glob(os.path.join(src, "*.py")) + glob.glob(os.path.join(src, "*.woff2"))):
+        h.update(os.path.basename(p).encode() + b"\0" + open(p, "rb").read())
+    for name in ("agent", "architecture", "cicd", "tests"):
+        svg = os.path.join(ROOT, f"{name}.svg")
+        if not os.path.isfile(svg) or f"source-sha256: {h.hexdigest()}" not in open(svg).read():
+            fail("diagrams", f"{name}.svg was not rebuilt from scripts/diagrams/ — run "
+                             f"`make diagrams` and commit it")
+
+    def scene(name: str) -> str:
+        return open(os.path.join(src, f"{name}.py")).read().replace("\\n", "\n")
+
+    # The architecture is drawn in full: every repo and every workload.
+    workloads: set[str] = set()
+    for path in glob.glob(os.path.join(ROOT, "infra", "charts", "agentapp", "templates", "*.yaml")):
+        workloads |= set(re.findall(r"^kind: (?:Deployment|StatefulSet|Job|CronJob)\nmetadata:\n"
+                                    r"(?:  .*\n)*?  name: ([\w-]+)$", open(path).read(), re.M))
+    text = scene("architecture")
+    for what, items in (("a repo in .gitmodules", set(SUBMODULES)),
+                        ("a workload infra's chart deploys", workloads)):
+        for item in sorted(items):
+            if not re.search(rf"(?<![\w-]){re.escape(item)}(?![\w-])", text):
+                fail("diagrams", f"`{item}` is {what}, and scripts/diagrams/architecture.py does "
+                                 f"not draw it — add it, then `make diagrams`")
+
+    # The agent is drawn in full: every node of the backend's graph and every route.
+    graph = os.path.join(ROOT, "chatbot-backend", "src", "app", "graph")
+    if os.path.isfile(os.path.join(graph, "builder.py")):
+        nodes = set(re.findall(r'add_node\("(\w+)"', open(os.path.join(graph, "builder.py")).read()))
+        m = re.search(r"^Route = Literal\[(.*?)\]", open(os.path.join(graph, "coordinator.py")).read(), re.M)
+        routes = set(re.findall(r'"(\w+)"', m.group(1))) if m else set()
+        text = scene("agent")
+        for what, items in (("a node in chatbot-backend's graph", nodes),
+                            ("a route the coordinator can pick", routes)):
+            for item in sorted(items):
+                if not re.search(rf"(?<![\w-]){re.escape(item)}(?![\w-])", text):
+                    fail("diagrams", f"`{item}` is {what}, and scripts/diagrams/agent.py does "
+                                     f"not draw it — add it, then `make diagrams`")
+
+    # CI/CD and tests are drawn at the level of intent: each lists what it was last reviewed
+    # against, so a new or removed workflow, lane, CI or suite forces a look, not a box.
+    if not any(os.path.isdir(os.path.join(ROOT, r, ".github")) for r in SUBMODULES):
+        return                                    # submodules not checked out
+    flows = {f"{repo}/{os.path.basename(p)}"
+             for repo, base in [("agent-app-project", ROOT)] +
+             [(r, os.path.join(ROOT, r)) for r in SUBMODULES]
+             for p in glob.glob(os.path.join(base, ".github", "workflows", "*.yml"))}
+    lanes = {"/" + os.path.basename(p)[:-3]
+             for p in glob.glob(os.path.join(ROOT, ".claude", "commands", "*.md"))}
+    suites = {os.path.relpath(p, ROOT) for p in glob.glob(os.path.join(ROOT, "smoke", "*.yaml"))}
+    actual = {"cicd": flows | lanes,
+              "tests": {f for f in flows if f.endswith("/ci.yml")} | suites}
+    for name, have in actual.items():
+        m = re.search(r"^REVIEWED_AGAINST = \[(.*?)\]", scene(name), re.M | re.S)
+        listed = set(re.findall(r'"([^"]+)"', m.group(1))) if m else set()
+        for item in sorted(have - listed):
+            fail("diagrams", f"`{item}` is new since {name}.svg was last reviewed — redraw "
+                             f"scripts/diagrams/{name}.py if it changes the story, add it to "
+                             f"REVIEWED_AGAINST, then `make diagrams`")
+        for item in sorted(listed - have):
+            fail("diagrams", f"`{item}` is gone, and {name}.svg was reviewed against it — "
+                             f"redraw scripts/diagrams/{name}.py if it changes the story, drop "
+                             f"it from REVIEWED_AGAINST, then `make diagrams`")
+
+
 def main() -> int:
     ap = argparse.ArgumentParser()
     ap.add_argument("--warnings-are-errors", action="store_true")
@@ -1639,7 +1711,7 @@ def main() -> int:
               check_provider_credentials, check_dev_env_inline_comments,
               check_pr_commands, check_environments, check_workflow_secrets,
               check_release_main_only, check_infra_invocation,
-              check_deployment_doc, check_repo_set,
+              check_deployment_doc, check_diagrams, check_repo_set,
               report_readme_divergence)
     for fn in checks:
         try:

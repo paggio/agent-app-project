@@ -1,0 +1,97 @@
+# The machine half of a change. BRIEF.md is for humans and for the implementing agent;
+# this is what the scripts parse.
+
+change: 0009-governed-metrics-spoke
+
+# The commit that landed contracts/ alone. The dispatch extracts contracts/ at exactly this
+# SHA and gives the slices nothing else, so it refuses to run without one.
+freeze_sha: "9508c3f12c7b734dbc9963149fd4cd7f7a844c4b"
+
+# Which repos get a slice. Each needs a matching <name>.md here. Use the SUBMODULE PATH:
+# chatbot-backend, not backend.
+slices:
+  - analytics-dbt
+  - metrics-gateway
+  - chatbot-backend
+  - chatbot-eval
+  - frontend
+  - infra
+
+# NEW REPOS, optional — only when the request explicitly asks for one (docs/adr/0020).
+# Each must also be in slices:. ./scripts/new-repo.sh <change> <name> creates, scaffolds
+# and attaches it; manifest.py --validate refuses dispatch until it has.
+#   name     the repo, its submodule path and its GitHub name
+#   purpose  one line: its description, README and CLAUDE.md first line
+#   images   what it ships, [] for none; written to .gitmodules as its `images`
+new_repos:
+  - name: analytics-dbt
+    purpose: Governed metrics as code - dbt and MetricFlow projects over Olist in Postgres and the marketing funnel in Iceberg, and the release bundles they publish.
+    images: [dbt]
+  - name: metrics-gateway
+    purpose: MCP server that answers data questions only through MetricFlow metrics, with hybrid semantic search over the published release.
+    images: [gateway]
+
+deploy:
+  local: true
+  # Trino, Glue, the releases bucket, the release and indexer Jobs and the gateway exist only
+  # on dev. The remote pass runs in CI via /dev-push (docs/adr/0018).
+  infra: true
+  environment: dev
+
+# Processes whose exit code is the assertion (docs/adr/0014), run in this order, before
+# smoke. The release path is asserted as a sequence: publish, index + flip, publish a release
+# with one new fixture metric, index + flip, then publish a THIRD release and do NOT index
+# it — so smoke can prove the gateway serves the second and knows nothing of the third.
+# The fixture shas are declared in stack/dev.env, where smoke reads them too.
+jobs:
+  - name: the-release-job-loads-builds-and-publishes
+    service: dbt-release
+    owner: analytics-dbt
+    expect_exit: 0
+    timeout_s: 1500
+  - name: the-indexer-indexes-and-flips
+    service: indexer
+    owner: metrics-gateway
+    expect_exit: 0
+    timeout_s: 900
+  - name: a-release-adding-fixture-metric-a-publishes
+    service: dbt-release
+    owner: analytics-dbt
+    expect_exit: 0
+    timeout_s: 1500
+    env:
+      RELEASE_SHA: "a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1"
+      DBT_FIXTURE_METRICS: "a"
+  - name: the-indexer-flips-to-fixture-metric-a
+    service: indexer
+    owner: metrics-gateway
+    expect_exit: 0
+    timeout_s: 900
+  - name: a-release-adding-fixture-metric-b-publishes-unindexed
+    service: dbt-release
+    owner: analytics-dbt
+    expect_exit: 0
+    timeout_s: 1500
+    env:
+      RELEASE_SHA: "b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2"
+      DBT_FIXTURE_METRICS: "a,b"
+  - name: eval-run-meets-its-thresholds
+    service: eval
+    owner: chatbot-eval
+    expect_exit: 0
+    timeout_s: 1500
+  - name: a-breached-threshold-exits-non-zero
+    service: eval
+    owner: chatbot-eval
+    expect_exit: 1
+    timeout_s: 1200
+    env:
+      EVAL_THRESHOLD_ROUTING_ACCURACY: "1.01"
+
+smoke:
+  file: smoke.yaml
+  base: http://localhost:8080
+  # Gateway steps poll for the swap after the last flip; the eval leaves Phoenix to read.
+  timeout_s: 900
+  # Criterion 13: a metric citation rendered in a browser.
+  e2e: true

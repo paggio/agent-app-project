@@ -1,0 +1,45 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://agentapp.local/contracts/releases/semantic-release.schema.json",
+  "title": "Semantic release v1",
+  "description": "How analytics-dbt publishes a semantic release and how metrics-gateway finds the one to serve. Layout in the releases bucket (`semantic_releases_bucket`), per project (`olist`, `funnel`):\n\n  <project>/<sha>/bundle.tar.gz   dbt_project.yml, profiles.yml, models/ and semantic YAML as built, target/semantic_manifest.json, target/manifest.json, and target/osi_document.json when dbt emits one\n  <project>/<sha>/release.json    #/$defs/release — written LAST by analytics-dbt; its presence means the bundle is complete\n  <project>/current.json          #/$defs/current — written ONLY by metrics-gateway's indexer, after the index for <sha> is ready\n\nanalytics-dbt publishes only after `dbt build` succeeded for that project, so no release names a table that does not exist. It never writes current.json. The indexer indexes a published release, then moves current.json to it; the gateway serves exactly current.json's sha. profiles.yml reads every credential from env vars and has two targets, `build` (writer) and `serve` (read-only role with an engine time limit). The sha is supplied to the build as RELEASE_SHA — on a deployed environment, the analytics-dbt commit the image was built from; a release is immutable — once <sha>/release.json exists, a publish of that sha leaves the release untouched and succeeds (every deploy re-runs the job; dbt still builds the tables). Re-indexing the sha already in current.json is likewise a no-op.",
+  "x-consumers": ["metrics-gateway"],
+  "x-producer": "analytics-dbt",
+  "x-version": "1.0.0",
+  "$defs": {
+    "sha": {"type": "string", "pattern": "^[0-9a-f]{40}$"},
+    "release": {
+      "type": "object",
+      "required": ["schema_version", "project", "sha", "published_at", "dbt_version", "metricflow_version", "adapter", "files"],
+      "additionalProperties": true,
+      "properties": {
+        "schema_version": {"const": 1},
+        "project": {"type": "string", "pattern": "^[a-z][a-z0-9_]*$"},
+        "sha": {"$ref": "#/$defs/sha"},
+        "published_at": {"type": "string", "format": "date-time"},
+        "dbt_version": {"type": "string"},
+        "metricflow_version": {"type": "string"},
+        "adapter": {"enum": ["postgres", "trino"]},
+        "files": {
+          "type": "object",
+          "description": "sha256 of each file in the bundle that the gateway reads, keyed by its path inside the bundle. The gateway refuses a bundle whose files do not match.",
+          "required": ["target/semantic_manifest.json", "target/manifest.json", "dbt_project.yml", "profiles.yml"],
+          "additionalProperties": {"type": "string", "pattern": "^[0-9a-f]{64}$"}
+        }
+      }
+    },
+    "current": {
+      "type": "object",
+      "required": ["schema_version", "sha", "published_at", "dbt_version", "metricflow_version", "indexed_at"],
+      "additionalProperties": true,
+      "properties": {
+        "schema_version": {"const": 1},
+        "sha": {"$ref": "#/$defs/sha"},
+        "published_at": {"type": "string", "format": "date-time"},
+        "dbt_version": {"type": "string"},
+        "metricflow_version": {"type": "string"},
+        "indexed_at": {"type": "string", "format": "date-time"}
+      }
+    }
+  }
+}

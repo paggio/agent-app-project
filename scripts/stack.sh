@@ -34,7 +34,7 @@ COMPOSE=(docker compose -f "$ROOT/stack/compose.yml")
 # ONE LINE, and it has to stay one: check-docs.py [stack-services] reads this with a
 # line-anchored regex, so a wrapped array parses as almost empty and every service
 # reads as missing. That is how this comment got written.
-SERVICES=(backend postgres opensearch minio redis phoenix phoenix-db elasticmq call-worker call-simulator frontend proxy eval)
+SERVICES=(backend postgres opensearch minio redis phoenix phoenix-db elasticmq call-worker call-simulator frontend proxy eval trino iceberg-rest dbt-release metrics-gateway indexer)
 
 cmd="${1:-}"; shift || true
 

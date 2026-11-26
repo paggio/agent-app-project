@@ -13,6 +13,8 @@ include:
   - path: ../chatbot-backend/docker-compose.yml
   - path: ../frontend/docker-compose.yml
   - path: ../chatbot-eval/docker-compose.yml
+  - path: ../analytics-dbt/docker-compose.yml
+  - path: ../metrics-gateway/docker-compose.yml
 
 services:
   backend:
@@ -41,6 +43,9 @@ services:
       # 10 MB, matching the backend's own default. stack/dev.env records why this stopped
       # being an override.
       DOCUMENT_MAX_BYTES: ${DOCUMENT_MAX_BYTES:-10485760}
+      # The metrics spoke's MCP endpoint. Unset means the spoke is off and `metrics` is never
+      # routed to — which is how the backend runs without the gateway.
+      METRICS_GATEWAY_URL: ${METRICS_GATEWAY_URL:-http://metrics-gateway:8080/mcp}
       # Build identity, reported by GET /v1/version and recorded by the eval in every
       # experiment. Supplied from outside the image on purpose: an application that
       # invents its own image tag is not reporting one. scripts/publish.sh tags with
@@ -50,6 +55,12 @@ services:
   postgres:
     labels:
       agentapp.owner: chatbot-backend
+    # pgvector's build of the same major, for the metrics index (change 0009); a superset of
+    # postgres:17 for the backend. The init script creates the metrics databases and roles,
+    # which on dev are infra's, not a product repo's.
+    image: pgvector/pgvector:pg17
+    volumes:
+      - ./postgres-init:/docker-entrypoint-initdb.d:ro
 
   # The knowledge base's two datastores, both chatbot-backend's. They are DEFINED in that
   # repo's compose file — this block only declares who is answerable when one of them does
@@ -147,6 +158,8 @@ services:
         condition: service_healthy
       phoenix:
         condition: service_healthy
+      metrics-gateway:
+        condition: service_healthy
     environment:
       # THROUGH THE PROXY, not `backend:8000`. The eval measures the origin a client
       # actually uses, and stripping /api is part of what is being measured — see
@@ -200,6 +213,116 @@ services:
       EVAL_THRESHOLD_RETRIEVAL_RECALL: ${EVAL_THRESHOLD_RETRIEVAL_RECALL:-}
       EVAL_THRESHOLD_GROUNDEDNESS: ${EVAL_THRESHOLD_GROUNDEDNESS:-}
       EVAL_THRESHOLD_ANSWER_CORRECTNESS: ${EVAL_THRESHOLD_ANSWER_CORRECTNESS:-}
+
+  # ───────────────────────────────────────── the metrics spoke (change 0009)
+  #
+  # DEFINED in analytics-dbt's and metrics-gateway's compose files; THE COUPLING IS THE
+  # SERVICE NAME, as for every service above. Each repo's file declares only its own
+  # services and names postgres and minio, which chatbot-backend ships, without defining
+  # them. Everything an environment decides — endpoints, logins, the release sha — is
+  # wired here, the way infra wires it on dev.
+
+  trino:
+    labels:
+      agentapp.owner: analytics-dbt
+
+  iceberg-rest:
+    labels:
+      agentapp.owner: analytics-dbt
+    depends_on:
+      minio:
+        condition: service_healthy
+
+  # One-shot, `manual` profile: load the sources, dbt build both projects, publish their
+  # releases. change.yaml's jobs: run it, and override RELEASE_SHA and DBT_FIXTURE_METRICS.
+  dbt-release:
+    labels:
+      agentapp.owner: analytics-dbt
+    depends_on:
+      postgres:
+        condition: service_healthy
+      minio:
+        condition: service_healthy
+      trino:
+        condition: service_healthy
+      iceberg-rest:
+        condition: service_healthy
+    environment:
+      RELEASE_SHA: ${RELEASE_SHA:-${METRICS_BASE_RELEASE_SHA}}
+      DBT_FIXTURE_METRICS: ${DBT_FIXTURE_METRICS:-}
+      OLIST_DB_HOST: postgres
+      OLIST_DB_PORT: "5432"
+      OLIST_DB_NAME: olist
+      OLIST_WRITER_USER: olist_writer
+      OLIST_WRITER_PASSWORD: olist_writer
+      TRINO_HOST: trino
+      TRINO_PORT: "8080"
+      TRINO_USER: dbt
+      ICEBERG_CATALOG_TYPE: rest
+      ICEBERG_REST_URI: http://iceberg-rest:8181
+      ICEBERG_WAREHOUSE: s3://iceberg-warehouse/
+      ICEBERG_NAMESPACE: funnel
+      S3_ENDPOINT_URL: http://minio:9000
+      # MinIO's local root pair, for the S3 client ONLY — named apart from AWS_* so a real
+      # session in secrets.env is never shadowed (the eval's EVAL_SQS_* precedent).
+      LAKE_S3_ACCESS_KEY_ID: minioadmin
+      LAKE_S3_SECRET_ACCESS_KEY: minioadmin
+      AWS_REGION: us-east-1
+      SEMANTIC_RELEASES_BUCKET: semantic-releases
+      # Local only: create the two buckets when absent. On dev they are infra's, and the
+      # Job's role cannot create a bucket.
+      LAKE_CREATE_BUCKETS: "true"
+
+  metrics-gateway:
+    labels:
+      agentapp.owner: metrics-gateway
+    depends_on:
+      postgres:
+        condition: service_healthy
+      minio:
+        condition: service_healthy
+      trino:
+        condition: service_healthy
+      phoenix:
+        condition: service_healthy
+    ports:
+      - "8091:8080"
+    environment: &gateway-env
+      SEMANTIC_RELEASES_BUCKET: semantic-releases
+      METRICS_PROJECTS: olist,funnel
+      METRICS_RELEASE_POLL_S: ${METRICS_RELEASE_POLL_S:-3}
+      S3_ENDPOINT_URL: http://minio:9000
+      # MinIO's local root pair, for the S3 client ONLY — named apart from AWS_* so a real
+      # session in secrets.env is never shadowed (the eval's EVAL_SQS_* precedent).
+      LAKE_S3_ACCESS_KEY_ID: minioadmin
+      LAKE_S3_SECRET_ACCESS_KEY: minioadmin
+      AWS_REGION: us-east-1
+      OLIST_DB_HOST: postgres
+      OLIST_DB_PORT: "5432"
+      OLIST_DB_NAME: olist
+      OLIST_READER_USER: olist_reader
+      OLIST_READER_PASSWORD: olist_reader
+      TRINO_HOST: trino
+      TRINO_PORT: "8080"
+      TRINO_USER: metrics_gateway
+      INDEX_DATABASE_URL: postgresql://index_reader:index_reader@postgres:5432/semantic_index
+      INDEX_WRITER_DATABASE_URL: postgresql://index_writer:index_writer@postgres:5432/semantic_index
+      PHOENIX_COLLECTOR_ENDPOINT: http://phoenix:6006
+      PHOENIX_PROJECT_NAME: ${METRICS_PHOENIX_PROJECT_NAME:-metrics-gateway}
+
+  # One-shot, `manual` profile, the gateway's image: index the newest published release,
+  # refresh opted-in dimension values, then move current.json.
+  indexer:
+    labels:
+      agentapp.owner: metrics-gateway
+    depends_on:
+      postgres:
+        condition: service_healthy
+      minio:
+        condition: service_healthy
+      trino:
+        condition: service_healthy
+    environment: *gateway-env
 
   frontend:
     labels:

@@ -57,4 +57,4 @@ Never run two lanes in one session.
 
 `make help` lists the hand tools for looking at the running system. `/ship`,
 `/ship-correct`, `/ship-iterate` and `/realign` are how work gets done. Deploys run only in
-CI, started by the lanes (`scripts/dev-push.sh`) once `make login && make push-gh-creds` has run; `make dev-down` when idle.
+CI, started by the lanes (`scripts/dev-push.sh`) once `make login && make push-gh-creds` has run; `make dev-down` only when the user says so — never on your own initiative.

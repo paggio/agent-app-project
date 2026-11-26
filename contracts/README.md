@@ -303,17 +303,55 @@ other repo reads or writes the call index: the HTTP paths below are the only way
 
 Every chat turn is answered by **exactly one spoke**, chosen by the coordinator, and the
 assistant message says which in `route`: `documents` (the caller's own knowledge base),
-`calls` (the call-centre calls) or `general` (no retrieval). The criteria the coordinator
+`calls` (the call-centre calls), `metrics` (governed metrics, below) or `general` (no
+retrieval). The criteria the coordinator
 uses are **not promised**, for the reason the knowledge-base decision never was.
 
 - `retrieval_consulted` keeps its meaning — *the knowledge base was consulted* — so it is
   `true` exactly when `route` is `documents`. A consumer written before `route` still reads
   every new turn correctly.
 - A `calls` turn carries `call_citations` and an empty `citations`; a `documents` turn the
-  reverse; a `general` turn neither. Markers are 1-based within whichever list is present.
+  reverse; a `metrics` turn `metric_citations` and neither of the others; a `general` turn
+  none. Markers are 1-based within whichever list is present.
 - A message that names a call id (`CALL-…`) is about that call. The `calls` spoke must cite
   that call when it exists, and answer that it found nothing when it does not.
 - `POST /v1/chat` stays stateless and routes nothing.
+
+## The metrics spoke
+
+Data questions are answered **only** from MetricFlow metrics defined in analytics-dbt, through
+metrics-gateway's tools (`mcp/metrics-gateway.json`). Nothing else in the system reaches a
+warehouse, and there is no raw-SQL tool and no write tool, now or as an additive change —
+either would be a new contract decided on purpose.
+
+- **Every number carries its definition and release.** A `metrics` turn cites each query
+  whose result reached the model, in `metric_citations`, with the metric's readable
+  `definition` and the `sha` that answered — snapshots, like `Citation.filename`. A number in
+  a metrics answer with no citation behind it is a defect, not a style choice.
+- **`no_match` ends the turn.** Search enforces a score floor on the server; below it the
+  answer is that no governed metric answers the question, with empty `metric_citations`.
+  There is no fallback to SQL and no fallback to another spoke after routing.
+  The floor's value is not promised and is calibrated from the eval.
+- **One release, end to end.** The gateway serves exactly the sha in `current.json`, search
+  returns only objects of that sha, and every hit and result carries it. Only the indexer
+  moves `current.json`, and only after the index for the new sha is ready — so a new metric
+  becomes searchable and queryable together, and before the flip it is neither
+  (`releases/semantic-release.schema.json`). A swap never fails a query in flight.
+- **Guards are the gateway's, not the caller's.** Names are checked against the release,
+  filter ops against an allow-list, literals escaped, `{` and `}` refused, at most 500 rows,
+  and an engine time limit with cancellation. A refusal is a tool result with
+  `isError: true` and a named `error.code`, and no SQL runs.
+- **Every tool call is accounted for**: one audit row (tool, arguments, sha, SQL, rows,
+  latency, outcome, trace id) and one span in Phoenix project `metrics-gateway`, refusals
+  included. The result names both (`audit_id`, `trace_id`).
+- **The gateway is not public.** No origin, no auth of its own: inside the cluster only the
+  backend may reach it, which is its whole access control. Metrics are organisation data —
+  every signed-in account reads the same numbers, as with calls.
+- **Projects are routed, never federated.** `olist` (Postgres) and `funnel` (Trino over
+  Iceberg) are separate semantic graphs; one query reads one project, and a cross-source
+  metric does not exist. A question that needs both gets two cited queries.
+- **Identifiers, free text and personal data never enter the index.** Dimension values are
+  indexed only for dimensions opted in with `meta: {index_values: true}`.
 
 ## Trace correlation
 

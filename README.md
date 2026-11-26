@@ -4,6 +4,29 @@ The control repo for the product repos, each a git submodule. It owns what no si
 can: the contracts between them, the cross-repo changes, and the proof they work together.
 `dev` is the one AWS environment: CI deploys PRs there, and it costs money while it is up.
 
+## The agent
+
+[![How the chatbot answers a message: the coordinator, the four routes, what each reaches](agent.svg)](agent.svg)
+
+## Architecture
+
+[![The dev architecture: every repo, workload and AWS component](architecture.svg)](architecture.svg)
+
+## CI/CD
+
+[![How a change reaches dev: plan, build, test together, deploy, score, merge](cicd.svg)](cicd.svg)
+
+## Tests
+
+[![What we test, where and when: PR CI, the local loop, dev, answer quality](tests.svg)](tests.svg)
+
+All four pictures are generated: edit `scripts/diagrams/<name>.py`, then `make diagrams`.
+`check-docs.py [diagrams]` fails when one is stale; when the agent leaves out a graph node or
+route, or the architecture a repo or a chart workload; and when a workflow, lane, repo CI or
+smoke suite appears or disappears that the CI/CD or tests picture was not reviewed against.
+Those two stay at the level of intent; the detail is in `docs/deployment.md` and
+`docs/adr/0018`. The hand-drawn architecture is kept at tag `diagrams/architecture-sketch-v1`.
+
 ## The paths
 
 ```mermaid
@@ -52,6 +75,8 @@ that repo, then run `/realign` again.
 | [`chatbot-eval`](https://github.com/Paggio/chatbot-eval) | eval runs: documents and call fixtures, questions per route, Phoenix experiments |
 | [`frontend`](https://github.com/Paggio/frontend) | web client and edge proxy |
 | [`infra`](https://github.com/Paggio/infra) | Terraform and the Helm chart for `dev` on AWS |
+| [`analytics-dbt`](https://github.com/Paggio/analytics-dbt) | Governed metrics as code - dbt and MetricFlow projects over Olist in Postgres and the marketing funnel in Iceberg, and the release bundles they publish. |
+| [`metrics-gateway`](https://github.com/Paggio/metrics-gateway) | MCP server that answers data questions only through MetricFlow metrics, with hybrid semantic search over the published release. |
 
 All of them carry the `agent-app-project` topic:
 [filter the repo list by it](https://github.com/Paggio?tab=repositories&q=topic%3Aagent-app-project).

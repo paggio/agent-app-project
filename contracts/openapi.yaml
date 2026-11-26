@@ -7,7 +7,7 @@
 openapi: 3.1.0
 info:
   title: agent-app API
-  version: 1.7.0
+  version: 1.8.0
   description: Frozen HTTP contract between the backend and its consumers. Changes are made here only,
     in a dedicated commit, before any implementation.
 servers:
@@ -911,6 +911,112 @@ components:
       title: CallCitation
       description: One call supplied to the model for one answer, and AT MOST ONE PER CALL per message.
         Says the model was GIVEN this text, never that it used it — the same promise Citation makes.
+    MetricCitation:
+      properties:
+        marker:
+          type: integer
+          minimum: 1
+          description: 1-based within THIS message's metric_citations, contiguous. Same rules as
+            Citation.marker.
+        project:
+          type: string
+          description: The semantic project that answered, e.g. `olist` or `funnel`.
+        metric:
+          type: string
+          description: The first metric the query asked for — the one the answer is about.
+        metrics:
+          type: array
+          items:
+            type: string
+          description: Every metric the query asked for, `metric` first.
+        saved_query:
+          anyOf:
+          - type: string
+          - type: 'null'
+          description: The saved query that was run, or null for an ad-hoc metric query.
+        label:
+          type: string
+          description: The metric's human label, a snapshot.
+        definition:
+          type: string
+          description: The metric's readable definition at `sha`, a snapshot — e.g. "sum of item price
+            over delivered orders".
+        sha:
+          type: string
+          pattern: ^[0-9a-f]{40}$
+          description: The semantic release that answered. A snapshot, never re-resolved.
+        group_by:
+          type: array
+          items:
+            type: string
+        filters:
+          type: array
+          items:
+            type: string
+          description: The filters applied, rendered for a reader, e.g. "customer__state = 'SP'".
+        start:
+          anyOf:
+          - type: string
+            format: date
+          - type: 'null'
+        end:
+          anyOf:
+          - type: string
+            format: date
+          - type: 'null'
+        result:
+          $ref: '#/components/schemas/MetricResult'
+      type: object
+      required:
+      - marker
+      - project
+      - metric
+      - metrics
+      - saved_query
+      - label
+      - definition
+      - sha
+      - group_by
+      - filters
+      - start
+      - end
+      - result
+      title: MetricCitation
+      description: One governed query whose result was supplied to the model, one per query per
+        message. Every number in a metrics answer comes from one of these, and the citation carries
+        its definition and release so the number can be read for what it is.
+    MetricResult:
+      properties:
+        columns:
+          type: array
+          items:
+            type: string
+        rows:
+          type: array
+          items:
+            type: array
+            items:
+              anyOf:
+              - type: string
+              - type: number
+              - type: boolean
+              - type: 'null'
+          maxItems: 50
+          description: At most 50 rows, in the query's order.
+        row_count:
+          type: integer
+          minimum: 0
+          description: Rows the query returned, before the 50-row cut.
+        truncated:
+          type: boolean
+          description: True exactly when row_count is greater than the rows carried.
+      type: object
+      required:
+      - columns
+      - rows
+      - row_count
+      - truncated
+      title: MetricResult
     CallListResponse:
       properties:
         calls:
@@ -1338,8 +1444,9 @@ components:
           - documents
           - calls
           - general
+          - metrics
           description: 'Which spoke the coordinator sent THIS turn to: the caller''s own documents, the
-            call-centre calls, or a plain conversation. Assistant turns only. ABSENT on every turn stored
+            call-centre calls, a plain conversation, or the governed metrics. Assistant turns only. ABSENT on every turn stored
             before the coordinator existed, which a consumer must treat as "not applicable". A consumer
             must tolerate a value it does not know: spokes are added additively. Exactly one spoke
             answers a turn.'
@@ -1350,6 +1457,14 @@ components:
           description: The calls supplied to the model for this turn, in marker order. Present only on
             assistant turns routed to `calls`; on those, `citations` is empty and `retrieval_consulted` is
             false, because the knowledge base was not consulted.
+        metric_citations:
+          items:
+            $ref: '#/components/schemas/MetricCitation'
+          type: array
+          description: The governed metric queries whose results were supplied to the model for this
+            turn, in marker order. Present only on assistant turns routed to `metrics`; on those,
+            `citations` and `call_citations` are empty. An empty list on a `metrics` turn means no
+            governed metric answers the question.
       type: object
       required:
       - id
@@ -1357,8 +1472,8 @@ components:
       - content
       - created_at
       title: Message
-      description: One turn in a chat. `retrieval_consulted`, `citations`, `route` and `call_citations` are
-        additive and optional — an assistant turn from before they existed carries none of them.
+      description: One turn in a chat. `retrieval_consulted`, `citations`, `route`, `call_citations` and
+        `metric_citations` are additive and optional — an assistant turn from before they existed carries none of them.
     RegisterRequest:
       properties:
         email:
