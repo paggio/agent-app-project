@@ -40,8 +40,9 @@ chatbot-backend (additive route; spoke off without `METRICS_GATEWAY_URL`) → fr
   question does not route to metrics. Not the gateway, dbt, local GMV or eval steps: each
   reads what a one-shot job produced (`docs/adr/0014`).
 - Local baseline on a restarted stack: 108/0.
+- The pin on dev: `/dev-push --lock` [45865446411](https://github.com/paggio/agent-app-project/actions/runs/45865446411) verified, 82/0; `/dev-eval` [45867253513](https://github.com/paggio/agent-app-project/actions/runs/45867253513) passed. Dev then taken down on request.
 
-- **verified** on dev — `/dev-push` run [44498487651](https://github.com/paggio/agent-app-project/actions/runs/44498487651), 82 assertions passed (6 from the change's suite). Re-verified 2026-11-23 after the docs amendment, run [45191545782](https://github.com/paggio/agent-app-project/actions/runs/45191545782), 82 passed. Dev is up and billing: `make dev-down` when idle.
+- **verified** on dev — `/dev-push` run [44498487651](https://github.com/paggio/agent-app-project/actions/runs/44498487651), 82 assertions passed (6 from the change's suite). Re-verified 2026-11-23 after the docs amendment, run [45191545782](https://github.com/paggio/agent-app-project/actions/runs/45191545782), 82 passed.
 
 ## Amended, 2026-11-23 — /ship-iterate
 
