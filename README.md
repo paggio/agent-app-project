@@ -4,6 +4,10 @@ The control repo for the product repos, each a git submodule. It owns what no si
 can: the contracts between them, the cross-repo changes, and the proof they work together.
 `dev` is the one AWS environment: CI deploys PRs there, and it costs money while it is up.
 
+## The agent
+
+[![How the chatbot answers a message: the coordinator, the four routes, what each reaches](agent.svg)](agent.svg)
+
 ## Architecture
 
 [![The dev architecture: every repo, workload and AWS component](architecture.svg)](architecture.svg)
@@ -16,11 +20,12 @@ can: the contracts between them, the cross-repo changes, and the proof they work
 
 [![What we test, where and when: PR CI, the local loop, dev, answer quality](tests.svg)](tests.svg)
 
-All three pictures are generated: edit `scripts/diagrams/<name>.py`, then `make diagrams`.
-`check-docs.py [diagrams]` fails when one is stale; when the architecture leaves out a repo or
-a chart workload; and when a workflow, lane, repo CI or smoke suite appears or disappears that
-the CI/CD or tests picture was not reviewed against. Those two stay at the level of intent;
-the detail is in `docs/deployment.md` and `docs/adr/0018`.
+All four pictures are generated: edit `scripts/diagrams/<name>.py`, then `make diagrams`.
+`check-docs.py [diagrams]` fails when one is stale; when the agent leaves out a graph node or
+route, or the architecture a repo or a chart workload; and when a workflow, lane, repo CI or
+smoke suite appears or disappears that the CI/CD or tests picture was not reviewed against.
+Those two stay at the level of intent; the detail is in `docs/deployment.md` and
+`docs/adr/0018`. The hand-drawn architecture is kept at tag `diagrams/architecture-sketch-v1`.
 
 ## The paths
 

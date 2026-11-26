@@ -1,15 +1,22 @@
 """The dev architecture: what /dev-push deploys to AWS dev."""
-from draw import E, FRAME, INK, OWNER, _id, arrow, box, frame, mid, text
+import draw
+from draw import ACCENT, E, FRAME, _id, arrow, frame, mid, text
 
-# ---------------------------------------------------------------- the scene ------------
+STYLE = "clean"
 W, H = 2660, 1720
+
+
+def box(*a, **k):
+    """Cards read left-aligned, title over body."""
+    return draw.box(*a, align="left", **k)
+
 
 
 def scene() -> None:
 
-    text(40, 28, "agentapp · dev architecture", 40)
+    text(40, 28, "agentapp · dev architecture", 40, bold=True)
     text(42, 84, "What /dev-push deploys to AWS dev, as of change 0009 (governed metrics spoke). "
-                 "Fill = the repo that owns it. Source: scripts/diagrams/architecture.py", 17,
+                 "Colour = the repo that owns it. Source: scripts/diagrams/architecture.py", 17,
          color="#495057")
 
     # Outside AWS -------------------------------------------------------------------------------
@@ -100,8 +107,8 @@ def scene() -> None:
               "Bedrock\nsimulator: SQS send only\ntrino, release, indexer,\ngateway: buckets, Glue",
               owner="infra", tsize=17, bsize=12.5)
 
-    arrow([mid(alb, "r", .15), (930, mid(alb, "r", .15)[1]), (930, 400), (1575, 400), mid(phx, "t")],
-          "Host = Phoenix domain", at=(1330, 400))
+    arrow([mid(alb, "r", .15), (930, mid(alb, "r", .15)[1]), (930, 357), (1575, 357), mid(phx, "t")],
+          "Host = Phoenix domain", at=(1460, 357))
     arrow([mid(alb, "r", .4), (C[0] - 15, mid(alb, "r", .4)[1]), (C[0] - 15, R1 + 65), (C[0], R1 + 65)])
     arrow([mid(proxy, "r", .4), (C[1], R1 + 40)], )
     arrow([mid(proxy, "b"), mid(fe, "t")])
@@ -178,20 +185,19 @@ def scene() -> None:
 
     # Legend and upkeep ----------------------------------------------------------------------------
     LY = 1470
-    text(40, LY, "Fill = owning repo", 20)
+    text(40, LY, "Colour = owning repo", 20, bold=True)
     lx = 40
-    for name, fill in OWNER.items():
-        E.append(dict(kind="rect", id=_id("key"), x=lx, y=LY + 40, w=34, h=24, fill=fill,
-                      dashed=False, stroke=INK, sw=1.5))
+    for name, fill in ACCENT.items():
+        E.append(dict(kind="rect", id=_id("key"), x=lx, y=LY + 44, w=18, h=18, fill=fill,
+                      dashed=False, stroke=fill, sw=1.5))
         text(lx + 44, LY + 41, name, 16)
         lx += 60 + len(name) * 9.5
     arrow([(40, LY + 100), (110, LY + 100)])
     text(122, LY + 89, "request / data", 16)
     arrow([(290, LY + 100), (360, LY + 100)], dashed=True)
     text(372, LY + 89, "telemetry · image pull", 16)
-    E.append(dict(kind="rect", id=_id("key"), x=600, y=LY + 86, w=40, h=30, fill="#ffffff",
-                  dashed=False, stroke=INK, sw=1.5))
-    E.append(dict(kind="line", id=_id("lid"), pts=[(600, LY + 94), (640, LY + 94)], stroke=INK, sw=1.5))
+    E.append(dict(kind="rect", id=_id("key"), x=600, y=LY + 82, w=40, h=36, fill="#ffffff",
+                  dashed=False, stroke="#dee2e6", sw=1, owner="AWS managed", drum=True))
     text(652, LY + 89, "holds state", 16)
     text(40, LY + 140, "Every arrow inside the namespace is a NetworkPolicy allow rule. "
          "Prose and reasons: docs/deployment.md · infra/docs/architecture.md", 16, color="#495057")
@@ -200,6 +206,6 @@ def scene() -> None:
         "This picture is generated: edit scripts/diagrams/architecture.py, then make diagrams.\n"
         "check-docs.py [diagrams] fails when a repo in .gitmodules or a workload in\n"
         "infra's chart is missing from it, or when this SVG was not rebuilt from the script.\n"
-        "make check and /realign run that check. Open architecture.excalidraw to zoom and pan.",
+        "make check and /realign run that check. The hand-drawn version: tag diagrams/architecture-sketch-v1.",
         owner="infra", bsize=15, tsize=19)
 

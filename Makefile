@@ -126,7 +126,7 @@ smoke: ## Run the baseline suite against the running stack
 check-docs: ## The prose-versus-mechanism checks (see scripts/check-docs.py)
 	@./scripts/check-docs.py
 
-diagrams: ## Redraw architecture.svg, cicd.svg and tests.svg from scripts/diagrams/
+diagrams: ## Redraw agent.svg, architecture.svg, cicd.svg and tests.svg from scripts/diagrams/
 	@./scripts/diagrams/build.py
 
 verify: ## Assert what is checked out, without dispatching: make verify CHANGE=0001-auth

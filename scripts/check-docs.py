@@ -1633,7 +1633,7 @@ def check_diagrams() -> None:
     h = hashlib.sha256()
     for p in sorted(glob.glob(os.path.join(src, "*.py")) + glob.glob(os.path.join(src, "*.woff2"))):
         h.update(os.path.basename(p).encode() + b"\0" + open(p, "rb").read())
-    for name in ("architecture", "cicd", "tests"):
+    for name in ("agent", "architecture", "cicd", "tests"):
         svg = os.path.join(ROOT, f"{name}.svg")
         if not os.path.isfile(svg) or f"source-sha256: {h.hexdigest()}" not in open(svg).read():
             fail("diagrams", f"{name}.svg was not rebuilt from scripts/diagrams/ — run "
@@ -1654,6 +1654,20 @@ def check_diagrams() -> None:
             if not re.search(rf"(?<![\w-]){re.escape(item)}(?![\w-])", text):
                 fail("diagrams", f"`{item}` is {what}, and scripts/diagrams/architecture.py does "
                                  f"not draw it — add it, then `make diagrams`")
+
+    # The agent is drawn in full: every node of the backend's graph and every route.
+    graph = os.path.join(ROOT, "chatbot-backend", "src", "app", "graph")
+    if os.path.isfile(os.path.join(graph, "builder.py")):
+        nodes = set(re.findall(r'add_node\("(\w+)"', open(os.path.join(graph, "builder.py")).read()))
+        m = re.search(r"^Route = Literal\[(.*?)\]", open(os.path.join(graph, "coordinator.py")).read(), re.M)
+        routes = set(re.findall(r'"(\w+)"', m.group(1))) if m else set()
+        text = scene("agent")
+        for what, items in (("a node in chatbot-backend's graph", nodes),
+                            ("a route the coordinator can pick", routes)):
+            for item in sorted(items):
+                if not re.search(rf"(?<![\w-]){re.escape(item)}(?![\w-])", text):
+                    fail("diagrams", f"`{item}` is {what}, and scripts/diagrams/agent.py does "
+                                     f"not draw it — add it, then `make diagrams`")
 
     # CI/CD and tests are drawn at the level of intent: each lists what it was last reviewed
     # against, so a new or removed workflow, lane, CI or suite forces a look, not a box.

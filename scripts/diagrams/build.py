@@ -5,7 +5,7 @@
 # ///
 """Draw every diagram the README shows: `make diagrams`.
 
-Each scene is a module here (architecture.py, cicd.py, tests.py) and is the only source of its
+Each scene is a module here (agent.py, architecture.py, cicd.py, tests.py) and is the only source of its
 picture. A scene's STYLE picks the look: "sketch" (hand-drawn, Excalifont, plus an .excalidraw
 twin to open at excalidraw.com) or "clean" (flat, Inter). Output goes to the repo root.
 check-docs.py [diagrams] fails when an SVG was not rebuilt from these files, or the repo moved
@@ -26,12 +26,13 @@ sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 from fontTools import subset  # noqa: E402
 from fontTools.ttLib import TTFont  # noqa: E402
 
+import agent  # noqa: E402
 import architecture  # noqa: E402
 import cicd  # noqa: E402
 import tests  # noqa: E402
 import draw  # noqa: E402
 
-SCENES = {"architecture": architecture, "cicd": cicd, "tests": tests}
+SCENES = {"agent": agent, "architecture": architecture, "cicd": cicd, "tests": tests}
 
 
 def digest() -> str:
