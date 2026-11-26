@@ -29,6 +29,18 @@ chatbot-backend (additive route; spoke off without `METRICS_GATEWAY_URL`) → fr
 - report: `changes/0009-governed-metrics-spoke/runs/20261123T135733Z/report.md`
 <!-- iterate:end -->
 
+### Merged — 2026-11-26, /realign
+
+- Merged: analytics-dbt#1, metrics-gateway#1, chatbot-backend#11, frontend#10,
+  chatbot-eval#4, infra#5, agent-app-project#46.
+- `repos.lock`: analytics-dbt `3fd9eab`, chatbot-backend `dbce48f`, chatbot-eval `fde473b`,
+  frontend `5672c6c`, infra `98c46ed`, metrics-gateway `9b85088`.
+- Contract: agrees with what is served; the same six framework-declared 422s left unpromised.
+- Promoted to `smoke/baseline.yaml`: the deployed spoke cites GMV (`remote`) and a coding
+  question does not route to metrics. Not the gateway, dbt, local GMV or eval steps: each
+  reads what a one-shot job produced (`docs/adr/0014`).
+- Local baseline on a restarted stack: 108/0.
+
 - **verified** on dev — `/dev-push` run [44498487651](https://github.com/paggio/agent-app-project/actions/runs/44498487651), 82 assertions passed (6 from the change's suite). Re-verified 2026-11-23 after the docs amendment, run [45191545782](https://github.com/paggio/agent-app-project/actions/runs/45191545782), 82 passed. Dev is up and billing: `make dev-down` when idle.
 
 ## Amended, 2026-11-23 — /ship-iterate
@@ -44,4 +56,4 @@ user asked for it after reviewing. Only the metrics-gateway slice is re-dispatch
 
 ## After merge
 
-- [ ] `./scripts/lock.sh` and commit `repos.lock`
+- [x] `./scripts/lock.sh` and commit `repos.lock`
