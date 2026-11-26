@@ -216,7 +216,7 @@ every step reading what a job produced is unpromotable. Then commit on the same 
 attempt, not the change's fate — a change whose last run failed for a blocker a human then
 waived merges with `- **failed**` as its permanent record. Write under it what the merge
 settled: the merged pull requests, the SHAs now in `repos.lock`, what was promoted. No other
-lane knows this, and nothing else ever says the change shipped.
+lane knows this, and nothing else ever says the change shipped. The remote half is § 5b's.
 
 Then push it and open the pull request (`gh pr create`), and do not merge it. Say in the
 body what moved, what the harvest said and what you did about it, and what you promoted.
@@ -245,9 +245,12 @@ an errored example: the merged code answers worse, and the eval report names whe
 session in `chatbot-backend` (or in `chatbot-eval`, if the eval itself is wrong), never a
 threshold lowered here.
 
-Put both verdicts and run URLs in the pull request body. The user is asked to review only
-once both are green. Skip it only in the step-0 case where nothing product-side moved, and
-say so. `dev` bills while it is up: say in the report that it is.
+Put both verdicts and run URLs in the pull request body **and** under the Merged block in
+`changes/<change>/STATUS.md`, replacing any feat-branch remote line and saying whether `dev` is
+still up; commit and push that. It moves no gitlink, so the deploy set is still the one
+verified. Without it STATUS.md cites the pre-merge deploys as the change's record (0007, 0008,
+0009 realign). The user is asked to review only once both are green. Skip it only in the
+step-0 case where nothing product-side moved, and say so. `dev` bills while it is up: say in the report that it is.
 
 ## 6 — Report
 
