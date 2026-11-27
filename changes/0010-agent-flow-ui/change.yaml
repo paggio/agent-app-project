@@ -1,0 +1,41 @@
+# The machine half of a change. BRIEF.md is for humans and for the implementing agent;
+# this is what the scripts parse.
+
+change: 0010-agent-flow-ui
+
+# The commit that landed contracts/ alone. The dispatch extracts contracts/ at exactly this
+# SHA and gives the slices nothing else, so it refuses to run without one.
+freeze_sha: "76ac577bf097c8a685d2e35c7f6c7b0d2fa10460"
+
+# Which repos get a slice. Each needs a matching <name>.md here. Use the SUBMODULE PATH:
+# chatbot-backend, not backend.
+slices:
+  - chatbot-backend
+  - frontend
+  - infra
+
+# NEW REPOS, optional — only when the request explicitly asks for one (docs/adr/0020).
+# Each must also be in slices:. ./scripts/new-repo.sh <change> <name> creates, scaffolds
+# and attaches it; manifest.py --validate refuses dispatch until it has.
+#   name     the repo, its submodule path and its GitHub name
+#   purpose  one line: its description, README and CLAUDE.md first line
+#   images   what it ships, [] for none; written to .gitmodules as its `images`
+# new_repos:
+#   - name: <name>
+#     purpose: <one line>
+#     images: [<image>]
+
+deploy:
+  environment: dev
+  local: true
+  # Shipped means deployed together (docs/adr/0002); the stream must survive the edge.
+  infra: true
+
+smoke:
+  file: smoke.yaml
+  # The single origin a browser uses: app at /, API at /api/. Not the backend's own port —
+  # that cannot catch a broken proxy.
+  base: http://localhost:8080
+  timeout_s: 300
+  # Live progress, the flow panel, Markdown and the session panel are browser-only.
+  e2e: true

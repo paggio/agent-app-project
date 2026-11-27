@@ -1,0 +1,225 @@
+# Acceptance criteria, made executable. Run against the joined stack; a failure is fed back
+# to the repo named in `owner`. Write them while planning — a criterion in BRIEF.md that
+# never became a step here is a criterion nobody checks.
+#
+# Step shape (smoke.py owns it; `./scripts/smoke.py --lint <suite>` checks all of this
+# without making a request, and manifest.py --validate runs that for you):
+#   name      unique, stable — it appears in the repair prompt sent back to the agent
+#   owner     the repo answerable for this step. THIS FIELD ROUTES THE REPAIR.
+#   GET/POST/PUT/PATCH/DELETE/HEAD/OPTIONS   the path, relative to `base` in change.yaml
+#   headers   map, optional
+#   body      JSON body, optional
+#   form      form-encoded body, optional
+#   files     {field: <path beside this suite>} or {field: {path, filename,
+#             content_type}} — a multipart upload. Use `form` for the text fields
+#             beside it; `body` and `files` together are refused. A criterion whose
+#             only oracle is a browser is one the seam cannot see.
+#   base      a different origin for this step only (env vars interpolate)
+#   expect    REQUIRED: status (int or list) | json (deep subset) | body_matches (regex)
+#             | body_excludes (regex) | headers {name: regex} | cookie (name or list).
+#             No exemption — a step with no expect passes on any response, including a 500.
+#   capture   {var: dotted.json.path | header:Name | cookie:name}, bound into ${var} later
+#   retry     {attempts: 3, delay: 1.0} for anything eventually consistent
+#   contract  false when this is not API surface (the app shell, a static asset)
+#   tags      [local] or [remote]. UNTAGGED RUNS IN BOTH PASSES — tag a step only to opt it
+#             out. local = no remote analogue; remote = cannot hold locally.
+#
+# Cookies persist across steps within a run, so register -> login -> me works. The two
+# passes are separate processes, so never depend on a variable captured in the other.
+#
+# Variables are declared in stack/dev.env. ${SMOKE_RUN_ID} is the run nonce — use it in
+# every identity a step creates. ${SMOKE_ORIGIN} is the origin under test.
+
+x-sse: &sse
+  Accept: text/event-stream
+
+steps:
+  # ───────────────────────────────────────────── refusals before a session
+
+  - name: capabilities-require-a-session
+    owner: chatbot-backend
+    GET: /api/v1/capabilities
+    expect:
+      status: 401
+      json: {error: {code: AUTH_REQUIRED}}
+
+  - name: the-stream-requires-a-session
+    owner: chatbot-backend
+    POST: /api/v1/threads/nonexistent/messages/stream
+    headers: *sse
+    body: {message: hello}
+    expect:
+      status: 401
+      json: {error: {code: AUTH_REQUIRED}}
+
+  # ───────────────────────────────────────────── session, role, capabilities
+
+  - name: register-flow-account
+    owner: chatbot-backend
+    POST: /api/v1/auth/register
+    body:
+      email: smoke-flow-${SMOKE_RUN_ID}@auth.test
+      password: "${SMOKE_PASSWORD}"
+      signup_code: "${SIGNUP_CODE}"
+      display_name: Smoke Flow
+    expect:
+      status: [201, 409]
+
+  - name: login-flow-account
+    owner: chatbot-backend
+    POST: /api/v1/auth/login
+    body:
+      email: smoke-flow-${SMOKE_RUN_ID}@auth.test
+      password: "${SMOKE_PASSWORD}"
+    expect:
+      status: 200
+      cookie: session
+
+  - name: me-carries-the-member-role
+    owner: chatbot-backend
+    GET: /api/v1/auth/me
+    expect:
+      status: 200
+      json: {user: {role: member}}
+
+  - name: capabilities-name-the-role-and-visibility
+    owner: chatbot-backend
+    GET: /api/v1/capabilities
+    expect:
+      status: 200
+      json:
+        role: member
+        visibility: {steps: true}
+      # Nothing is disallowed for member.
+      body_excludes: '"allowed"\s*:\s*false'
+
+  - name: capabilities-list-every-spoke-and-its-tools
+    owner: chatbot-backend
+    GET: /api/v1/capabilities
+    expect:
+      status: 200
+      body_matches: '^(?=.*"name"\s*:\s*"general")(?=.*"name"\s*:\s*"documents")(?=.*"name"\s*:\s*"search_documents")(?=.*"name"\s*:\s*"calls")(?=.*"name"\s*:\s*"search_calls")'
+
+  - name: capabilities-list-the-metrics-spoke-and-the-gateway-tools
+    owner: chatbot-backend
+    # The gateway runs in the local stack (0009); on dev too.
+    GET: /api/v1/capabilities
+    expect:
+      status: 200
+      body_matches: '^(?=.*"name"\s*:\s*"metrics")(?=.*"search_semantic")(?=.*"query_metrics")(?=.*"run_saved_query")(?=.*"describe_metric")(?=.*"describe_saved_query")(?=.*"get_dimension_values")'
+
+  # ───────────────────────────────────────────── the streaming turn
+
+  - name: create-a-flow-chat
+    owner: chatbot-backend
+    POST: /api/v1/threads
+    body: {}
+    expect:
+      status: 201
+    capture:
+      flow_thread_id: thread.id
+
+  - name: the-stream-validates-the-body
+    owner: chatbot-backend
+    POST: /api/v1/threads/${flow_thread_id}/messages/stream
+    headers: *sse
+    body: {message: ""}
+    expect:
+      status: 422
+
+  - name: the-stream-refuses-an-unknown-chat
+    owner: chatbot-backend
+    POST: /api/v1/threads/not-a-chat-${SMOKE_RUN_ID}/messages/stream
+    headers: *sse
+    body: {message: hello}
+    expect:
+      status: 404
+      json: {error: {code: THREAD_NOT_FOUND}}
+
+  - name: a-turn-streams-steps-then-done
+    owner: chatbot-backend
+    POST: /api/v1/threads/${flow_thread_id}/messages/stream
+    headers: *sse
+    body:
+      message: "Name two colours as a Markdown list."
+    retry: {attempts: 3, delay: 3.0}
+    expect:
+      status: 200
+      headers:
+        content-type: '^text/event-stream'
+      # started before completed, then exactly one done, and it is last.
+      body_matches: 'event:\s*step\s*data:[^\n]*"phase"\s*:\s*"started".*event:\s*step\s*data:[^\n]*"phase"\s*:\s*"completed".*event:\s*done\s*data:[^\n]*"steps"\s*:\s*\[\s*\{'
+      # No error, and nothing after done.
+      body_excludes: 'event:\s*error|event:\s*done.*event:'
+
+  - name: the-streamed-turn-names-its-route-and-answer-steps
+    owner: chatbot-backend
+    POST: /api/v1/threads/${flow_thread_id}/messages/stream
+    headers: *sse
+    body: {message: "What is a good name for a cat?"}
+    retry: {attempts: 3, delay: 3.0}
+    expect:
+      status: 200
+      body_matches: 'event:\s*done\s*data:[^\n]*"name"\s*:\s*"coordinate"[^\n]*"name"\s*:\s*"answer"'
+
+  - name: the-transcript-stores-the-steps-in-order
+    owner: chatbot-backend
+    GET: /api/v1/threads/${flow_thread_id}
+    expect:
+      status: 200
+      # Within one turn's steps: coordinate before answer.
+      body_matches: '"steps"\s*:\s*\[\s*\{(?:(?!"steps").)*?"name"\s*:\s*"coordinate"(?:(?!"steps").)*?"name"\s*:\s*"answer"'
+
+  - name: the-json-endpoint-also-returns-steps
+    owner: chatbot-backend
+    POST: /api/v1/threads/${flow_thread_id}/messages
+    body: {message: "And a name for a dog?"}
+    retry: {attempts: 3, delay: 3.0}
+    expect:
+      status: 200
+      body_matches: '"steps"\s*:\s*\[\s*\{(?:(?!"steps").)*?"name"\s*:\s*"coordinate"(?:(?!"steps").)*?"name"\s*:\s*"answer"'
+
+  - name: a-call-question-steps-through-search-calls
+    owner: chatbot-backend
+    # Names a call id, so the coordinator must route to calls (contracts/README.md).
+    POST: /api/v1/threads/${flow_thread_id}/messages/stream
+    headers: *sse
+    body: {message: "What happened on CALL-FLOW${SMOKE_RUN_ID}?"}
+    retry: {attempts: 3, delay: 3.0}
+    expect:
+      status: 200
+      body_matches: 'event:\s*done\s*data:(?=[^\n]*"route"\s*:\s*"calls")(?=[^\n]*"agent"\s*:\s*"calls")[^\n]*"name"\s*:\s*"search_calls"'
+
+  # ───────────────────────────────────────────── the hops in between
+
+  - name: a-turn-streams-through-the-proxy
+    owner: frontend
+    tags: [local]
+    # The proxy must carry the event stream, compressed or not, with its type intact.
+    POST: /api/v1/threads/${flow_thread_id}/messages/stream
+    headers:
+      Accept: text/event-stream
+      Accept-Encoding: gzip
+    body: {message: "One more, through the proxy."}
+    retry: {attempts: 3, delay: 3.0}
+    expect:
+      status: 200
+      headers:
+        content-type: '^text/event-stream'
+      body_matches: 'event:\s*step.*event:\s*done'
+
+  - name: a-turn-streams-through-the-edge
+    owner: infra
+    tags: [remote]
+    # CloudFront → ALB → proxy → backend on dev: same events, nothing cut or rewritten.
+    POST: /api/v1/threads/${flow_thread_id}/messages/stream
+    headers:
+      Accept: text/event-stream
+      Accept-Encoding: gzip
+    body: {message: "One more, through the edge."}
+    retry: {attempts: 3, delay: 5.0}
+    expect:
+      status: 200
+      headers:
+        content-type: '^text/event-stream'
+      body_matches: 'event:\s*step.*event:\s*done'
