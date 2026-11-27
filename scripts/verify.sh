@@ -391,6 +391,24 @@ if [ "$CHANGE_DEPLOY_LOCAL" = "1" ]; then
   esac
 fi
 
+# ------------------------------------------------------------------------ seed
+# State every suite may assume, which no change should have to declare: a served metrics
+# release. A change with jobs owns its state sequence from cold volumes (above), so it is
+# not seeded. Not an assertion — counted nowhere. docs/adr/0021.
+if [ "$CHANGE_DEPLOY_LOCAL" = "1" ] && [ "${CHANGE_JOBS_COUNT:-0}" = "0" ]; then
+  stage "seed: a published, indexed metrics release"
+  set +e
+  SEED_OWNER="$(./scripts/seed-local.sh --log-dir "$RUN_DIR")"; SEED_RC=$?
+  set -e
+  if [ "$SEED_RC" != 0 ]; then
+    case " $CHANGE_SLICES " in
+      *" $SEED_OWNER "*) fail_stage "seed: ${SEED_OWNER}'s seed job failed — see $RUN_DIR/seed-*.log" "$SEED_OWNER" slice ;;
+      *) fail_stage "seed: ${SEED_OWNER:-a} seed job failed, and $SEED_OWNER is not a slice of this change — see $RUN_DIR/seed-*.log" "" harness ;;
+    esac
+  fi
+  record_stage seed pass
+fi
+
 # ------------------------------------------------------------------------ jobs
 # A criterion whose oracle is a PROCESS rather than a request. smoke.py speaks HTTP against
 # a stack somebody else brought up, so it can never start a container — and "the run exits
