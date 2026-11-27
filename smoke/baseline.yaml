@@ -1588,8 +1588,8 @@ steps:
     expect:
       status: 204
 
-  # ── metrics spoke (0009). The local stack runs no release Job, so locally only the routing
-  # guard holds; the cited answer needs a published release and is asserted on dev.
+  # ── metrics spoke (0009). The cited answer is asserted on dev; locally the seed stage
+  # publishes a release (docs/adr/0021), but this step stays remote-only.
 
   - name: register-a-metrics-account
     owner: chatbot-backend
