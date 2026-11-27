@@ -27,6 +27,8 @@ Merge order: chatbot-backend (additive, backward compatible) → infra → front
 - report: `changes/0010-agent-flow-ui/runs/20261127T115933Z/report.md`
 <!-- iterate:end -->
 
+- **verified** on dev — `/dev-push` run [45995285787](https://github.com/Paggio/agent-app-project/actions/runs/45995285787): 99 passed, 0 failed (17 from the change suite). Dev is up.
+
 ## Blockers
 
 - Control branch is based on `chore/realign-0009-governed-metrics-spoke` (PR #51, open); merge that first.
