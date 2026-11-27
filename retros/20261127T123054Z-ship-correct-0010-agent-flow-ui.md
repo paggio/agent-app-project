@@ -5,7 +5,7 @@ run: changes/0010-agent-flow-ui/runs/20261127T115933Z
 date: 2026-11-27
 verdict: coherent-with-warnings
 findings: 0 proposed, 6 recorded, 3 rejected
-pr: none
+pr: https://github.com/paggio/agent-app-project/pull/54
 ---
 
 ## State audit
