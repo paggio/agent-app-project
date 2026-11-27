@@ -28,7 +28,7 @@ Merge order: chatbot-backend (additive, backward compatible) → infra → front
 - report: `changes/0010-agent-flow-ui/runs/20261127T155856Z/report.md`
 <!-- iterate:end -->
 
-- **verified** on dev — `/dev-push` run [45995285787](https://github.com/Paggio/agent-app-project/actions/runs/45995285787): 99 passed, 0 failed (17 from the change suite). Dev is up.
+- **verified** on dev — `/dev-push` run [46033089871](https://github.com/Paggio/agent-app-project/actions/runs/46033089871): 105 passed, 0 failed (23 from the change suite), after the amendment. Dev is up.
 
 ## Blockers
 
@@ -49,5 +49,6 @@ Merge order: chatbot-backend (additive, backward compatible) → infra → front
   locked at the first message and shown read-only in the conversation. Server-enforced:
   `Thread.agents`, routing bounded by it. Contract re-frozen at `3e749c6` (1.9.0, unmerged).
 - Slices re-dispatched: chatbot-backend, frontend. Infra unchanged.
-- Also asked: screenshots at the top of this repo's `README.md` — done by the lane after a
-  green run; no step asserts it.
+- Also asked: screenshots at the top of this repo's `README.md` — taken from the local stack
+  (same commits as dev; dev's registration is closed to the harness) into `docs/screenshots/`.
+  No step asserts it.
