@@ -23,7 +23,7 @@ while read -r svc owner budget; do
   ( sleep "$budget"; kill -TERM "$pid" 2>/dev/null ) >/dev/null 2>&1 &
   dog=$!
   set +e; wait "$pid"; rc=$?; set -e
-  kill "$dog" 2>/dev/null || true
+  kill "$dog" 2>/dev/null || true; wait "$dog" 2>/dev/null || true
   if [ "$rc" != 0 ]; then
     echo "seed: $svc exited $rc — see $log" >&2
     tail -20 "$log" >&2 || true
@@ -31,4 +31,12 @@ while read -r svc owner budget; do
     exit 1
   fi
 done <<< "$SEEDS"
-echo "seed: release published and indexed" >&2
+# The gateway swaps on its own poll; wait for it so the first suite sees the release.
+GW="$(grep -E '^METRICS_GATEWAY_ORIGIN=' stack/dev.env | cut -d= -f2-)"
+for _ in $(seq 1 30); do
+  curl -fsS "$GW/healthz" 2>/dev/null | grep -q '"sha"' && { echo "seed: release published, indexed and served" >&2; exit 0; }
+  sleep 2
+done
+echo "seed: the gateway at $GW never served the indexed release" >&2
+echo "metrics-gateway"
+exit 1
