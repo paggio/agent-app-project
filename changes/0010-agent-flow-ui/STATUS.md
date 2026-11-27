@@ -31,7 +31,7 @@ Merge order: chatbot-backend (additive, backward compatible) → infra → front
 
 ## Blockers
 
-- Control branch is based on `chore/realign-0009-governed-metrics-spoke` (PR #51, open); merge that first.
+- PR #51 (realign 0009) merged 2026-11-27; this branch is current with `main`.
 
 ## After merge
 
