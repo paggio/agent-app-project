@@ -15,8 +15,8 @@
 # deploy-set.json, verify-remote.json, the logs.
 #
 # Exit 0 verified (or deployed-partial with --only) · 1 the deploy or an assertion failed ·
-# 2 refused — no PR, a gitlink off repos.lock or an unpushed slice branch (checked before
-# commenting), expired credentials, a run that produced no verdict. docs/adr/0003.
+# 2 refused — no PR, a gitlink off repos.lock, an unpushed slice branch, a pushed session
+# known stale (checked before commenting), expired credentials, no verdict. docs/adr/0003.
 set -euo pipefail
 
 ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
@@ -48,6 +48,7 @@ fi
 { [ "$LOCK" = "1" ] && [ -z "$CHANGE" ]; } || { [ "$LOCK" = "0" ] && [ -n "$CHANGE" ]; } \
   || refuse "usage: dev-push.sh <change> [--only <repo>] | dev-push.sh --lock [--pr <n> | --ref <branch>]"
 [ -z "$PR_ARG" ] || { [ "$LOCK" = "1" ] && [ -z "$REF" ]; } || refuse "--pr goes with --lock, and not with --ref"
+"$ROOT"/scripts/gh-creds-fresh.sh || exit 2   # before any comment or dispatch
 
 SINCE="$(date -u +%Y-%m-%dT%H:%M:%SZ)"
 if [ -n "$PR_ARG" ]; then

@@ -38,7 +38,10 @@ SERVICES = {
                         "supporting": ["postgres", "redis", "opensearch", "minio",
                                        "phoenix", "phoenix-db", "elasticmq",
                                        "metrics-gateway"]},
-    "frontend": {"primary": ["frontend", "proxy"], "supporting": []},
+    # The e2e stage drives the real backend through the proxy, so a browser test that fails
+    # on the answer explains itself in the backend's log. 0010's metrics e2e failed on
+    # `no_release` and the frontend brief carried no backend line.
+    "frontend": {"primary": ["frontend", "proxy"], "supporting": ["backend"]},
     "infra": {"primary": [], "supporting": []},
     # The eval is a CLIENT of the backend, so `backend` is supporting here as well as
     # primary above: an eval run that fails because the API refused it is unreadable
@@ -72,7 +75,11 @@ TROUBLE = re.compile(
     r"\b(ERROR|FATAL|PANIC|CRITICAL|SEVERE)\b"
     r"|\b(Traceback|Exception)\b"
     r"|(connection refused|connection reset|timed out|no such host|"
-    r"unhealthy|failed to|could not connect|out of memory)",
+    r"unhealthy|failed to|could not connect|out of memory)"
+    # The backend's structured WARNING is how it reports a fail-open degrade (0010:
+    # `metrics search failed, not routing to metrics: no_release`). Bare WARNING is not
+    # matched: Redis and MinIO print one at every boot.
+    r'|"level": "WARNING"',
 )
 
 

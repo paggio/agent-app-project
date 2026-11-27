@@ -23,7 +23,7 @@ case "${1:-}" in --dry-run) DRY=1 ;; "") ;; *) echo "usage: push-gh-creds.sh [--
 OWNER="$("$ROOT"/scripts/repos.py owner)"
 REPOS="agent-app-project $("$ROOT"/scripts/repos.py names)"
 
-python3 - "$ROOT/stack/secrets.env" "$OWNER" "$REPOS" "$DRY" <<'PY'
+python3 - "$ROOT/stack/secrets.env" "$OWNER" "$REPOS" "$DRY" "$ROOT/scripts/gh-creds-fresh.sh" <<'PY'
 import datetime, re, subprocess, sys
 path, owner, repos, dry = sys.argv[1], sys.argv[2], sys.argv[3].split(), sys.argv[4] == "1"
 
@@ -72,4 +72,6 @@ for repo in repos:
                        check=True, capture_output=True)
     print(f"push-gh-creds: {full} — session pushed")
 print(f"push-gh-creds: expires {exp.isoformat()} ({int(left)} min from now)")
+if not dry:
+    subprocess.run([sys.argv[5], "--record", exp.isoformat()], check=True)
 PY
