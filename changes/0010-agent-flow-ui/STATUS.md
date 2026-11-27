@@ -23,19 +23,19 @@ Merge order: chatbot-backend (additive, backward compatible) → infra → front
      thing that says they work together. -->
 
 <!-- iterate:begin -->
-- **unattributable** — 20261127T092345Z, 2 attempt(s)
-- report: `changes/0010-agent-flow-ui/runs/20261127T092345Z/report.md`
+- **verified-local** — 20261127T115933Z, 1 attempt(s)
+- report: `changes/0010-agent-flow-ui/runs/20261127T115933Z/report.md`
 <!-- iterate:end -->
 
 ## Blockers
 
-- **Harness (fault: harness), blocks local green.** Attempt 1: smoke 125/0; e2e 100/102 — the
-  two failures are 0009's `metrics.spec.ts`, which needs a served metrics release. Verify always
-  starts cold (`down -v`), only a change's `jobs:` seed the release, and a job's owner must be a
-  slice — so no change without analytics-dbt and metrics-gateway slices can pass e2e. Routed to
-  frontend, which cannot fix it; the loop was stopped at attempt 2 to keep that test intact.
 - Control branch is based on `chore/realign-0009-governed-metrics-spoke` (PR #51, open); merge that first.
 
 ## After merge
 
 - [ ] `./scripts/lock.sh` and commit `repos.lock`
+
+## Corrected, 2026-11-27 — /ship-correct
+
+- Wrong: e2e failed on 0009's `metrics.spec.ts` — the cold local gateway served no release (`no_release`), and the repair was routed to frontend.
+- Criterion: unchanged and already failing; the cause was the harness. Fixed in harness PR #52 (merged): verify seeds a metrics release (ADR 0021). Re-verified 128/0, e2e 102/102.
