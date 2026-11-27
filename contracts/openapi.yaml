@@ -7,7 +7,7 @@
 openapi: 3.1.0
 info:
   title: agent-app API
-  version: 1.8.0
+  version: 1.9.0
   description: Frozen HTTP contract between the backend and its consumers. Changes are made here only,
     in a dedicated commit, before any implementation.
 servers:
@@ -313,7 +313,8 @@ paths:
               schema:
                 $ref: '#/components/schemas/ErrorResponse'
         '422':
-          description: The body failed validation; `detail` lists what.
+          description: The body failed validation; `detail` lists what. Includes an `agents` entry the
+            deployment does not run or the role may not use.
           content:
             application/json:
               schema:
@@ -487,8 +488,8 @@ paths:
         the earlier turns of this chat are supplied to the model, bounded to a recent window, so a follow-up
         question works. Turns outside that window are not sent and are not summarised; contracts/README.md
         § "Chats, ownership and titles" states what that promises and what it does not. Rate limited per
-        account, because history multiplies what one request costs. Answers complete — there is no streaming
-        here either, and it is still routed to a separate endpoint that does not exist.'
+        account, because history multiplies what one request costs. Answers complete; the same turn with
+        progress events while it runs is postThreadMessageStream.'
       operationId: postThreadMessage
       security:
       - cookieAuth: []
@@ -548,6 +549,103 @@ paths:
               description: Seconds until the next attempt is permitted.
               schema:
                 type: integer
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+  /v1/threads/{thread_id}/messages/stream:
+    post:
+      tags:
+      - threads
+      summary: Send a message in a chat and watch the agents work
+      description: 'The same turn as postThreadMessage — same body, same gates in the same order, same
+        rate-limit bucket, same two messages appended — answered as `text/event-stream` so a client can
+        show progress while it waits. Every refusal (401, 403, 404, 422, 429) is decided before the stream
+        opens and is the same JSON response postThreadMessage gives. Once it opens the status is 200 and
+        the events are, in order: zero or more `step` (data: StepEvent), then exactly one of `done` (data:
+        SendMessageResponse — the stored turn, its `steps` included) or `error` (data: ErrorResponse — the
+        turn failed and nothing was appended). A `:`-comment heartbeat is sent at least every 15 seconds.
+        contracts/README.md § "Agent steps, progress and capabilities" is the normative version.'
+      operationId: postThreadMessageStream
+      security:
+      - cookieAuth: []
+      parameters:
+      - name: thread_id
+        in: path
+        required: true
+        schema:
+          type: string
+      requestBody:
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/SendMessageRequest'
+        required: true
+      responses:
+        '200':
+          description: The stream opened. `step` events, then one `done` or one `error`.
+          content:
+            text/event-stream:
+              schema:
+                type: string
+        '401':
+          description: There is no valid session (`AUTH_REQUIRED`). No stream opens and nothing is appended.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+        '403':
+          description: The request was cross-origin (`AUTH_CROSS_ORIGIN`).
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+        '404':
+          description: No such chat for this account (`THREAD_NOT_FOUND`), checked before any model is
+            invoked.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+        '422':
+          description: The body failed validation; `detail` lists what.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/HTTPValidationError'
+        '429':
+          description: Too many messages from this account (`AUTH_RATE_LIMITED`) — the bucket
+            postThreadMessage spends.
+          headers:
+            Retry-After:
+              description: Seconds until the next attempt is permitted.
+              schema:
+                type: integer
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+  /v1/capabilities:
+    get:
+      tags:
+      - auth
+      summary: What this session may use and see
+      description: 'The calling account''s role, the subagents (spokes) this deployment runs with each
+        one''s tools, whether this role may use each, and what this role may see. Computed on the server
+        from the role; a client renders it and decides nothing from it — enforcement is the server''s.
+        Never mutates.'
+      operationId: getCapabilities
+      security:
+      - cookieAuth: []
+      responses:
+        '200':
+          description: The session's capabilities.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/CapabilitiesResponse'
+        '401':
+          description: There is no valid session (`AUTH_REQUIRED`).
           content:
             application/json:
               schema:
@@ -836,6 +934,152 @@ components:
       description: An opaque server-side session id. Carries no claims and means nothing without the
         server's record, which is what makes logout immediate and revocation real.
   schemas:
+    AgentStep:
+      properties:
+        id:
+          type: string
+          description: Unique within its turn. Opaque.
+        kind:
+          type: string
+          enum:
+          - route
+          - retrieval
+          - tool
+          - answer
+          description: '`route` the coordinator choosing a spoke, `retrieval` a spoke gathering what the
+            model will see, `tool` a tool the answering agent called, `answer` the model writing the reply.
+            A consumer must tolerate a value it does not know.'
+        agent:
+          type: string
+          description: Who ran it — `coordinator`, or a spoke name as in `Message.route`.
+        name:
+          type: string
+          description: '`coordinate` for a route step, `answer` for an answer step, otherwise the tool''s
+            name exactly as `CapabilitiesResponse` lists it under this agent.'
+        label:
+          type: string
+          description: A short title for a person, e.g. "Choosing a specialist".
+        summary:
+          type: string
+          description: 'One sentence for a person saying what happened, written by the server — e.g. "Sent
+            to calls: the message names CALL-…", "Found 3 calls". Empty while running is allowed. Never
+            carries credentials, SQL or another account''s data.'
+        status:
+          type: string
+          enum:
+          - running
+          - ok
+          - error
+          description: '`running` appears only in a `started` StepEvent; a stored step is `ok` or `error`.'
+        started_at:
+          type: string
+          format: date-time
+        duration_ms:
+          type: integer
+          minimum: 0
+          description: Absent while running.
+      type: object
+      required:
+      - id
+      - kind
+      - agent
+      - name
+      - label
+      - summary
+      - status
+      - started_at
+      title: AgentStep
+      description: One step an agent took to produce an assistant turn.
+    StepEvent:
+      properties:
+        phase:
+          type: string
+          enum:
+          - started
+          - completed
+        step:
+          $ref: '#/components/schemas/AgentStep'
+      type: object
+      required:
+      - phase
+      - step
+      title: StepEvent
+      description: The data of a `step` event on postThreadMessageStream. Every step is `started` before
+        it is `completed`, under the same `id`; the completed steps, in order, are the stored `steps`.
+    ToolCapability:
+      properties:
+        name:
+          type: string
+          description: Stable identifier; what `AgentStep.name` carries.
+        label:
+          type: string
+        description:
+          type: string
+        allowed:
+          type: boolean
+          description: Whether this session's role may have this tool used on its behalf.
+      type: object
+      required:
+      - name
+      - label
+      - description
+      - allowed
+      title: ToolCapability
+    AgentCapability:
+      properties:
+        name:
+          type: string
+          description: The spoke, as in `Message.route`. A consumer must tolerate a value it does not know.
+        label:
+          type: string
+        description:
+          type: string
+        allowed:
+          type: boolean
+          description: Whether the coordinator may route this session's turns here. `general` is always
+            allowed.
+        tools:
+          items:
+            $ref: '#/components/schemas/ToolCapability'
+          type: array
+          description: Possibly empty — `general` has none.
+      type: object
+      required:
+      - name
+      - label
+      - description
+      - allowed
+      - tools
+      title: AgentCapability
+    CapabilitiesResponse:
+      properties:
+        role:
+          type: string
+          description: The account's role, as `User.role`.
+        agents:
+          items:
+            $ref: '#/components/schemas/AgentCapability'
+          type: array
+          description: Every spoke this deployment runs, allowed or not, in a stable order.
+        visibility:
+          $ref: '#/components/schemas/Visibility'
+      type: object
+      required:
+      - role
+      - agents
+      - visibility
+      title: CapabilitiesResponse
+      description: Response body for getCapabilities.
+    Visibility:
+      properties:
+        steps:
+          type: boolean
+          description: Whether this role sees agent steps — `Message.steps` and `step` events. False means
+            both are absent, not empty.
+      type: object
+      required:
+      - steps
+      title: Visibility
     AuthError:
       properties:
         code:
@@ -1254,6 +1498,16 @@ components:
           description: 'Optional, and explicitly nullable — omitting it and sending null are both accepted
             and mean the same thing. Normally omitted: the server derives a title from the first message,
             so supplying one here is for a client that already knows what the chat is about.'
+        agents:
+          anyOf:
+          - items:
+              type: string
+            type: array
+          - type: 'null'
+          description: 'The agents this chat may use, by `AgentCapability.name`. Omitted or null means every
+            agent the role may use. `general` is always included, listed or not. A name the deployment
+            does not run, or the role may not use, is a 422 and nothing is created. Fixed at creation:
+            no endpoint changes it — see contracts/README.md § "Agent steps, progress and capabilities".'
       type: object
       title: CreateThreadRequest
       description: Request body for postThreadCreate, and the whole body is optional. Unknown fields are
@@ -1465,6 +1719,14 @@ components:
             turn, in marker order. Present only on assistant turns routed to `metrics`; on those,
             `citations` and `call_citations` are empty. An empty list on a `metrics` turn means no
             governed metric answers the question.
+        steps:
+          items:
+            $ref: '#/components/schemas/AgentStep'
+          type: array
+          description: 'The steps the agents took to produce THIS turn, in the order they ran: a `route`
+            step first and an `answer` step last. Assistant turns only. ABSENT on turns stored before steps
+            existed and whenever the caller''s role may not see steps (`Visibility.steps`); a consumer must
+            treat absence as "not available".'
       type: object
       required:
       - id
@@ -1472,8 +1734,8 @@ components:
       - content
       - created_at
       title: Message
-      description: One turn in a chat. `retrieval_consulted`, `citations`, `route`, `call_citations` and
-        `metric_citations` are additive and optional — an assistant turn from before they existed carries none of them.
+      description: One turn in a chat. `retrieval_consulted`, `citations`, `route`, `call_citations`,
+        `metric_citations` and `steps` are additive and optional — an assistant turn from before they existed carries none of them.
     RegisterRequest:
       properties:
         email:
@@ -1586,6 +1848,13 @@ components:
           description: How many messages the chat holds. Present so a client can render a list without
             fetching every transcript, and it counts what is stored rather than what a capped read
             returned.
+        agents:
+          items:
+            type: string
+          type: array
+          description: The agents this chat may use, chosen at creation and never changed, in the order
+            `getCapabilities` lists them. Always contains `general`. A chat created before this field
+            existed carries every agent the role may use.
       type: object
       required:
       - id
@@ -1593,6 +1862,7 @@ components:
       - created_at
       - updated_at
       - message_count
+      - agents
       title: Thread
       description: A chat, as its owner sees it. Contains no account id — a caller only ever sees its own,
         so naming the owner would add a field that is always the caller and could only ever leak.
@@ -1651,6 +1921,11 @@ components:
         display_name:
           type: string
           description: Always present and never empty. Derived from the email when none was given.
+        role:
+          type: string
+          description: 'What this account may use and see, resolved by getCapabilities. Every account is
+            `member` today; other values arrive additively, so a consumer must tolerate one it does not know
+            and must never decide permissions from it.'
       type: object
       required:
       - id

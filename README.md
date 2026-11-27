@@ -4,6 +4,15 @@ The control repo for the product repos, each a git submodule. It owns what no si
 can: the contracts between them, the cross-repo changes, and the proof they work together.
 `dev` is the one AWS environment: CI deploys PRs there, and it costs money while it is up.
 
+## The chatbot
+
+| | |
+| --- | --- |
+| [![A new chat: pick the agents it may use; the session panel lists what the role allows](docs/screenshots/1-new-chat-agent-picker.png)](docs/screenshots/1-new-chat-agent-picker.png) | [![While the reply is written: each agent step as it runs; the chat's agents shown locked](docs/screenshots/2-live-progress.png)](docs/screenshots/2-live-progress.png) |
+| **Choose the agents** for each chat; `General` is always on. | **Live progress** per step; the chosen agents stay locked and visible. |
+| [![The reply rendered as Markdown — heading, table, list — with its cited sources](docs/screenshots/3-markdown-reply-locked-agents.png)](docs/screenshots/3-markdown-reply-locked-agents.png) | [![The agent flow: every step, its agent, summary, status and duration](docs/screenshots/4-agent-flow.png)](docs/screenshots/4-agent-flow.png) |
+| **Markdown answers** with the sources the assistant was given. | **Agent flow**: how the answer was reached, step by step. |
+
 ## The agent
 
 [![How the chatbot answers a message: the coordinator, the four routes, what each reaches](agent.svg)](agent.svg)
