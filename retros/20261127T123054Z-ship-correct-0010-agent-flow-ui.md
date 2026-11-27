@@ -17,7 +17,7 @@ pr: none
 - **Cloud** — `dev-push-45995285787/run/verify-remote.json` `verified`; deploy set = PR heads as fetched now (#12 `05f6f0f`, #11 `ed07d5b`, #6 `e41593c`).
 - **Pull requests** — `prs.json` matches `gh`: control #53 created, product PRs OPEN, MERGEABLE, CI green. STATUS CI column still ☐.
 - **Gates** — `check-docs.py` exit 1 on the change branch (`chatbot-eval/contracts/openapi.yaml` ≠ 1.9.0, 0010 ship R6); manifest, test-hooks green. `make check` green on this branch (from `origin/main`).
-- **Stack** — local stack up; gateway `/healthz` serves both projects. Dev up, per the lane.
+- **Stack** — local stack up; gateway healthz serves both projects. Dev up, per the lane.
 
 ## Findings
 
