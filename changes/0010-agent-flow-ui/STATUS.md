@@ -23,8 +23,9 @@ Merge order: chatbot-backend (additive, backward compatible) → infra → front
      thing that says they work together. -->
 
 <!-- iterate:begin -->
-- **verified-local** — 20261127T115933Z, 1 attempt(s)
-- report: `changes/0010-agent-flow-ui/runs/20261127T115933Z/report.md`
+- **verified-local** — 20261127T155856Z, 1 attempt(s)
+- first dispatch: chatbot-backend frontend (`--only`)
+- report: `changes/0010-agent-flow-ui/runs/20261127T155856Z/report.md`
 <!-- iterate:end -->
 
 - **verified** on dev — `/dev-push` run [45995285787](https://github.com/Paggio/agent-app-project/actions/runs/45995285787): 99 passed, 0 failed (17 from the change suite). Dev is up.
