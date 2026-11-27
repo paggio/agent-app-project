@@ -5,7 +5,7 @@ change: 0010-agent-flow-ui
 
 # The commit that landed contracts/ alone. The dispatch extracts contracts/ at exactly this
 # SHA and gives the slices nothing else, so it refuses to run without one.
-freeze_sha: "76ac577bf097c8a685d2e35c7f6c7b0d2fa10460"
+freeze_sha: "3e749c65095b7223aaaa959b99fddbe59cf1cf7c"
 
 # Which repos get a slice. Each needs a matching <name>.md here. Use the SUBMODULE PATH:
 # chatbot-backend, not backend.

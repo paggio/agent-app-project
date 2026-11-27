@@ -28,6 +28,16 @@ Server — smoke, through the single origin:
 - [ ] A turn naming a call id is routed to `calls` and its steps include `search_calls`.
 - [ ] Remotely, the stream reaches the browser's origin through CloudFront with the same events.
 
+Per-chat agents (amended 2026-11-27):
+
+- [ ] `POST /api/v1/threads` with `agents: [general, documents]` creates a chat whose
+      `thread.agents` is exactly those; with no `agents` it is every allowed agent
+      (`general`, `documents`, `calls`, `metrics`); an unknown name is 422 and creates nothing.
+- [ ] The agents are fixed: a `PATCH` sending `agents` changes nothing, and `GET` returns
+      the same list.
+- [ ] In a chat without `calls`, a turn naming a call id is not routed to `calls` and has no
+      `search_calls` step.
+
 Browser — the frontend's Playwright suite against the joined stack (`smoke.e2e`):
 
 - [ ] Sending a message uses the stream endpoint; while it runs a progress region
@@ -43,6 +53,13 @@ Browser — the frontend's Playwright suite against the joined stack (`smoke.e2e
 - [ ] The chat view always shows the session panel: the role, every agent from
       `/v1/capabilities` with an allowed / not-allowed badge, and each agent's tools likewise.
       A not-allowed agent or tool (stub suite) is visibly marked, not hidden.
+- [ ] A new chat shows "Agents for this chat" as tick boxes, one per allowed agent, all
+      ticked; `general` ticked and disabled (always on); a not-allowed agent shown unticked
+      and disabled (stub). Unticking one and sending creates the chat with exactly the ticked
+      agents (the `POST /api/v1/threads` body says so).
+- [ ] Once the first message is sent the selection is locked: the tick boxes are gone, and the
+      conversation shows its agents as a read-only list for as long as it is open, after a
+      reload too (read from `Thread.agents`).
 
 ## Out of scope
 
@@ -56,6 +73,9 @@ Browser — the frontend's Playwright suite against the joined stack (`smoke.e2e
   Through CloudFront it rests on the infra slice's config and its own check.
 - **Model-written step commentary.** Summaries are deterministic server sentences; another
   model call per step costs latency and money for prose.
+- **Choosing tools per chat, or changing a chat's agents later.** Agents only; tools follow
+  their agent. Fixed at creation so a transcript is never answered by an agent the person did
+  not start with — a different set is a new chat.
 - **Changing the eval.** New fields are additive; chatbot-eval reads nothing that moved.
 
 ## Contract changes
@@ -63,7 +83,8 @@ Browser — the frontend's Playwright suite against the joined stack (`smoke.e2e
 `contracts/openapi.yaml` 1.9.0 and `contracts/README.md` § "Agent steps, progress and
 capabilities", all additive: `Message.steps` (`AgentStep`), `User.role`,
 `POST /v1/threads/{thread_id}/messages/stream` (SSE: `step` / `done` / `error`, heartbeats),
-`GET /v1/capabilities`. Assistant `content` is declared Markdown, rendered with raw HTML off.
+`GET /v1/capabilities`, `CreateThreadRequest.agents` / `Thread.agents` (per-chat agents,
+fixed at creation; re-frozen at `3e749c6`). Assistant `content` is declared Markdown, rendered with raw HTML off.
 
 ## Deployment
 
@@ -73,6 +94,6 @@ capabilities", all additive: `Message.steps` (`AgentStep`), `User.role`,
 
 ## Slices
 
-- `chatbot-backend.md` — steps, the stream, capabilities, role policy and enforcement, Markdown prompts.
-- `frontend.md` — live progress, the flow panel, Markdown rendering, the session panel, the proxy.
+- `chatbot-backend.md` — steps, the stream, capabilities, role policy and enforcement, per-chat agents, Markdown prompts.
+- `frontend.md` — live progress, the flow panel, Markdown rendering, the session panel, the agent picker, the proxy.
 - `infra.md` — the edge passes `text/event-stream` through unbuffered.

@@ -1,5 +1,10 @@
 # 0010 — frontend slice
 
+> **Amended 2026-11-27 — choose agents per chat.** Everything already built stays. Nothing is
+> removed. Add item 6 below. The contract was re-frozen (still 1.9.0): `CreateThreadRequest.agents`,
+> `Thread.agents`, `contracts/README.md` → "Agents per chat". Re-vendor `contracts/` and
+> regenerate the wire types first.
+
 ## What to build
 
 1. **Live progress.** `HttpChatClient.send` posts to `POST /api/v1/threads/{id}/messages/stream`
@@ -28,10 +33,23 @@
    `reverse_proxy` if needed). The mock client gets fixture steps and capabilities with one
    not-allowed agent and tool.
 
+6. **Agent picker, then the locked list.** The new-chat view shows "Agents for this chat"
+   (a `fieldset` with that legend) above the composer: one labelled checkbox per agent from
+   `/v1/capabilities`, with its label and a one-line description. Allowed agents are ticked by
+   default; `general` is ticked and disabled with an "always on" hint; a not-allowed agent is
+   shown unticked and disabled with its Not allowed badge. On the first send, `createThread`
+   posts `{agents: [<ticked names>]}` — the chat is created there already (`useStartChat`),
+   so that is the lock. Inside a chat the picker is gone; a read-only "Agents in this chat"
+   list (`role="list"`, a lock icon, the labels from capabilities, unknown names shown raw)
+   stays visible at the top of the conversation, from `Thread.agents`, so it survives a
+   reload. The session panel stays as it is (what the role may use). Mock client: threads
+   carry `agents`; `createThread` echoes what it was given.
+
 ## Contract entries this depends on
 
 - `contracts/openapi.yaml` 1.9.0 → `postThreadMessageStream`, `getCapabilities`, `AgentStep`,
-  `StepEvent`, `CapabilitiesResponse`, `Visibility`, `Message.steps`, `User.role`
+  `StepEvent`, `CapabilitiesResponse`, `Visibility`, `Message.steps`, `User.role`,
+  `CreateThreadRequest.agents`, `Thread.agents`
 - `contracts/README.md` → § "Agent steps, progress and capabilities" (event order, Markdown
   with raw HTML off, tolerate unknown values, the client displays and never enforces)
 
@@ -57,6 +75,14 @@ and report it rather than working around it.
     the reply text);
   - the session panel shows role `member` and agents `general`, `documents`, `calls` with
     their tools, all Allowed.
+- [ ] Agent picker:
+  - unit: default ticks, `general` disabled, not-allowed disabled and unticked, the body
+    `createThread` sends, the locked list renders `Thread.agents`;
+  - stub e2e: the picker on a new chat, the not-allowed agent disabled; after sending, no
+    checkboxes and the "Agents in this chat" list shows the ticked ones;
+  - real-backend e2e: untick `calls`, send; the `POST /api/v1/threads` body has `agents`
+    without `calls`; the conversation shows "Agents in this chat" without Calls, with no
+    checkboxes; still so after a reload.
 - [ ] the repo's own gates pass (`.claude/hooks/gate.sh`)
 
 ## Smoke — what this slice is actually judged on
@@ -72,6 +98,6 @@ repo: fix the cause, never the assertion.
 ## Documentation
 
 - `docs/architecture.md` — the stream in the API boundary (`SendEvent.step`), Markdown
-  rendering, the session panel, the proxy's SSE handling; drop the "no streaming" and "not
+  rendering, the session panel, the agent picker and the locked list, the proxy's SSE handling; drop the "no streaming" and "not
   markdown" gaps.
 - `README.md` if a command or flag changed.

@@ -3,7 +3,7 @@
 
 ## Contract freeze
 
-- SHA: `76ac577` (full in `change.yaml`)
+- SHA: `3e749c6` (full in `change.yaml`); supersedes `76ac577`
 - Frozen: 2026-11-27
 
 ## Pull requests
@@ -41,3 +41,12 @@ Merge order: chatbot-backend (additive, backward compatible) → infra → front
 
 - Wrong: e2e failed on 0009's `metrics.spec.ts` — the cold local gateway served no release (`no_release`), and the repair was routed to frontend.
 - Criterion: unchanged and already failing; the cause was the harness. Fixed in harness PR #52 (merged): verify seeds a metrics release (ADR 0021). Re-verified 128/0, e2e 102/102.
+
+## Amended, 2026-11-27 — /ship-iterate
+
+- Added: the person picks the agents per chat (tick boxes on a new chat, `general` always on);
+  locked at the first message and shown read-only in the conversation. Server-enforced:
+  `Thread.agents`, routing bounded by it. Contract re-frozen at `3e749c6` (1.9.0, unmerged).
+- Slices re-dispatched: chatbot-backend, frontend. Infra unchanged.
+- Also asked: screenshots at the top of this repo's `README.md` — done by the lane after a
+  green run; no step asserts it.

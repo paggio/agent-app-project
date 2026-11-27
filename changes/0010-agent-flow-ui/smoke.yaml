@@ -190,6 +190,59 @@ steps:
       status: 200
       body_matches: 'event:\s*done\s*data:(?=[^\n]*"route"\s*:\s*"calls")(?=[^\n]*"agent"\s*:\s*"calls")[^\n]*"name"\s*:\s*"search_calls"'
 
+  # ───────────────────────────────────────────── per-chat agents (amendment)
+
+  - name: a-chat-defaults-to-every-allowed-agent
+    owner: chatbot-backend
+    GET: /api/v1/threads/${flow_thread_id}
+    expect:
+      status: 200
+      body_matches: '"agents"\s*:\s*\[(?=[^\]]*"general")(?=[^\]]*"documents")(?=[^\]]*"calls")(?=[^\]]*"metrics")'
+
+  - name: an-unknown-agent-is-refused
+    owner: chatbot-backend
+    POST: /api/v1/threads
+    body: {agents: [general, no-such-agent]}
+    expect:
+      status: 422
+
+  - name: create-a-scoped-chat
+    owner: chatbot-backend
+    POST: /api/v1/threads
+    body: {agents: [general, documents]}
+    expect:
+      status: 201
+      body_matches: '"agents"\s*:\s*\[\s*"general"\s*,\s*"documents"\s*\]'
+    capture:
+      scoped_thread_id: thread.id
+
+  - name: a-chats-agents-cannot-change
+    owner: chatbot-backend
+    PATCH: /api/v1/threads/${scoped_thread_id}
+    body: {title: "Scoped ${SMOKE_RUN_ID}", agents: [general, documents, calls]}
+    expect:
+      status: 200
+      body_matches: '"agents"\s*:\s*\[\s*"general"\s*,\s*"documents"\s*\]'
+
+  - name: a-scoped-chat-is-not-routed-to-an-unselected-agent
+    owner: chatbot-backend
+    # Names a call id, which would route to calls — but this chat did not select calls.
+    POST: /api/v1/threads/${scoped_thread_id}/messages/stream
+    headers: *sse
+    body: {message: "What happened on CALL-SCOPE${SMOKE_RUN_ID}?"}
+    retry: {attempts: 3, delay: 3.0}
+    expect:
+      status: 200
+      body_matches: 'event:\s*done\s*data:'
+      body_excludes: '"route"\s*:\s*"calls"|"name"\s*:\s*"search_calls"|event:\s*error'
+
+  - name: the-scoped-chat-keeps-its-agents
+    owner: chatbot-backend
+    GET: /api/v1/threads/${scoped_thread_id}
+    expect:
+      status: 200
+      body_matches: '"agents"\s*:\s*\[\s*"general"\s*,\s*"documents"\s*\]'
+
   # ───────────────────────────────────────────── the hops in between
 
   - name: a-turn-streams-through-the-proxy
