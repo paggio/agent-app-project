@@ -313,7 +313,8 @@ paths:
               schema:
                 $ref: '#/components/schemas/ErrorResponse'
         '422':
-          description: The body failed validation; `detail` lists what.
+          description: The body failed validation; `detail` lists what. Includes an `agents` entry the
+            deployment does not run or the role may not use.
           content:
             application/json:
               schema:
@@ -1497,6 +1498,16 @@ components:
           description: 'Optional, and explicitly nullable — omitting it and sending null are both accepted
             and mean the same thing. Normally omitted: the server derives a title from the first message,
             so supplying one here is for a client that already knows what the chat is about.'
+        agents:
+          anyOf:
+          - items:
+              type: string
+            type: array
+          - type: 'null'
+          description: 'The agents this chat may use, by `AgentCapability.name`. Omitted or null means every
+            agent the role may use. `general` is always included, listed or not. A name the deployment
+            does not run, or the role may not use, is a 422 and nothing is created. Fixed at creation:
+            no endpoint changes it — see contracts/README.md § "Agent steps, progress and capabilities".'
       type: object
       title: CreateThreadRequest
       description: Request body for postThreadCreate, and the whole body is optional. Unknown fields are
@@ -1837,6 +1848,13 @@ components:
           description: How many messages the chat holds. Present so a client can render a list without
             fetching every transcript, and it counts what is stored rather than what a capped read
             returned.
+        agents:
+          items:
+            type: string
+          type: array
+          description: The agents this chat may use, chosen at creation and never changed, in the order
+            `getCapabilities` lists them. Always contains `general`. A chat created before this field
+            existed carries every agent the role may use.
       type: object
       required:
       - id
@@ -1844,6 +1862,7 @@ components:
       - created_at
       - updated_at
       - message_count
+      - agents
       title: Thread
       description: A chat, as its owner sees it. Contains no account id — a caller only ever sees its own,
         so naming the owner would add a field that is always the caller and could only ever leak.

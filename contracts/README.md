@@ -394,6 +394,14 @@ change a role. What it promises now, so the day roles differ is not a contract c
   events — and is decided per request, from the caller's role at the time.
 - A consumer must tolerate unknown `role`, agent and tool names.
 
+**Agents per chat.** A chat is created with the agents it may use (`CreateThreadRequest.agents`,
+default every agent the role may use; `general` always included) and carries them as
+`Thread.agents`. They are fixed at creation — no endpoint changes them, and `patchThread`
+ignores the field — so a conversation is never answered by an agent it did not start with.
+The coordinator routes a turn only to an agent in both `Thread.agents` and the role's allowed
+set; anything else falls to `general`. A client creates the chat when the first message is
+sent, so choosing agents is part of starting a conversation.
+
 **Formatting.** An assistant `content` is Markdown — CommonMark plus GFM tables, task lists
 and strikethrough. A client renders it as Markdown with raw HTML disabled (shown as text,
 never parsed), and leaves `[n]` citation markers resolvable against the turn's citation list.
