@@ -353,6 +353,51 @@ either would be a new contract decided on purpose.
 - **Identifiers, free text and personal data never enter the index.** Dimension values are
   indexed only for dimensions opted in with `meta: {index_values: true}`.
 
+## Agent steps, progress and capabilities
+
+**Steps.** Every assistant turn records the steps that produced it in `Message.steps`, in the
+order they ran: one `route` step (agent `coordinator`, name `coordinate`) first, one
+`answer` step last, and between them the spoke's `retrieval` steps and the answering agent's
+`tool` calls. A `retrieval` or `tool` step's `name` is a tool `getCapabilities` lists under
+that step's `agent`. `summary` is a sentence the server writes for a person; it is not model
+output, and it never carries credentials, SQL or another account's data. Steps are stored
+with the turn and read back unchanged, like citations. A step that failed without failing
+the turn (a gateway refusal, an empty search) is stored with `status: error` and the turn
+goes on.
+
+**Progress.** `POST /v1/threads/{id}/messages/stream` is the same turn as
+`POST /v1/threads/{id}/messages` — the same gates, the same rate-limit bucket, the same two
+messages stored — delivered as Server-Sent Events:
+
+| Event | Data | When |
+| --- | --- | --- |
+| `step` | `StepEvent` | each step's `started`, then its `completed` under the same `id` |
+| `done` | `SendMessageResponse` | once, last, after the turn is stored; its assistant message carries `steps` equal to the completed steps, in order |
+| `error` | `ErrorResponse` | once, last, instead of `done`: the turn failed and nothing was stored |
+
+A `:`-comment heartbeat goes out at least every 15 seconds, so an edge with a read timeout
+does not cut a long turn. Every refusal is a plain JSON response before the stream opens.
+Every hop between the browser and the backend must pass events through as they are written
+— not buffered, not compressed. The non-streaming endpoint stays, unchanged, for consumers
+that do not want events.
+
+**Capabilities and roles.** `GET /v1/capabilities` names the account's `role`, every spoke the
+deployment runs (`agents`), each with its tools, and whether the role may use each; plus what
+the role may see (`visibility`). Every account is `member` today, and `member` is allowed
+everything and sees steps. The policy behind it lives in the backend; there is no endpoint to
+change a role. What it promises now, so the day roles differ is not a contract change:
+
+- **The server enforces, the client only displays.** The coordinator never routes to an agent
+  the role may not use (`general` is always allowed and is the floor), and no tool the role
+  may not use is called. A client never hides or disables anything on its own judgement.
+- **`visibility.steps: false` means absent, not empty** — no `steps` on messages, no `step`
+  events — and is decided per request, from the caller's role at the time.
+- A consumer must tolerate unknown `role`, agent and tool names.
+
+**Formatting.** An assistant `content` is Markdown — CommonMark plus GFM tables, task lists
+and strikethrough. A client renders it as Markdown with raw HTML disabled (shown as text,
+never parsed), and leaves `[n]` citation markers resolvable against the turn's citation list.
+
 ## Trace correlation
 
 Promised here rather than in `openapi.yaml` for the reason the session cookie already is:
