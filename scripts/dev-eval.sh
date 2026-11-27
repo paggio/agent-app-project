@@ -45,6 +45,7 @@ else
   OUT_ROOT="runs"
 fi
 
+"$ROOT"/scripts/gh-creds-fresh.sh || exit 2   # before the comment
 SINCE="$(date -u +%Y-%m-%dT%H:%M:%SZ)"
 BODY="/dev-eval${JUDGE:+ --judge $JUDGE}"
 gh pr comment "$PR" -R "$CONTROL" --body "$BODY" >/dev/null

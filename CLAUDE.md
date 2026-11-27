@@ -23,7 +23,7 @@ Never run two lanes in one session.
 - `contracts/` is owned here and only here. Product repos vendor it, verify against it, never edit it.
 - Smoke assertions are owned here too. A failing assertion means fix the cause, or change
   the criterion here on purpose — never in a product repo.
-- Harness fixes go in the ONE open `harness/` PR (the retro's, or opened from `origin/main` if none). Never slip one into a change.
+- Harness fixes go in the ONE open `harness/` PR (the retro's, or opened from `origin/main` if none). Never slip one into a change. A lane blocked on a `fault: harness` it fixes: merge it yourself once `make check` passes.
 - Never commit inside a submodule while it is on `main`, and never assume which ref it is
   on: `git -C <repo> switch -c <branch>` first, every time. `git submodule update` leaves
   a detached HEAD, `/realign` leaves `main`, and a commit on either is a commit in the

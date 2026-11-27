@@ -26,7 +26,7 @@ OWNER := $(shell ./scripts/repos.py owner)
 
 .DEFAULT_GOAL := help
 .PHONY: help up down restart ps logs rebuild config urls open health chat smoke verify iterate \
-        e2e eval creds phoenix-durability repos lock prs check check-docs diagrams init clean \
+        seed e2e eval creds phoenix-durability repos lock prs check check-docs diagrams init clean \
         login push-gh-creds gh-setup dev-bootstrap dev-push dev-eval dev-up dev-down dev-status k9s dev-index
 
 help: ## Show this list
@@ -50,6 +50,9 @@ help: ## Show this list
 up: ## Build and start everything, blocking until every service is healthy
 	@./scripts/stack.sh up
 	@$(MAKE) --no-print-directory urls
+
+seed: ## Publish and index a metrics release in the running stack (verify does this itself)
+	@./scripts/seed-local.sh
 
 down: ## Stop everything and drop the volumes
 	@./scripts/stack.sh down

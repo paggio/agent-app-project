@@ -10,8 +10,7 @@
 
 ## Contract freeze
 
-- SHA: `<sha>`
-- Frozen: <YYYY-MM-DD>
+- Frozen: <YYYY-MM-DD> — the SHA is `freeze_sha` in `change.yaml`, and only there
 
 ## Pull requests
 
